@@ -79,11 +79,15 @@ const cloudflareLoginLabel = computed(() =>
         input-id="keep-awake"
         label="Keep the PC awake while transfers are active"
       />
+      <ToggleField v-model="settingsDraft.startOnLogin" input-id="start-on-login" label="Start on login" />
+      <ToggleField
+        v-model="settingsDraft.addFileContextMenuButton"
+        input-id="file-context-button"
+        label="Add to file context menu"
+      />
     </SettingCard>
 
     <SettingCard eyebrow="Server">
-      <ToggleField v-model="settingsDraft.startOnLogin" input-id="start-on-login" label="Start on login" />
-
       <div class="field">
         <label for="bandwidth-limit">Bandwidth limit bytes/sec</label>
         <div class="input-group">
@@ -177,11 +181,6 @@ const cloudflareLoginLabel = computed(() =>
 
     <SettingCard eyebrow="Debug">
       <ToggleField v-model="settingsDraft.showLogs" input-id="show-logs" label="Show logs" />
-      <ToggleField
-        v-model="settingsDraft.addFileContextMenuButton"
-        input-id="file-context-button"
-        label="Add button to file context menu"
-      />
     </SettingCard>
   </section>
 </template>
