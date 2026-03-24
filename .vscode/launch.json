@@ -1,0 +1,29 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Agent Only",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "agent:build",
+      "program": "${workspaceFolder}/src/agent/InstantFileShare.Agent/bin/Debug/net8.0-windows/InstantFileShare.Agent.exe",
+      "cwd": "${workspaceFolder}",
+      "console": "internalConsole"
+    },
+    {
+      "name": "UI Only",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "cd src/ui && npm run electron:dev"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Full Stack",
+      "configurations": [
+        "Agent Only",
+        "UI Only"
+      ]
+    }
+  ]
+}

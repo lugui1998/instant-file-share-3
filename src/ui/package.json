@@ -1,0 +1,31 @@
+{
+  "name": "instant-file-share-ui",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173",
+    "electron:dev": "concurrently -k \"npm:dev\" \"npm:electron:watch\" \"npm:electron:start\"",
+    "electron:watch": "tsc -p tsconfig.electron.json --watch --preserveWatchOutput",
+    "electron:start": "wait-on tcp:5173 file:dist-electron/electron/main.js && electron .",
+    "build": "npm run build:renderer && npm run build:electron",
+    "build:renderer": "vue-tsc --noEmit && vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "vue": "^3.5.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.30",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "concurrently": "^9.2.1",
+    "electron": "^35.1.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.0.1",
+    "vue-tsc": "^2.2.10",
+    "wait-on": "^8.0.3"
+  }
+}

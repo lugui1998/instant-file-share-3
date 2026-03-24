@@ -1,0 +1,10 @@
+{
+  "recommendations": [
+    "ms-dotnettools.csharp",
+    "ms-vscode.cpptools",
+    "ms-vscode.cmake-tools",
+    "Vue.volar",
+    "dbaeumer.vscode-eslint",
+    "ms-vscode.powershell"
+  ]
+}

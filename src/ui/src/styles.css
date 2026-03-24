@@ -1,0 +1,332 @@
+:root {
+  color-scheme: dark;
+  font-family: "Segoe UI Variable Display", "Aptos", "Bahnschrift", sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color: #f3efe7;
+  background:
+    radial-gradient(circle at top left, rgba(255, 150, 77, 0.22), transparent 30%),
+    radial-gradient(circle at bottom right, rgba(0, 214, 163, 0.14), transparent 25%),
+    linear-gradient(135deg, #0c0f10 0%, #11161b 50%, #161b21 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 16px;
+  padding: 0.9rem 1.2rem;
+  cursor: pointer;
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+
+button:hover {
+  transform: translateY(-1px);
+}
+
+button.primary {
+  background: linear-gradient(135deg, #ff7f45, #ffba45);
+  color: #151515;
+  font-weight: 700;
+}
+
+button.secondary {
+  background: rgba(255, 255, 255, 0.08);
+  color: #f3efe7;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  min-height: 100vh;
+}
+
+.rail {
+  padding: 2rem 1.5rem;
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 10, 13, 0.72);
+  backdrop-filter: blur(12px);
+}
+
+.brand {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+.brand-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, #ff8f3f, #ffc53d);
+  color: #111;
+  font-weight: 800;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #ffb57d;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.72rem;
+}
+
+.nav {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.nav button {
+  text-align: left;
+  background: transparent;
+  color: #d4d0ca;
+  padding: 0.85rem 1rem;
+}
+
+.nav button.active {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.status-card,
+.composer,
+.panel,
+.share-card,
+.setting-card,
+.diagnostic-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+}
+
+.status-card {
+  margin-top: 2rem;
+  padding: 1rem;
+  border-radius: 24px;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.content {
+  padding: 2rem;
+  display: grid;
+  gap: 1.25rem;
+}
+
+.composer,
+.panel {
+  border-radius: 28px;
+}
+
+.panel h3,
+.share-card h4 {
+  margin: 0.2rem 0 0;
+}
+
+.card-actions {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.card-actions.column {
+  flex-direction: column;
+}
+
+.composer {
+  padding: 1.25rem;
+  display: flex;
+  gap: 1rem;
+  align-items: end;
+}
+
+.field {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.field.grow {
+  flex: 1;
+}
+
+.field.compact {
+  width: 220px;
+}
+
+input,
+select {
+  background: rgba(10, 12, 16, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  color: #fff;
+  padding: 0.95rem 1rem;
+}
+
+.launch {
+  min-width: 180px;
+}
+
+.error-banner,
+.warning {
+  padding: 0.9rem 1rem;
+  border-radius: 16px;
+  background: rgba(255, 120, 80, 0.12);
+  color: #ffc8ab;
+}
+
+.panel {
+  padding: 1.4rem;
+}
+
+.panel-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.pill {
+  border-radius: 999px;
+  background: rgba(0, 214, 163, 0.16);
+  color: #8cf0d4;
+  padding: 0.45rem 0.8rem;
+  font-size: 0.85rem;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+}
+
+.share-card,
+.setting-card,
+.diagnostic-card {
+  border-radius: 22px;
+  padding: 1rem;
+}
+
+.share-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.state {
+  border-radius: 999px;
+  padding: 0.35rem 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.74rem;
+  height: fit-content;
+}
+
+.state[data-state="Active"] {
+  background: rgba(0, 214, 163, 0.16);
+  color: #8cf0d4;
+}
+
+.state[data-state="Broken"],
+.state[data-state="Expired"],
+.state[data-state="Revoked"] {
+  background: rgba(255, 127, 69, 0.16);
+  color: #ffb895;
+}
+
+.meta {
+  display: grid;
+  gap: 0.8rem;
+  margin: 1rem 0;
+}
+
+.meta div {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.meta dt {
+  color: #a7b0bb;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.meta dd {
+  margin: 0;
+}
+
+.path {
+  word-break: break-all;
+}
+
+.table-shell {
+  overflow: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.85rem 0.7rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.settings-grid,
+.diagnostics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+pre {
+  overflow: auto;
+  background: rgba(12, 14, 18, 0.82);
+  border-radius: 16px;
+  padding: 1rem;
+  color: #cbd5e1;
+}
+
+@media (max-width: 960px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+
+  .rail {
+    border-right: 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  }
+
+  .composer {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .field.compact,
+  .launch {
+    width: 100%;
+  }
+}

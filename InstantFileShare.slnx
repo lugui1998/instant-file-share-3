@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/" />
+  <Folder Name="/src/agent/">
+    <Project Path="src/agent/InstantFileShare.Agent/InstantFileShare.Agent.csproj" />
+    <Project Path="src/agent/InstantFileShare.Core/InstantFileShare.Core.csproj" />
+    <Project Path="src/agent/InstantFileShare.Data/InstantFileShare.Data.csproj" />
+    <Project Path="src/agent/InstantFileShare.Infrastructure/InstantFileShare.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/InstantFileShare.Core.Tests/InstantFileShare.Core.Tests.csproj" />
+  </Folder>
+</Solution>

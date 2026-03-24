@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <ItemGroup>
+    <ProjectReference Include="..\InstantFileShare.Core\InstantFileShare.Core.csproj" />
+    <ProjectReference Include="..\InstantFileShare.Data\InstantFileShare.Data.csproj" />
+    <ProjectReference Include="..\InstantFileShare.Infrastructure\InstantFileShare.Infrastructure.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <OutputType>WinExe</OutputType>
+  </PropertyGroup>
+
+</Project>
