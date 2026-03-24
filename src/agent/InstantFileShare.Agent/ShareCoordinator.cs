@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using InstantFileShare.Core;
 using InstantFileShare.Infrastructure;
 
@@ -12,6 +13,7 @@ internal sealed class ShareCoordinator(
     CloudflaredSupervisor cloudflaredSupervisor,
     ExternalAddressResolver externalAddressResolver,
     IStartupRegistrationService startupRegistrationService,
+    IContextMenuRegistrationService contextMenuRegistrationService,
     IHttpClientFactory httpClientFactory) : IShareCoordinator
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -121,6 +123,7 @@ internal sealed class ShareCoordinator(
     {
         await shareStore.SaveSettingsAsync(settings, cancellationToken);
         startupRegistrationService.Apply(settings.StartOnLogin);
+        await contextMenuRegistrationService.ApplyAsync(settings.AddFileContextMenuButton, cancellationToken);
         await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.SettingsUpdated, DateTimeOffset.UtcNow, settings), cancellationToken);
     }
 
@@ -175,6 +178,9 @@ internal sealed class ShareCoordinator(
         => shareStore.GetCloudflaredStateAsync(cancellationToken);
 
     public async Task<CloudflaredDetectionResult> DetectCloudflaredAsync(CancellationToken cancellationToken)
+        => await DetectCloudflaredCoreAsync(publishEvent: true, cancellationToken);
+
+    private async Task<CloudflaredDetectionResult> DetectCloudflaredCoreAsync(bool publishEvent, CancellationToken cancellationToken)
     {
         var settings = await shareStore.GetSettingsAsync(cancellationToken);
         var detection = await cloudflaredSupervisor.DetectAsync(settings.CloudflaredPathOverride, cancellationToken);
@@ -188,7 +194,11 @@ internal sealed class ShareCoordinator(
         };
 
         await shareStore.SaveCloudflaredStateAsync(currentState, cancellationToken);
-        await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.CloudflaredUpdated, DateTimeOffset.UtcNow, currentState), cancellationToken);
+        if (publishEvent)
+        {
+            await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.CloudflaredUpdated, DateTimeOffset.UtcNow, currentState), cancellationToken);
+        }
+
         return detection;
     }
 
@@ -244,6 +254,39 @@ internal sealed class ShareCoordinator(
         }
 
         return await cloudflaredSupervisor.LaunchLoginAsync(detection.Path, cancellationToken);
+    }
+
+    public async Task<CloudflaredActionResult> LogoutCloudflareAsync(CancellationToken cancellationToken)
+    {
+        var certPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".cloudflared", "cert.pem");
+        if (File.Exists(certPath))
+        {
+            File.Delete(certPath);
+        }
+
+        await Task.CompletedTask;
+        return new CloudflaredActionResult(true, "Logged out locally. Existing managed tunnel settings were kept, but you must log in again to manage them.");
+    }
+
+    public async Task<CloudflaredDashboardStatus> GetCloudflaredDashboardStatusAsync(CancellationToken cancellationToken)
+    {
+        var detection = await DetectCloudflaredCoreAsync(publishEvent: false, cancellationToken);
+        var managedStatus = await GetManagedCloudflareStatusAsync(cancellationToken);
+        var latestVersion = await TryGetLatestCloudflaredVersionAsync(cancellationToken);
+        var installedVersion = ExtractCloudflaredVersion(detection.Version);
+        var updateAvailable = installedVersion is not null &&
+                              latestVersion is not null &&
+                              CompareVersions(installedVersion, latestVersion) < 0;
+
+        return new CloudflaredDashboardStatus(
+            detection.Found,
+            detection.Path,
+            installedVersion,
+            latestVersion,
+            updateAvailable,
+            detection.Ownership,
+            managedStatus.LoggedIn,
+            managedStatus.Message);
     }
 
     public async Task<CloudflareManagedStatus> GetManagedCloudflareStatusAsync(CancellationToken cancellationToken)
@@ -564,11 +607,65 @@ internal sealed class ShareCoordinator(
         return process.ExitCode == 0 ? output.Trim() : null;
     }
 
+    private async Task<string?> TryGetLatestCloudflaredVersionAsync(CancellationToken cancellationToken)
+    {
+        var httpClient = httpClientFactory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, "https://api.github.com/repos/cloudflare/cloudflared/releases/latest");
+        request.Headers.UserAgent.ParseAdd("InstantFileShare/1.0");
+
+        try
+        {
+            using var response = await httpClient.SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode)
+            {
+                return null;
+            }
+
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            var payload = await JsonSerializer.DeserializeAsync<GitHubReleaseResponse>(stream, JsonOptions, cancellationToken);
+            return ExtractCloudflaredVersion(payload?.TagName);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static string SanitizeSubdomain(string value)
     {
         var candidate = value.Trim().Trim('.').ToLowerInvariant();
         var normalized = new string(candidate.Where(character => char.IsLetterOrDigit(character) || character == '-').ToArray()).Trim('-');
         return string.IsNullOrWhiteSpace(normalized) ? "share" : normalized;
+    }
+
+    private static string? ExtractCloudflaredVersion(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(value, @"\d+\.\d+\.\d+");
+        return match.Success ? match.Value : null;
+    }
+
+    private static int CompareVersions(string left, string right)
+    {
+        var leftParts = left.Split('.').Select(value => int.TryParse(value, out var parsed) ? parsed : 0).ToArray();
+        var rightParts = right.Split('.').Select(value => int.TryParse(value, out var parsed) ? parsed : 0).ToArray();
+        var count = Math.Max(leftParts.Length, rightParts.Length);
+
+        for (var index = 0; index < count; index++)
+        {
+            var leftValue = index < leftParts.Length ? leftParts[index] : 0;
+            var rightValue = index < rightParts.Length ? rightParts[index] : 0;
+            if (leftValue != rightValue)
+            {
+                return leftValue.CompareTo(rightValue);
+            }
+        }
+
+        return 0;
     }
 
     private static async Task<string?> TryResolveZoneNameWithPowerShellAsync(CloudflareLoginToken token, CancellationToken cancellationToken)
@@ -650,4 +747,6 @@ internal sealed class ShareCoordinator(
     private sealed record CloudflareDnsListResponse(IReadOnlyList<CloudflareDnsRecord>? Result);
 
     private sealed record CloudflareDnsRecord(string Id, string Name, string Type, string Content);
+
+    private sealed record GitHubReleaseResponse(string TagName);
 }

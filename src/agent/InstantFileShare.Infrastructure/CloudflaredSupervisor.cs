@@ -5,10 +5,11 @@ using InstantFileShare.Core;
 
 namespace InstantFileShare.Infrastructure;
 
-public sealed partial class CloudflaredSupervisor
+public sealed partial class CloudflaredSupervisor(FileLogStore logStore)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly Regex QuickTunnelRegex = QuickTunnelRegexFactory();
+    private readonly FileLogStore _logStore = logStore;
     private readonly SemaphoreSlim _sync = new(1, 1);
     private Process? _quickTunnelProcess;
     private Process? _managedTunnelProcess;
@@ -59,33 +60,21 @@ public sealed partial class CloudflaredSupervisor
 
             await StopQuickTunnelAsync();
 
+            var quickTunnelReady = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+
             var process = StartProcess(
                 executablePath,
                 $"tunnel --url http://127.0.0.1:{publicPort}",
-                redirectOutput: true);
+                redirectOutput: true,
+                outputHandler: line => _ = HandleCloudflareOutputAsync(line, url => quickTunnelReady.TrySetResult(url)));
 
             _quickTunnelProcess = process;
 
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             cts.CancelAfter(TimeSpan.FromSeconds(30));
+            await using var registration = cts.Token.Register(() => quickTunnelReady.TrySetCanceled(cts.Token));
 
-            while (!cts.IsCancellationRequested && !process.HasExited)
-            {
-                var line = await process.StandardError.ReadLineAsync(cts.Token);
-                if (line is null)
-                {
-                    continue;
-                }
-
-                var match = QuickTunnelRegex.Match(line);
-                if (match.Success)
-                {
-                    ActiveQuickTunnelUrl = match.Value;
-                    return ActiveQuickTunnelUrl;
-                }
-            }
-
-            return null;
+            return await quickTunnelReady.Task.WaitAsync(cts.Token);
         }
         finally
         {
@@ -143,15 +132,14 @@ public sealed partial class CloudflaredSupervisor
 
     public async Task<CloudflaredActionResult> InstallWithWingetAsync(CancellationToken cancellationToken)
     {
-        var process = StartProcess(
-            "winget",
-            "install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements",
-            redirectOutput: true);
-
+        var process = StartProcess("winget", "install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements", redirectOutput: true);
+        var stdOut = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stdErr = await process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
+        await LogCloudflareOutputAsync(stdOut, stdErr, cancellationToken);
         return process.ExitCode == 0
             ? new CloudflaredActionResult(true, "cloudflared installed with winget.")
-            : new CloudflaredActionResult(false, await process.StandardError.ReadToEndAsync(cancellationToken));
+            : new CloudflaredActionResult(false, stdErr);
     }
 
     public async Task<CloudflaredActionResult> UpdateAsync(string executablePath, CloudflaredOwnership ownership, CancellationToken cancellationToken)
@@ -162,11 +150,13 @@ public sealed partial class CloudflaredSupervisor
         }
 
         var process = StartProcess("winget", "upgrade --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements", redirectOutput: true);
-
+        var stdOut = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stdErr = await process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
+        await LogCloudflareOutputAsync(stdOut, stdErr, cancellationToken);
         return process.ExitCode == 0
             ? new CloudflaredActionResult(true, "cloudflared updated.")
-            : new CloudflaredActionResult(false, await process.StandardError.ReadToEndAsync(cancellationToken));
+            : new CloudflaredActionResult(false, stdErr);
     }
 
     public async Task<CloudflaredActionResult> LaunchLoginAsync(string executablePath, CancellationToken cancellationToken)
@@ -223,6 +213,7 @@ public sealed partial class CloudflaredSupervisor
                 var stdOut = await process.StandardOutput.ReadToEndAsync(cancellationToken);
                 var stdErr = await process.StandardError.ReadToEndAsync(cancellationToken);
                 await process.WaitForExitAsync(cancellationToken);
+                await LogCloudflareOutputAsync(stdOut, stdErr, cancellationToken);
 
                 if (process.ExitCode != 0)
                 {
@@ -277,11 +268,15 @@ public sealed partial class CloudflaredSupervisor
     private async Task StartManagedProcessAsync(string executablePath, string arguments, CancellationToken cancellationToken)
     {
         await StopManagedTunnelAsync();
-        _managedTunnelProcess = StartProcess(executablePath, arguments, redirectOutput: true);
+        _managedTunnelProcess = StartProcess(
+            executablePath,
+            arguments,
+            redirectOutput: true,
+            outputHandler: line => _ = _logStore.AppendCloudflareAsync(line, CancellationToken.None));
         await Task.Delay(500, cancellationToken);
     }
 
-    private static async Task<string?> ReadVersionAsync(string executablePath, CancellationToken cancellationToken)
+    private async Task<string?> ReadVersionAsync(string executablePath, CancellationToken cancellationToken)
     {
         var process = StartProcess(executablePath, "version", redirectOutput: true);
         await process.WaitForExitAsync(cancellationToken);
@@ -289,7 +284,7 @@ public sealed partial class CloudflaredSupervisor
         return output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
     }
 
-    private static async Task<string?> ResolveFromPathAsync(CancellationToken cancellationToken)
+    private async Task<string?> ResolveFromPathAsync(CancellationToken cancellationToken)
     {
         var process = StartProcess("where.exe", "cloudflared", redirectOutput: true);
         await process.WaitForExitAsync(cancellationToken);
@@ -318,7 +313,7 @@ public sealed partial class CloudflaredSupervisor
         process.Dispose();
     }
 
-    private static Process StartProcess(string fileName, string arguments, bool redirectOutput, bool useShellExecute = false)
+    private Process StartProcess(string fileName, string arguments, bool redirectOutput, bool useShellExecute = false, Action<string>? outputHandler = null)
     {
         var process = new Process
         {
@@ -333,14 +328,37 @@ public sealed partial class CloudflaredSupervisor
             },
         };
 
+        if (redirectOutput && !useShellExecute && outputHandler is not null)
+        {
+            process.OutputDataReceived += (_, args) =>
+            {
+                if (!string.IsNullOrWhiteSpace(args.Data))
+                {
+                    outputHandler?.Invoke(args.Data);
+                }
+            };
+            process.ErrorDataReceived += (_, args) =>
+            {
+                if (!string.IsNullOrWhiteSpace(args.Data))
+                {
+                    outputHandler?.Invoke(args.Data);
+                }
+            };
+        }
+
         process.Start();
+        if (redirectOutput && !useShellExecute && outputHandler is not null)
+        {
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+        }
         return process;
     }
 
     [GeneratedRegex(@"https:\/\/[a-z0-9-]+\.trycloudflare\.com", RegexOptions.Compiled | RegexOptions.IgnoreCase)]
     private static partial Regex QuickTunnelRegexFactory();
 
-    private static async Task<IReadOnlyList<string>> ResolveTunnelIdsByNameAsync(
+    private async Task<IReadOnlyList<string>> ResolveTunnelIdsByNameAsync(
         string executablePath,
         string tunnelName,
         CancellationToken cancellationToken)
@@ -383,10 +401,13 @@ public sealed partial class CloudflaredSupervisor
         return ids.Count > 0;
     }
 
-    private static async Task RunBestEffortAsync(string executablePath, string arguments, CancellationToken cancellationToken)
+    private async Task RunBestEffortAsync(string executablePath, string arguments, CancellationToken cancellationToken)
     {
         var process = StartProcess(executablePath, arguments, redirectOutput: true);
+        var stdOut = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stdErr = await process.StandardError.ReadToEndAsync(cancellationToken);
         await process.WaitForExitAsync(cancellationToken);
+        await LogCloudflareOutputAsync(stdOut, stdErr, cancellationToken);
     }
 
     private async Task<(bool Success, string Message, string? Token)> TryCreateTunnelAsync(
@@ -431,7 +452,7 @@ public sealed partial class CloudflaredSupervisor
         return (false, string.IsNullOrWhiteSpace(error) ? $"Failed to create tunnel {tunnelName}." : error.Trim(), null);
     }
 
-    private static async Task<(bool Success, string Message)> RouteDnsAsync(
+    private async Task<(bool Success, string Message)> RouteDnsAsync(
         string executablePath,
         string tunnelName,
         string hostname,
@@ -453,4 +474,23 @@ public sealed partial class CloudflaredSupervisor
 
     private sealed record CloudflaredCreateTunnelResponse(string Id, string Name, string Token);
     private sealed record CloudflaredTunnelListItem(string Id, string Name, string DeletedAt);
+
+    private async Task HandleCloudflareOutputAsync(string line, Action<string?>? quickTunnelUrlSetter)
+    {
+        await _logStore.AppendCloudflareAsync(line, CancellationToken.None);
+        var match = QuickTunnelRegex.Match(line);
+        if (match.Success)
+        {
+            ActiveQuickTunnelUrl = match.Value;
+            quickTunnelUrlSetter?.Invoke(match.Value);
+        }
+    }
+
+    private async Task LogCloudflareOutputAsync(string stdOut, string stdErr, CancellationToken cancellationToken)
+    {
+        foreach (var line in (stdOut + Environment.NewLine + stdErr).Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries))
+        {
+            await _logStore.AppendCloudflareAsync(line, cancellationToken);
+        }
+    }
 }

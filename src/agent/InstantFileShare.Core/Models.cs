@@ -48,6 +48,8 @@ public sealed record AppSettings
     public int ManualPublicPort { get; init; } = Defaults.PublicPort;
     public string? ManualBaseUrl { get; init; }
     public int LocalApiPort { get; init; } = Defaults.LocalApiPort;
+    public bool ShowLogs { get; init; } = false;
+    public bool AddFileContextMenuButton { get; init; } = false;
 }
 
 public sealed record CloudflaredState

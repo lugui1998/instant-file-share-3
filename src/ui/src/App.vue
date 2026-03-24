@@ -1,175 +1,352 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { agentBridge, type CloudflareManagedAvailability, type CloudflareManagedStatus } from './agentBridge'
-
-type ViewKey = 'shares' | 'transfers' | 'settings' | 'diagnostics'
-type ShareItem = {
-  id: string
-  token: string
-  fileName: string
-  filePath: string
-  publicBaseUrl: string
-  createdAtUtc: string
-  maxUses?: number | null
-  useCount: number
-  state: string
-  publishMode: string
-  brokenReason?: string | null
-}
-
-type RuntimeData = {
-  shares: ShareItem[]
-  transfers: Array<Record<string, any>>
-  settings: Record<string, any>
-  cloudflared: Record<string, any>
-}
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import AppSidebar from './components/AppSidebar.vue'
+import LogsView from './components/views/LogsView.vue'
+import SettingsView from './components/views/SettingsView.vue'
+import SharesView from './components/views/SharesView.vue'
+import TransfersView from './components/views/TransfersView.vue'
+import {
+  agentBridge,
+  type AgentRuntimeSnapshot,
+  type AgentShareRecord,
+  type AppSettings,
+  type CloudflaredDashboardStatus,
+  type CloudflareManagedAvailability,
+  type CloudflareManagedStatus,
+  type PublishMode,
+} from './agentBridge'
+import type { BandwidthUnit, ViewKey } from './types/ui'
 
 const activeView = ref<ViewKey>('shares')
-const runtime = ref<RuntimeData | null>(null)
+const runtime = ref<AgentRuntimeSnapshot | null>(null)
 const pending = ref(false)
 const error = ref<string | null>(null)
 const draftFilePath = ref('')
-const draftMode = ref('QuickTunnel')
+const draftMode = ref<PublishMode>('QuickTunnel')
+const cloudflaredStatus = ref<CloudflaredDashboardStatus | null>(null)
 const managedStatus = ref<CloudflareManagedStatus | null>(null)
 const managedAvailability = ref<CloudflareManagedAvailability | null>(null)
+const agentLogs = ref('')
+const cloudflareLogs = ref('')
 const selectedDomain = ref('')
 const managedSubdomain = ref('share')
-let managedAvailabilityTimer: ReturnType<typeof setTimeout> | null = null
+const settingsSaveMessage = ref('')
+const bandwidthValue = ref<number | null>(null)
+const bandwidthUnit = ref<BandwidthUnit>('KB/s')
+const isHydratingSettings = ref(false)
+const isSavingSettings = ref(false)
+const isHydratingManagedSelection = ref(false)
+const isLoadingCloudflareSettings = ref(false)
+const lastSavedSettingsSignature = ref('')
+const lastManagedAvailabilityKey = ref('')
+const settingsDraft = ref<AppSettings>({
+  defaultPublishMode: 'QuickTunnel',
+  defaultExpiryHours: 24,
+  defaultMaxUses: null,
+  friendlyUrlsEnabled: true,
+  fileChangeBehavior: 'Strict',
+  keepAwakeWhileTransferring: true,
+  bandwidthLimitBytesPerSecond: null,
+  cloudflaredPathOverride: '',
+  startOnLogin: true,
+  manualBindAddress: '127.0.0.1',
+  manualPublicPort: 46431,
+  manualBaseUrl: '',
+  localApiPort: 46430,
+  showLogs: false,
+  addFileContextMenuButton: false,
+})
 
-const shares = computed(() => runtime.value?.shares ?? [])
+let disconnect: () => void = () => {}
+let managedAvailabilityTimer: ReturnType<typeof setTimeout> | null = null
+let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null
+
 const transfers = computed(() => runtime.value?.transfers ?? [])
-const settings = computed(() => runtime.value?.settings ?? {})
-const cloudflared = computed(() => runtime.value?.cloudflared ?? {})
+const currentSettingsSignature = computed(() => JSON.stringify(buildSettingsPayload()))
+const currentManagedAvailabilityKey = computed(() => {
+  const domain = selectedDomain.value.trim()
+  const subdomain = managedSubdomain.value.trim()
+  return managedStatus.value?.loggedIn && domain && subdomain ? `${domain}|${subdomain}` : ''
+})
+
+const viewLoaders: Partial<Record<ViewKey, () => Promise<void>>> = {
+  settings: loadCloudflareSettings,
+  logs: loadAgentLogs,
+  cloudflareLogs: loadCloudflareLogs,
+}
+
+function getErrorMessage(cause: unknown, fallback: string) {
+  return cause instanceof Error ? cause.message : fallback
+}
+
+async function runAction(action: () => Promise<void>, fallback: string) {
+  error.value = null
+
+  try {
+    await action()
+  } catch (cause) {
+    error.value = getErrorMessage(cause, fallback)
+  }
+}
 
 async function loadRuntime() {
   pending.value = true
   error.value = null
 
   try {
-    runtime.value = await agentBridge.getRuntime()
-    if (typeof runtime.value.settings?.defaultPublishMode === 'string') {
-      draftMode.value = runtime.value.settings.defaultPublishMode
-    }
+    const runtimeSnapshot = await agentBridge.getRuntime()
+    runtime.value = runtimeSnapshot
+    draftMode.value = runtimeSnapshot.settings.defaultPublishMode
+    isHydratingSettings.value = true
+    Object.assign(settingsDraft.value, runtimeSnapshot.settings)
+    const bandwidth = parseBandwidthLimit(runtimeSnapshot.settings.bandwidthLimitBytesPerSecond ?? null)
+    bandwidthValue.value = bandwidth.value
+    bandwidthUnit.value = bandwidth.unit
+    lastSavedSettingsSignature.value = JSON.stringify(buildSettingsPayload())
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Failed to contact the local agent.'
+    error.value = getErrorMessage(cause, 'Failed to contact the local agent.')
   } finally {
+    await nextTick()
+    isHydratingSettings.value = false
     pending.value = false
   }
+}
+
+async function loadCloudflareSettings() {
+  if (activeView.value !== 'settings' || isLoadingCloudflareSettings.value) {
+    return
+  }
+
+  isLoadingCloudflareSettings.value = true
 
   try {
+    cloudflaredStatus.value = await agentBridge.getCloudflaredStatus()
     managedStatus.value = await agentBridge.getManagedCloudflareStatus()
     const domains = managedStatus.value.domains ?? []
-    if (!selectedDomain.value && domains.length > 0) {
+    const configuredHostname = managedStatus.value.configuredHostname ?? ''
+
+    isHydratingManagedSelection.value = true
+
+    if (configuredHostname.includes('.')) {
+      const hostnameParts = configuredHostname.split('.')
+      managedSubdomain.value = hostnameParts.shift() ?? managedSubdomain.value
+      selectedDomain.value = hostnameParts.join('.')
+    } else if (!selectedDomain.value && domains.length > 0) {
       selectedDomain.value = domains[0].name
     }
+
+    await nextTick()
+    isHydratingManagedSelection.value = false
     await refreshManagedAvailability()
   } catch {
+    cloudflaredStatus.value = null
     managedStatus.value = null
     managedAvailability.value = null
+    isHydratingManagedSelection.value = false
+  } finally {
+    isLoadingCloudflareSettings.value = false
   }
 }
 
 async function createShare() {
+  error.value = null
+
   if (!draftFilePath.value.trim()) {
     error.value = 'Enter a local file path to create a test share from the dashboard.'
     return
   }
 
   pending.value = true
-  error.value = null
 
   try {
     await agentBridge.createShare(draftFilePath.value.trim(), draftMode.value)
     draftFilePath.value = ''
     await loadRuntime()
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Share creation failed.'
+    error.value = getErrorMessage(cause, 'Share creation failed.')
   } finally {
     pending.value = false
   }
 }
 
 async function revokeShare(shareId: string) {
-  try {
+  await runAction(async () => {
     await agentBridge.revokeShare(shareId)
     await loadRuntime()
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Failed to revoke the share.'
-  }
+  }, 'Failed to revoke the share.')
 }
 
-async function detectCloudflared() {
-  try {
-    await agentBridge.detectCloudflared()
-    await loadRuntime()
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Failed to detect cloudflared.'
-  }
+function buildShareUrl(share: AgentShareRecord) {
+  const baseUrl = share.publicBaseUrl.replace(/\/$/, '')
+  return share.slug
+    ? `${baseUrl}/s/${share.token}/${encodeURIComponent(share.slug)}`
+    : `${baseUrl}/s/${share.token}`
+}
+
+async function copyShareLink(share: AgentShareRecord) {
+  await runAction(async () => {
+    await navigator.clipboard.writeText(buildShareUrl(share))
+  }, 'Failed to copy the share link.')
 }
 
 async function installCloudflared() {
-  try {
+  await runAction(async () => {
     await agentBridge.installCloudflared()
-    await loadRuntime()
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Failed to install cloudflared.'
-  }
+    await loadCloudflareSettings()
+  }, 'Failed to install cloudflared.')
 }
 
 async function updateCloudflared() {
-  try {
+  await runAction(async () => {
     await agentBridge.updateCloudflared()
-    await loadRuntime()
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Failed to update cloudflared.'
-  }
+    await loadCloudflareSettings()
+  }, 'Failed to update cloudflared.')
 }
 
-async function startCloudflareLogin() {
-  try {
-    await agentBridge.startCloudflareLogin()
-    await loadRuntime()
-  } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Failed to start the Cloudflare login flow.'
-  }
+async function toggleCloudflareLogin() {
+  await runAction(async () => {
+    if (cloudflaredStatus.value?.loggedIn) {
+      await agentBridge.logoutCloudflare()
+    } else {
+      await agentBridge.startCloudflareLogin()
+    }
+
+    await loadCloudflareSettings()
+  }, cloudflaredStatus.value?.loggedIn
+    ? 'Failed to log out from Cloudflare on this device.'
+    : 'Failed to start the Cloudflare login flow.')
+}
+
+async function openCloudflaredPathPicker() {
+  await runAction(async () => {
+    const pickedPath = await agentBridge.pickCloudflaredExecutable()
+
+    if (pickedPath) {
+      settingsDraft.value.cloudflaredPathOverride = pickedPath
+    }
+  }, 'Failed to select the cloudflared executable.')
 }
 
 async function createManagedTunnel() {
-  if (!selectedDomain.value.trim()) {
+  error.value = null
+
+  const domain = selectedDomain.value.trim()
+  const subdomain = managedSubdomain.value.trim()
+
+  if (!domain) {
     error.value = 'Select a domain first.'
     return
   }
 
-  if (!managedSubdomain.value.trim()) {
+  if (!subdomain) {
     error.value = 'Enter the subdomain you want to use for file sharing.'
     return
   }
 
+  await runAction(async () => {
+    await agentBridge.createManagedTunnel(domain, subdomain)
+    await loadCloudflareSettings()
+  }, 'Failed to create the managed tunnel.')
+}
+
+async function loadAgentLogs() {
+  await runAction(async () => {
+    agentLogs.value = await agentBridge.getAgentLogs()
+  }, 'Failed to load the agent logs.')
+}
+
+async function loadCloudflareLogs() {
+  await runAction(async () => {
+    cloudflareLogs.value = await agentBridge.getCloudflareLogs()
+  }, 'Failed to load the Cloudflare logs.')
+}
+
+async function saveSettings() {
+  if (isSavingSettings.value) {
+    return
+  }
+
   try {
-    await agentBridge.createManagedTunnel(selectedDomain.value.trim(), managedSubdomain.value.trim())
-    await loadRuntime()
+    error.value = null
+    isSavingSettings.value = true
+    settingsSaveMessage.value = ''
+    const nextSettings = buildSettingsPayload()
+
+    await agentBridge.saveSettings(nextSettings)
+
+    if (runtime.value) {
+      runtime.value.settings = nextSettings
+    }
+
+    draftMode.value = settingsDraft.value.defaultPublishMode
+    lastSavedSettingsSignature.value = JSON.stringify(nextSettings)
+    settingsSaveMessage.value = 'Settings saved.'
   } catch (cause) {
-    error.value = cause instanceof Error ? cause.message : 'Failed to create the managed tunnel.'
+    error.value = getErrorMessage(cause, 'Failed to save settings.')
+  } finally {
+    isSavingSettings.value = false
   }
 }
 
 async function refreshManagedAvailability() {
-  if (!managedStatus.value?.loggedIn || !selectedDomain.value.trim()) {
+  const key = currentManagedAvailabilityKey.value
+  const domain = selectedDomain.value.trim()
+  const subdomain = managedSubdomain.value.trim()
+
+  if (!managedStatus.value?.loggedIn || !domain || !subdomain) {
     managedAvailability.value = null
+    lastManagedAvailabilityKey.value = ''
     return
   }
 
-  managedAvailability.value = await agentBridge.checkManagedTunnelAvailability(
-    selectedDomain.value.trim(),
-    managedSubdomain.value.trim(),
-  )
+  managedAvailability.value = await agentBridge.checkManagedTunnelAvailability(domain, subdomain)
+  lastManagedAvailabilityKey.value = key
 }
 
-let disconnect: () => void = () => {}
+function parseBandwidthLimit(value: number | null) {
+  if (value === null || value <= 0) {
+    return { value: null, unit: 'KB/s' as BandwidthUnit }
+  }
+
+  if (value % (1024 * 1024) === 0 && value >= 1024 * 1024) {
+    return { value: value / (1024 * 1024), unit: 'MB/s' as BandwidthUnit }
+  }
+
+  if (value % 1024 === 0 && value >= 1024) {
+    return { value: value / 1024, unit: 'KB/s' as BandwidthUnit }
+  }
+
+  return { value, unit: 'B/s' as BandwidthUnit }
+}
+
+function serializeBandwidthLimit(value: number | null, unit: BandwidthUnit) {
+  if (value === null || value <= 0) {
+    return null
+  }
+
+  switch (unit) {
+    case 'MB/s':
+      return value * 1024 * 1024
+    case 'KB/s':
+      return value * 1024
+    default:
+      return value
+  }
+}
+
+function buildSettingsPayload(): AppSettings {
+  return {
+    ...settingsDraft.value,
+    cloudflaredPathOverride: settingsDraft.value.cloudflaredPathOverride || null,
+    manualBaseUrl: settingsDraft.value.manualBaseUrl || null,
+    defaultMaxUses: settingsDraft.value.defaultMaxUses ?? null,
+    bandwidthLimitBytesPerSecond: serializeBandwidthLimit(bandwidthValue.value, bandwidthUnit.value),
+  }
+}
 
 onMounted(async () => {
-  disconnect = agentBridge.connectRuntime(async () => {
-    await loadRuntime()
+  disconnect = agentBridge.connectRuntime(() => {
+    void loadRuntime()
   })
   await loadRuntime()
 })
@@ -178,10 +355,24 @@ onUnmounted(() => {
   if (managedAvailabilityTimer) {
     clearTimeout(managedAvailabilityTimer)
   }
+
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer)
+  }
+
   disconnect()
 })
 
-watch([selectedDomain, managedSubdomain], () => {
+watch(currentManagedAvailabilityKey, (nextKey) => {
+  if (
+    activeView.value !== 'settings' ||
+    isHydratingManagedSelection.value ||
+    !nextKey ||
+    nextKey === lastManagedAvailabilityKey.value
+  ) {
+    return
+  }
+
   if (managedAvailabilityTimer) {
     clearTimeout(managedAvailabilityTimer)
   }
@@ -194,200 +385,107 @@ watch([selectedDomain, managedSubdomain], () => {
     }
   }, 250)
 })
+
+watch(activeView, (nextView) => {
+  const loader = viewLoaders[nextView]
+
+  if (loader) {
+    void loader()
+  }
+})
+
+watch(
+  () => settingsDraft.value.showLogs,
+  (showLogs) => {
+    if (!showLogs && (activeView.value === 'logs' || activeView.value === 'cloudflareLogs')) {
+      activeView.value = 'shares'
+    }
+  },
+)
+
+watch(currentSettingsSignature, (nextSignature) => {
+  if (
+    !runtime.value ||
+    isHydratingSettings.value ||
+    isSavingSettings.value ||
+    nextSignature === lastSavedSettingsSignature.value
+  ) {
+    return
+  }
+
+  if (settingsSaveTimer) {
+    clearTimeout(settingsSaveTimer)
+  }
+
+  settingsSaveTimer = setTimeout(async () => {
+    try {
+      await saveSettings()
+    } catch {
+    }
+  }, 400)
+})
 </script>
 
 <template>
   <div class="shell">
-    <aside class="rail">
-      <div class="brand">
-        <div class="brand-mark">IF</div>
-        <div>
-          <p class="eyebrow">Instant File Share</p>
-          <h1>Control Deck</h1>
-        </div>
-      </div>
-
-      <nav class="nav">
-        <button :class="{ active: activeView === 'shares' }" @click="activeView = 'shares'">Shares</button>
-        <button :class="{ active: activeView === 'transfers' }" @click="activeView = 'transfers'">Transfers</button>
-        <button :class="{ active: activeView === 'settings' }" @click="activeView = 'settings'">Settings</button>
-        <button :class="{ active: activeView === 'diagnostics' }" @click="activeView = 'diagnostics'">Diagnostics</button>
-      </nav>
-
-      <div class="status-card">
-        <p class="eyebrow">Agent</p>
-        <strong>{{ pending ? 'Refreshing' : 'Connected' }}</strong>
-        <span>Local API `127.0.0.1:46430`</span>
-      </div>
-    </aside>
+    <AppSidebar
+      :active-view="activeView"
+      :show-logs="settingsDraft.showLogs"
+      @navigate="activeView = $event"
+    />
 
     <main class="content">
-      <section class="composer">
-        <div class="field grow">
-          <label for="file-path">Quick test share</label>
-          <input id="file-path" v-model="draftFilePath" placeholder="C:\Users\me\Desktop\large-file.zip" />
-        </div>
-
-        <div class="field compact">
-          <label for="mode">Mode</label>
-          <select id="mode" v-model="draftMode">
-            <option>QuickTunnel</option>
-            <option>ManagedCloudflare</option>
-            <option>Manual</option>
-          </select>
-        </div>
-
-        <button class="secondary launch" @click="loadRuntime">Refresh</button>
-        <button class="primary launch" @click="createShare">Create share</button>
-      </section>
-
       <p v-if="error" class="error-banner">{{ error }}</p>
 
-      <section v-if="activeView === 'shares'" class="panel">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Shares</p>
-            <h3>{{ shares.length }} tracked link<span v-if="shares.length !== 1">s</span></h3>
-          </div>
-          <span class="pill">Friendly URLs by default</span>
-        </div>
+      <SharesView
+        v-if="activeView === 'shares'"
+        v-model:draft-file-path="draftFilePath"
+        v-model:draft-mode="draftMode"
+        :pending="pending"
+        :shares="runtime?.shares ?? []"
+        @copy-share="copyShareLink"
+        @create-share="createShare"
+        @revoke-share="revokeShare"
+      />
 
-        <div class="grid">
-          <article v-for="share in shares" :key="share.id" class="share-card">
-            <div class="share-head">
-              <div>
-                <h4>{{ share.fileName }}</h4>
-                <p>{{ share.publicBaseUrl }}/s/{{ share.token }}</p>
-              </div>
-              <span class="state" :data-state="share.state">{{ share.state }}</span>
-            </div>
+      <TransfersView
+        v-else-if="activeView === 'transfers'"
+        :transfers="transfers"
+      />
 
-            <dl class="meta">
-              <div>
-                <dt>Mode</dt>
-                <dd>{{ share.publishMode }}</dd>
-              </div>
-              <div>
-                <dt>Uses</dt>
-                <dd>{{ share.useCount }}<span v-if="share.maxUses"> / {{ share.maxUses }}</span></dd>
-              </div>
-              <div>
-                <dt>Created</dt>
-                <dd>{{ new Date(share.createdAtUtc).toLocaleString() }}</dd>
-              </div>
-              <div>
-                <dt>Path</dt>
-                <dd class="path">{{ share.filePath }}</dd>
-              </div>
-            </dl>
+      <SettingsView
+        v-else-if="activeView === 'settings'"
+        v-model:settings-draft="settingsDraft"
+        v-model:bandwidth-value="bandwidthValue"
+        v-model:bandwidth-unit="bandwidthUnit"
+        v-model:selected-domain="selectedDomain"
+        v-model:managed-subdomain="managedSubdomain"
+        :cloudflared-status="cloudflaredStatus"
+        :managed-status="managedStatus"
+        :managed-availability="managedAvailability"
+        :save-message="settingsSaveMessage"
+        @create-managed-tunnel="createManagedTunnel"
+        @install-cloudflared="installCloudflared"
+        @pick-cloudflared-path="openCloudflaredPathPicker"
+        @toggle-cloudflare-login="toggleCloudflareLogin"
+        @update-cloudflared="updateCloudflared"
+      />
 
-            <p v-if="share.brokenReason" class="warning">{{ share.brokenReason }}</p>
+      <LogsView
+        v-else-if="activeView === 'logs'"
+        eyebrow="Logs"
+        title="Agent logs"
+        :logs="agentLogs"
+        @refresh="loadAgentLogs"
+      />
 
-            <div class="card-actions">
-              <button class="secondary" @click="revokeShare(share.id)">Revoke</button>
-            </div>
-          </article>
-        </div>
-      </section>
-
-      <section v-else-if="activeView === 'transfers'" class="panel">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Transfers</p>
-            <h3>{{ transfers.length }} recent event<span v-if="transfers.length !== 1">s</span></h3>
-          </div>
-        </div>
-
-        <div class="table-shell">
-          <table>
-            <thead>
-              <tr>
-                <th>File</th>
-                <th>Remote</th>
-                <th>Bytes</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(transfer, index) in transfers" :key="index">
-                <td>{{ transfer.fileName ?? 'Unknown file' }}</td>
-                <td>{{ transfer.remoteAddress ?? 'n/a' }}</td>
-                <td>{{ transfer.bytesSent ?? 0 }}</td>
-                <td>{{ transfer.succeeded ? 'Completed' : 'Failed / partial' }}</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section v-else-if="activeView === 'settings'" class="panel settings-grid">
-        <article class="setting-card">
-          <p class="eyebrow">Sharing defaults</p>
-          <h3>Current agent settings</h3>
-          <pre>{{ JSON.stringify(settings, null, 2) }}</pre>
-        </article>
-
-        <article class="setting-card">
-          <p class="eyebrow">Cloudflared</p>
-          <h3>Tunnel runtime</h3>
-          <pre>{{ JSON.stringify(cloudflared, null, 2) }}</pre>
-        </article>
-      </section>
-
-      <section v-else class="panel diagnostics-grid">
-        <article class="diagnostic-card">
-          <p class="eyebrow">Quick actions</p>
-          <div class="card-actions column">
-            <button class="secondary" @click="detectCloudflared">Detect cloudflared</button>
-            <button class="secondary" @click="installCloudflared">Install with winget</button>
-            <button class="secondary" @click="updateCloudflared">Update managed binary</button>
-            <button class="primary" @click="startCloudflareLogin">Start Cloudflare login</button>
-          </div>
-        </article>
-
-        <article class="diagnostic-card">
-          <p class="eyebrow">Managed Cloudflare</p>
-          <div class="managed-block">
-            <strong>{{ managedStatus?.loggedIn ? 'Logged in' : 'Not logged in' }}</strong>
-            <span>{{ managedStatus?.message || 'No managed Cloudflare status available yet.' }}</span>
-            <span v-if="managedStatus?.configuredHostname">Current hostname: {{ managedStatus.configuredHostname }}</span>
-            <span v-if="managedStatus?.configuredTunnelName">Tunnel: {{ managedStatus.configuredTunnelName }}</span>
-          </div>
-
-          <div class="field">
-            <label for="managed-domain">Domain</label>
-            <select id="managed-domain" v-model="selectedDomain" :disabled="!(managedStatus?.domains?.length)">
-              <option value="" disabled>Select a domain</option>
-              <option v-for="domain in managedStatus?.domains ?? []" :key="domain.zoneId" :value="domain.name">
-                {{ domain.name }}
-              </option>
-            </select>
-          </div>
-
-          <div class="field">
-            <label for="managed-subdomain">Subdomain</label>
-            <input id="managed-subdomain" v-model="managedSubdomain" placeholder="share" />
-          </div>
-
-          <div v-if="managedAvailability" class="managed-block">
-            <strong>Managed target status</strong>
-            <span>Hostname: {{ managedAvailability.hostname }}</span>
-            <span>Tunnel name: {{ managedAvailability.tunnelName }}</span>
-            <span>Tunnel exists: {{ managedAvailability.tunnelExists ? 'yes' : 'no' }}</span>
-            <span>Subdomain exists: {{ managedAvailability.hostnameExists ? 'yes' : 'no' }}</span>
-            <span>{{ managedAvailability.message }}</span>
-          </div>
-
-          <div class="card-actions column">
-            <button class="primary" @click="createManagedTunnel">Create managed tunnel</button>
-          </div>
-        </article>
-
-        <article class="diagnostic-card">
-          <p class="eyebrow">Support snapshot</p>
-          <pre>{{ JSON.stringify(runtime, null, 2) }}</pre>
-        </article>
-      </section>
+      <LogsView
+        v-else-if="activeView === 'cloudflareLogs'"
+        eyebrow="Cloudflare logs"
+        title="cloudflared logs"
+        :logs="cloudflareLogs"
+        @refresh="loadCloudflareLogs"
+      />
     </main>
   </div>
 </template>

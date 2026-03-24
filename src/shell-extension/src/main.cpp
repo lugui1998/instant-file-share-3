@@ -1,10 +1,14 @@
 #include <windows.h>
+#include <shlobj.h>
+#include <shlwapi.h>
 #include <string>
 #include <vector>
 
 namespace
 {
     constexpr wchar_t kPipeName[] = LR"(\\.\pipe\InstantFileShare.Agent)";
+    constexpr wchar_t kVerbKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare)";
+    constexpr wchar_t kCommandKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare\command)";
 
     std::wstring EscapeJson(const std::wstring& value)
     {
@@ -57,6 +61,14 @@ namespace
         return output;
     }
 
+    std::wstring GetExecutablePath()
+    {
+        std::wstring buffer(MAX_PATH, L'\0');
+        const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+        buffer.resize(length);
+        return buffer;
+    }
+
     std::wstring GetFirstArgument()
     {
         int argumentCount = 0;
@@ -80,6 +92,57 @@ namespace
     {
         return response.find("\"Success\":true") != std::string::npos
             || response.find("\"success\":true") != std::string::npos;
+    }
+
+    bool SetRegistryString(HKEY root, const wchar_t* subKey, const wchar_t* valueName, const std::wstring& value)
+    {
+        HKEY key = nullptr;
+        if (RegCreateKeyExW(root, subKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+        {
+            return false;
+        }
+
+        const auto result = RegSetValueExW(
+            key,
+            valueName,
+            0,
+            REG_SZ,
+            reinterpret_cast<const BYTE*>(value.c_str()),
+            static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+
+        RegCloseKey(key);
+        return result == ERROR_SUCCESS;
+    }
+
+    bool RegisterContextMenu(std::wstring& errorMessage)
+    {
+        const auto executablePath = GetExecutablePath();
+        const auto command = L"\"" + executablePath + L"\" \"%1\"";
+
+        if (!SetRegistryString(HKEY_CURRENT_USER, kVerbKeyPath, nullptr, L"Copy Share Link") ||
+            !SetRegistryString(HKEY_CURRENT_USER, kVerbKeyPath, L"MUIVerb", L"Copy Share Link") ||
+            !SetRegistryString(HKEY_CURRENT_USER, kVerbKeyPath, L"Icon", executablePath) ||
+            !SetRegistryString(HKEY_CURRENT_USER, kCommandKeyPath, nullptr, command))
+        {
+            errorMessage = L"Failed to register the Explorer context menu entry.";
+            return false;
+        }
+
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+        return true;
+    }
+
+    bool UnregisterContextMenu(std::wstring& errorMessage)
+    {
+        const auto result = SHDeleteKeyW(HKEY_CURRENT_USER, kVerbKeyPath);
+        if (result != ERROR_SUCCESS && result != ERROR_FILE_NOT_FOUND)
+        {
+            errorMessage = L"Failed to remove the Explorer context menu entry.";
+            return false;
+        }
+
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+        return true;
     }
 
     bool SendCreateShareCommand(const std::wstring& filePath, std::wstring& errorMessage)
@@ -140,15 +203,49 @@ namespace
 
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 {
-    const std::wstring filePath = GetFirstArgument();
-    if (filePath.empty())
+    int argumentCount = 0;
+    LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &argumentCount);
+    if (arguments == nullptr || argumentCount < 2)
     {
-        MessageBoxW(nullptr, L"Usage: instant_file_share_shell <file-path>", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
+        if (arguments != nullptr)
+        {
+            LocalFree(arguments);
+        }
+
+        MessageBoxW(nullptr, L"Usage:\ninstant_file_share_shell <file-path>\ninstant_file_share_shell --register-context-menu\ninstant_file_share_shell --unregister-context-menu", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
         return 1;
     }
 
+    const std::wstring command = arguments[1];
+    std::wstring filePath = command;
+    LocalFree(arguments);
+
     std::wstring errorMessage;
-    if (!SendCreateShareCommand(filePath, errorMessage))
+    if (command == L"--register-context-menu")
+    {
+        if (!RegisterContextMenu(errorMessage))
+        {
+            MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+
+        MessageBoxW(nullptr, L"Registered 'Copy Share Link' in the file context menu.", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
+        return 0;
+    }
+
+    if (command == L"--unregister-context-menu")
+    {
+        if (!UnregisterContextMenu(errorMessage))
+        {
+            MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+
+        MessageBoxW(nullptr, L"Removed 'Copy Share Link' from the file context menu.", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
+        return 0;
+    }
+
+    if (filePath.empty() || !SendCreateShareCommand(filePath, errorMessage))
     {
         MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
         return 1;
