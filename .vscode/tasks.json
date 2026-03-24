@@ -1,0 +1,64 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "agent:build",
+      "type": "shell",
+      "command": "dotnet build InstantFileShare.slnx",
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "agent:run",
+      "type": "shell",
+      "command": "dotnet run --project src/agent/InstantFileShare.Agent/InstantFileShare.Agent.csproj",
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "tests:core",
+      "type": "shell",
+      "command": "dotnet test tests/InstantFileShare.Core.Tests/InstantFileShare.Core.Tests.csproj",
+      "group": "test",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "ui:install",
+      "type": "shell",
+      "command": "npm install",
+      "options": {
+        "cwd": "${workspaceFolder}/src/ui"
+      }
+    },
+    {
+      "label": "ui:build",
+      "type": "shell",
+      "command": "npm run build",
+      "options": {
+        "cwd": "${workspaceFolder}/src/ui"
+      },
+      "group": "build"
+    },
+    {
+      "label": "ui:dev",
+      "type": "shell",
+      "command": "npm run electron:dev",
+      "options": {
+        "cwd": "${workspaceFolder}/src/ui"
+      },
+      "isBackground": true,
+      "problemMatcher": []
+    },
+    {
+      "label": "shell:configure",
+      "type": "shell",
+      "command": "cmake -S src/shell-extension -B build/shell-extension"
+    },
+    {
+      "label": "shell:build",
+      "type": "shell",
+      "command": "cmake --build build/shell-extension --config Debug",
+      "group": "build"
+    }
+  ]
+}
