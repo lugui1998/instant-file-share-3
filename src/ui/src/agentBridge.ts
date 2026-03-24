@@ -18,9 +18,36 @@ type AgentShareRecord = {
 
 type AgentRuntimeSnapshot = {
   shares: AgentShareRecord[]
-  transfers: Array<Record<string, unknown>>
-  settings: Record<string, unknown>
+  transfers: TransferRecord[]
+  settings: AppSettings
   cloudflared: Record<string, unknown>
+}
+
+type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
+type FileChangeBehavior = 'Strict' | 'Lenient'
+type TransferRecord = Record<string, unknown> & {
+  fileName?: string | null
+  remoteAddress?: string | null
+  bytesSent?: number | null
+  succeeded?: boolean | null
+}
+
+type AppSettings = {
+  defaultPublishMode: PublishMode
+  defaultExpiryHours: number
+  defaultMaxUses?: number | null
+  friendlyUrlsEnabled: boolean
+  fileChangeBehavior: FileChangeBehavior
+  keepAwakeWhileTransferring: boolean
+  bandwidthLimitBytesPerSecond?: number | null
+  cloudflaredPathOverride?: string | null
+  startOnLogin: boolean
+  manualBindAddress: string
+  manualPublicPort: number
+  manualBaseUrl?: string | null
+  localApiPort: number
+  showLogs: boolean
+  addFileContextMenuButton: boolean
 }
 
 type CloudflareDomainOption = {
@@ -49,6 +76,17 @@ type CloudflareManagedAvailability = {
   message: string
 }
 
+type CloudflaredDashboardStatus = {
+  installed: boolean
+  executablePath?: string | null
+  installedVersion?: string | null
+  latestVersion?: string | null
+  updateAvailable: boolean
+  ownership: string
+  loggedIn: boolean
+  loginMessage: string
+}
+
 type AgentBridge = {
   getRuntime(): Promise<AgentRuntimeSnapshot>
   getShares(): Promise<AgentShareRecord[]>
@@ -56,15 +94,21 @@ type AgentBridge = {
   revokeShare(shareId: string): Promise<void>
   getSettings(): Promise<Record<string, unknown>>
   saveSettings(settings: Record<string, unknown>): Promise<void>
+  saveSettings(settings: AppSettings): Promise<void>
   getPublishProfiles(): Promise<Array<Record<string, unknown>>>
   savePublishProfile(mode: string, profile: Record<string, unknown>): Promise<void>
   detectCloudflared(): Promise<Record<string, unknown>>
   installCloudflared(): Promise<Record<string, unknown>>
   updateCloudflared(): Promise<Record<string, unknown>>
   startCloudflareLogin(): Promise<Record<string, unknown>>
+  logoutCloudflare(): Promise<Record<string, unknown>>
+  getCloudflaredStatus(): Promise<CloudflaredDashboardStatus>
+  pickCloudflaredExecutable(): Promise<string | null>
   getManagedCloudflareStatus(): Promise<CloudflareManagedStatus>
   checkManagedTunnelAvailability(domain: string, subdomain: string): Promise<CloudflareManagedAvailability>
   createManagedTunnel(domain: string, subdomain: string): Promise<Record<string, unknown>>
+  getAgentLogs(): Promise<string>
+  getCloudflareLogs(): Promise<string>
   connectRuntime(onMessage: (event: Record<string, unknown>) => void): () => void
 }
 
@@ -119,6 +163,9 @@ function createBrowserBridge(): AgentBridge {
     installCloudflared: () => request<Record<string, unknown>>('/api/cloudflared/install', { method: 'POST' }),
     updateCloudflared: () => request<Record<string, unknown>>('/api/cloudflared/update', { method: 'POST' }),
     startCloudflareLogin: () => request<Record<string, unknown>>('/api/cloudflared/login', { method: 'POST' }),
+    logoutCloudflare: () => request<Record<string, unknown>>('/api/cloudflared/logout', { method: 'POST' }),
+    getCloudflaredStatus: () => request<CloudflaredDashboardStatus>('/api/cloudflared/status'),
+    pickCloudflaredExecutable: async () => null,
     getManagedCloudflareStatus: () => request<CloudflareManagedStatus>('/api/cloudflared/managed-status'),
     checkManagedTunnelAvailability: (domain: string, subdomain: string) =>
       request<CloudflareManagedAvailability>('/api/cloudflared/managed-check', {
@@ -130,6 +177,14 @@ function createBrowserBridge(): AgentBridge {
         method: 'POST',
         body: JSON.stringify({ domain, subdomain }),
       }),
+    getAgentLogs: async () => {
+      const response = await fetch(`${agentBaseUrl}/api/logs/agent`)
+      return response.text()
+    },
+    getCloudflareLogs: async () => {
+      const response = await fetch(`${agentBaseUrl}/api/logs/cloudflare`)
+      return response.text()
+    },
     connectRuntime: (onMessage: (event: Record<string, unknown>) => void) => {
       const socket = new WebSocket(runtimeSocketUrl)
       socket.addEventListener('message', (event) => {
@@ -149,6 +204,10 @@ export type {
   AgentBridge,
   AgentRuntimeSnapshot,
   AgentShareRecord,
+  AppSettings,
+  CloudflaredDashboardStatus,
   CloudflareManagedAvailability,
   CloudflareManagedStatus,
+  PublishMode,
+  TransferRecord,
 }

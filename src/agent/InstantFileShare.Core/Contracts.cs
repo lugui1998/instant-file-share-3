@@ -14,6 +14,16 @@ public sealed record CloudflaredDetectionResult(bool Found, string? Path, string
 
 public sealed record CloudflaredActionResult(bool Success, string Message);
 
+public sealed record CloudflaredDashboardStatus(
+    bool Installed,
+    string? ExecutablePath,
+    string? InstalledVersion,
+    string? LatestVersion,
+    bool UpdateAvailable,
+    CloudflaredOwnership Ownership,
+    bool LoggedIn,
+    string LoginMessage);
+
 public sealed record CloudflareDomainOption(string ZoneId, string Name);
 
 public sealed record CloudflareManagedStatus(

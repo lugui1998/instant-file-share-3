@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -30,6 +30,24 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  ipcMain.handle('cloudflared:pickExecutable', async () => {
+    const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const options: OpenDialogOptions = {
+      title: 'Select cloudflared.exe',
+      properties: ['openFile'],
+      filters: [
+        { name: 'Executable', extensions: ['exe'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    }
+
+    const result = targetWindow
+      ? await dialog.showOpenDialog(targetWindow, options)
+      : await dialog.showOpenDialog(options)
+
+    return result.canceled ? null : (result.filePaths[0] ?? null)
+  })
+
   createWindow()
 
   app.on('activate', () => {

@@ -40,6 +40,8 @@ public interface IShareCoordinator
     Task<CloudflaredActionResult> InstallCloudflaredAsync(CancellationToken cancellationToken);
     Task<CloudflaredActionResult> UpdateCloudflaredAsync(CancellationToken cancellationToken);
     Task<CloudflaredActionResult> StartManagedTunnelLoginAsync(CancellationToken cancellationToken);
+    Task<CloudflaredActionResult> LogoutCloudflareAsync(CancellationToken cancellationToken);
+    Task<CloudflaredDashboardStatus> GetCloudflaredDashboardStatusAsync(CancellationToken cancellationToken);
     Task<CloudflareManagedStatus> GetManagedCloudflareStatusAsync(CancellationToken cancellationToken);
     Task<CloudflareManagedAvailability> CheckManagedTunnelAvailabilityAsync(CheckManagedTunnelRequest request, CancellationToken cancellationToken);
     Task<ManagedTunnelProvisionResult> CreateManagedTunnelAsync(CreateManagedTunnelRequest request, CancellationToken cancellationToken);
@@ -70,6 +72,11 @@ public interface IUiLauncher
 public interface IStartupRegistrationService
 {
     void Apply(bool enabled);
+}
+
+public interface IContextMenuRegistrationService
+{
+    Task ApplyAsync(bool enabled, CancellationToken cancellationToken);
 }
 
 public interface IKeepAwakeService

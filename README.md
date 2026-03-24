@@ -59,6 +59,18 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
    npm run electron:dev
    ```
 
+6. Register the file context-menu entry through the native shell helper:
+
+   ```powershell
+   .\build\shell-extension\Debug\instant_file_share_shell.exe --register-context-menu
+   ```
+
+   To remove it later:
+
+   ```powershell
+   .\build\shell-extension\Debug\instant_file_share_shell.exe --unregister-context-menu
+   ```
+
 ## Current MVP behaviors
 
 - local agent owns the share database, tray notifications, download server, and `cloudflared` process supervision
@@ -71,6 +83,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 
 - `cloudflared` quick tunnels are best-effort and session-scoped
 - the app serves live file references only
+- the current context-menu integration is registered by the native shell helper; on Windows 11 it still appears in the classic menu under `Show more options`
 
 ## To-Do
 

@@ -9,4 +9,4 @@ add_executable(instant_file_share_shell WIN32
 )
 
 target_compile_definitions(instant_file_share_shell PRIVATE UNICODE _UNICODE NOMINMAX)
-target_link_libraries(instant_file_share_shell PRIVATE user32)
+target_link_libraries(instant_file_share_shell PRIVATE user32 shell32 shlwapi)

@@ -48,6 +48,11 @@ button.secondary {
   color: #f3efe7;
 }
 
+button.danger {
+  background: rgba(255, 127, 69, 0.16);
+  color: #ffc8ab;
+}
+
 #app {
   min-height: 100vh;
 }
@@ -108,38 +113,26 @@ button.secondary {
   color: #fff;
 }
 
-.status-card,
-.composer,
 .panel,
-.share-card,
-.setting-card,
-.diagnostic-card {
+.setting-card {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.04);
   box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
 }
 
-.status-card {
-  margin-top: 2rem;
-  padding: 1rem;
-  border-radius: 24px;
-  display: grid;
-  gap: 0.35rem;
-}
-
 .content {
   padding: 2rem;
-  display: grid;
+  display: flex;
+  flex-direction: column;
   gap: 1.25rem;
+  min-height: 100vh;
 }
 
-.composer,
 .panel {
   border-radius: 28px;
 }
 
-.panel h3,
-.share-card h4 {
+.panel h3 {
   margin: 0.2rem 0 0;
 }
 
@@ -153,10 +146,14 @@ button.secondary {
 }
 
 .composer {
-  padding: 1.25rem;
+  padding: 0;
   display: flex;
   gap: 1rem;
   align-items: end;
+  flex-wrap: wrap;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 .field {
@@ -169,7 +166,21 @@ button.secondary {
 }
 
 .field.compact {
-  width: 220px;
+  width: 260px;
+  min-width: 220px;
+}
+
+.input-group {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.input-group input {
+  flex: 1 1 auto;
+}
+
+.unit-select {
+  width: 120px;
 }
 
 input,
@@ -182,12 +193,18 @@ select {
 }
 
 .launch {
-  min-width: 180px;
+  min-width: 160px;
+  flex: 0 0 160px;
 }
 
 .error-banner,
-.warning {
+.empty-state,
+.managed-block,
+.save-message {
   padding: 0.9rem 1rem;
+}
+
+.error-banner {
   border-radius: 16px;
   background: rgba(255, 120, 80, 0.12);
   color: #ffc8ab;
@@ -213,74 +230,30 @@ select {
   font-size: 0.85rem;
 }
 
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 1rem;
-}
-
-.share-card,
 .setting-card,
-.diagnostic-card {
-  border-radius: 22px;
-  padding: 1rem;
-}
-
-.share-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.state {
-  border-radius: 999px;
-  padding: 0.35rem 0.7rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 0.74rem;
-  height: fit-content;
-}
-
-.state[data-state="Active"] {
-  background: rgba(0, 214, 163, 0.16);
-  color: #8cf0d4;
-}
-
-.state[data-state="Broken"],
-.state[data-state="Expired"],
-.state[data-state="Revoked"] {
-  background: rgba(255, 127, 69, 0.16);
-  color: #ffb895;
-}
-
-.meta {
+.managed-block {
   display: grid;
-  gap: 0.8rem;
-  margin: 1rem 0;
-}
-
-.meta div {
-  display: grid;
-  gap: 0.15rem;
-}
-
-.meta dt {
-  color: #a7b0bb;
-  font-size: 0.78rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.meta dd {
-  margin: 0;
-}
-
-.path {
-  word-break: break-all;
+  gap: 0.35rem;
+  border-radius: 16px;
+  background: rgba(10, 12, 16, 0.5);
+  color: #d4d0ca;
 }
 
 .table-shell {
   overflow: auto;
+}
+
+.shares-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.shares-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 table {
@@ -293,6 +266,39 @@ td {
   text-align: left;
   padding: 0.85rem 0.7rem;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  vertical-align: middle;
+}
+
+.shares-table strong {
+  font-weight: 600;
+}
+
+.actions-cell {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.shares-table th:last-child,
+.shares-table td:last-child {
+  text-align: right;
+}
+
+.compact-button {
+  padding: 0.55rem 0.85rem;
+  border-radius: 12px;
+  white-space: nowrap;
+}
+
+.compact-icon-button {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 12px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 1rem;
 }
 
 .settings-grid,
@@ -302,12 +308,47 @@ td {
   gap: 1rem;
 }
 
+.setting-card {
+  border-radius: 22px;
+  padding: 1rem;
+  display: grid;
+  gap: 0.9rem;
+  align-content: start;
+}
+
+.toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  color: #f3efe7;
+}
+
+.toggle-row input {
+  width: auto;
+}
+
+.save-message {
+  color: #8cf0d4;
+  margin: 0;
+}
+
+.path-hint {
+  color: #a7b0bb;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
 pre {
   overflow: auto;
   background: rgba(12, 14, 18, 0.82);
   border-radius: 16px;
   padding: 1rem;
   color: #cbd5e1;
+}
+
+.empty-state {
+  text-align: center;
+  color: #a7b0bb;
 }
 
 @media (max-width: 960px) {
@@ -328,5 +369,7 @@ pre {
   .field.compact,
   .launch {
     width: 100%;
+    min-width: 0;
+    flex: 1 1 auto;
   }
 }

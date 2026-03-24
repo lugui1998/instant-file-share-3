@@ -10,8 +10,10 @@ var databasePath = global::InstantFileShare.Agent.AgentPaths.GetDatabasePath();
 var store = new SqliteShareStore(databasePath);
 await store.InitializeAsync(CancellationToken.None);
 var initialSettings = await store.GetSettingsAsync(CancellationToken.None);
+var fileLogStore = new global::InstantFileShare.Infrastructure.FileLogStore(global::InstantFileShare.Agent.AgentPaths.GetLogsDirectory());
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddProvider(new global::InstantFileShare.Agent.AgentFileLoggerProvider(fileLogStore));
 
 builder.WebHost.ConfigureKestrel(options =>
 {
@@ -35,6 +37,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
 
+builder.Services.AddSingleton(fileLogStore);
 builder.Services.AddSingleton<IShareStore>(store);
 builder.Services.AddSingleton<IRuntimeEventStream, ChannelRuntimeEventStream>();
 builder.Services.AddSingleton<CloudflaredSupervisor>();
@@ -44,6 +47,7 @@ builder.Services.AddSingleton<global::InstantFileShare.Agent.ClipboardService>()
 builder.Services.AddSingleton<global::InstantFileShare.Agent.NotificationService>();
 builder.Services.AddSingleton<global::InstantFileShare.Agent.PowerManagementService>();
 builder.Services.AddSingleton<IStartupRegistrationService, global::InstantFileShare.Agent.StartupRegistrationService>();
+builder.Services.AddSingleton<IContextMenuRegistrationService, global::InstantFileShare.Agent.ContextMenuRegistrationService>();
 builder.Services.AddSingleton<IShareCoordinator, global::InstantFileShare.Agent.ShareCoordinator>();
 builder.Services.AddSingleton<IPipeCommandHandler, global::InstantFileShare.Agent.PipeCommandHandler>();
 builder.Services.AddSingleton<global::InstantFileShare.Agent.PipeCommandServer>();
@@ -58,6 +62,7 @@ var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 jsonOptions.Converters.Add(new JsonStringEnumConverter());
 
 app.Services.GetRequiredService<IStartupRegistrationService>().Apply(initialSettings.StartOnLogin);
+await app.Services.GetRequiredService<IContextMenuRegistrationService>().ApplyAsync(initialSettings.AddFileContextMenuButton, CancellationToken.None);
 
 var notifications = app.Services.GetRequiredService<global::InstantFileShare.Agent.NotificationService>();
 notifications.OpenDashboardRequested += () => app.Services.GetRequiredService<global::InstantFileShare.Agent.DashboardLauncher>().Launch(global::InstantFileShare.Agent.AgentPaths.GetRepositoryRoot());
@@ -125,6 +130,12 @@ app.MapPut("/api/publish-profiles/{mode}", async (PublishMode mode, PublishProfi
 app.MapGet("/api/transfers", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
     Results.Ok(await coordinator.GetTransfersAsync(cancellationToken)));
 
+app.MapGet("/api/logs/agent", async (global::InstantFileShare.Infrastructure.FileLogStore logStore, CancellationToken cancellationToken) =>
+    Results.Text(await logStore.ReadAgentAsync(cancellationToken), "text/plain"));
+
+app.MapGet("/api/logs/cloudflare", async (global::InstantFileShare.Infrastructure.FileLogStore logStore, CancellationToken cancellationToken) =>
+    Results.Text(await logStore.ReadCloudflareAsync(cancellationToken), "text/plain"));
+
 app.MapPost("/api/cloudflared/detect", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
     Results.Ok(await coordinator.DetectCloudflaredAsync(cancellationToken)));
 
@@ -136,6 +147,12 @@ app.MapPost("/api/cloudflared/update", async (IShareCoordinator coordinator, Can
 
 app.MapPost("/api/cloudflared/login", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
     Results.Ok(await coordinator.StartManagedTunnelLoginAsync(cancellationToken)));
+
+app.MapPost("/api/cloudflared/logout", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
+    Results.Ok(await coordinator.LogoutCloudflareAsync(cancellationToken)));
+
+app.MapGet("/api/cloudflared/status", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
+    Results.Ok(await coordinator.GetCloudflaredDashboardStatusAsync(cancellationToken)));
 
 app.MapGet("/api/cloudflared/managed-status", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
     Results.Ok(await coordinator.GetManagedCloudflareStatusAsync(cancellationToken)));

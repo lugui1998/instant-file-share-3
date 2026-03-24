@@ -10,6 +10,8 @@ internal static class AgentPaths
 
     public static string GetDatabasePath() => Path.Combine(GetAppDataDirectory(), "instant-file-share.db");
 
+    public static string GetLogsDirectory() => Path.Combine(GetAppDataDirectory(), "logs");
+
     public static string GetRepositoryRoot()
         => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 }

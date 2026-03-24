@@ -1,4 +1,4 @@
-import { contextBridge } from 'electron'
+import { contextBridge, ipcRenderer } from 'electron'
 
 type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
 
@@ -46,6 +46,17 @@ type CloudflareManagedAvailability = {
   tunnelExists: boolean
   hostnameExists: boolean
   message: string
+}
+
+type CloudflaredDashboardStatus = {
+  installed: boolean
+  executablePath?: string | null
+  installedVersion?: string | null
+  latestVersion?: string | null
+  updateAvailable: boolean
+  ownership: string
+  loggedIn: boolean
+  loginMessage: string
 }
 
 const agentBaseUrl = 'http://127.0.0.1:46430'
@@ -97,6 +108,9 @@ contextBridge.exposeInMainWorld('instantFileShare', {
   installCloudflared: () => request<Record<string, unknown>>('/api/cloudflared/install', { method: 'POST' }),
   updateCloudflared: () => request<Record<string, unknown>>('/api/cloudflared/update', { method: 'POST' }),
   startCloudflareLogin: () => request<Record<string, unknown>>('/api/cloudflared/login', { method: 'POST' }),
+  logoutCloudflare: () => request<Record<string, unknown>>('/api/cloudflared/logout', { method: 'POST' }),
+  getCloudflaredStatus: () => request<CloudflaredDashboardStatus>('/api/cloudflared/status'),
+  pickCloudflaredExecutable: () => ipcRenderer.invoke('cloudflared:pickExecutable') as Promise<string | null>,
   getManagedCloudflareStatus: () => request<CloudflareManagedStatus>('/api/cloudflared/managed-status'),
   checkManagedTunnelAvailability: (domain: string, subdomain: string) =>
     request<CloudflareManagedAvailability>('/api/cloudflared/managed-check', {
@@ -108,6 +122,14 @@ contextBridge.exposeInMainWorld('instantFileShare', {
       method: 'POST',
       body: JSON.stringify({ domain, subdomain }),
     }),
+  getAgentLogs: async () => {
+    const response = await fetch(`${agentBaseUrl}/api/logs/agent`)
+    return response.text()
+  },
+  getCloudflareLogs: async () => {
+    const response = await fetch(`${agentBaseUrl}/api/logs/cloudflare`)
+    return response.text()
+  },
   connectRuntime: (onMessage: (event: Record<string, unknown>) => void) => {
     const socket = new WebSocket('ws://127.0.0.1:46430/ws/runtime')
     socket.addEventListener('message', (event) => {

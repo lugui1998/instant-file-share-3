@@ -32,6 +32,7 @@ This repository is a Windows 11-only monorepo for the Instant File Share MVP.
 - Keep the shell-side native code thin; backend logic belongs in the agent.
 - Keep the Electron app UI-only; long-running responsibilities belong in the agent.
 - When editing files, preserve the current CRLF/Windows-oriented setup.
+- Use the chrome-debug tool to inspect and interact with the UI
 
 ## Terminal rules
 - When using temrinal commands, ensure unused terminals are terminated. We don't want process running forever in the background.
