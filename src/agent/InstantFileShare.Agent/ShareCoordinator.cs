@@ -55,7 +55,7 @@ internal sealed class ShareCoordinator(
             FileSize = fileInfo.Length,
             FileModifiedAtUtc = fileInfo.LastWriteTimeUtc,
             CreatedAtUtc = DateTimeOffset.UtcNow,
-            ExpiresAtUtc = request.ExpiresAtUtc ?? DateTimeOffset.UtcNow.AddHours(settings.DefaultExpiryHours),
+            ExpiresAtUtc = request.ExpiresAtUtc ?? ResolveDefaultExpiry(settings),
             MaxUses = request.MaxUses ?? settings.DefaultMaxUses,
             UseCount = 0,
             PublishMode = mode,
@@ -842,6 +842,21 @@ internal sealed class ShareCoordinator(
     }
 
     private static string NormalizeBaseUrl(string baseUrl) => baseUrl.Trim().TrimEnd('/');
+
+    private static DateTimeOffset? ResolveDefaultExpiry(AppSettings settings)
+    {
+        if (settings.DefaultExpiryValue <= 0)
+        {
+            return null;
+        }
+
+        return settings.DefaultExpiryUnit switch
+        {
+            ExpiryUnit.Minutes => DateTimeOffset.UtcNow.AddMinutes(settings.DefaultExpiryValue),
+            ExpiryUnit.Days => DateTimeOffset.UtcNow.AddDays(settings.DefaultExpiryValue),
+            _ => DateTimeOffset.UtcNow.AddHours(settings.DefaultExpiryValue),
+        };
+    }
 
     private async Task<CloudflareLoginToken?> TryReadCloudflareLoginTokenAsync(CancellationToken cancellationToken)
     {

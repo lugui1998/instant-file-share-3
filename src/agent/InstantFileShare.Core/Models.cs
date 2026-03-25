@@ -36,7 +36,8 @@ public sealed record PublishProfile
 public sealed record AppSettings
 {
     public PublishMode DefaultPublishMode { get; init; } = PublishMode.QuickTunnel;
-    public int DefaultExpiryHours { get; init; } = 24;
+    public int DefaultExpiryValue { get; init; } = 24;
+    public ExpiryUnit DefaultExpiryUnit { get; init; } = ExpiryUnit.Hours;
     public int? DefaultMaxUses { get; init; } = null;
     public bool FriendlyUrlsEnabled { get; init; } = true;
     public FileChangeBehavior FileChangeBehavior { get; init; } = FileChangeBehavior.Strict;

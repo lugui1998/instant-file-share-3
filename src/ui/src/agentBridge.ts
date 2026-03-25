@@ -25,6 +25,7 @@ type AgentRuntimeSnapshot = {
 
 type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
 type FileChangeBehavior = 'Strict' | 'Lenient'
+type ExpiryUnit = 'Minutes' | 'Hours' | 'Days'
 type TransferRecord = Record<string, unknown> & {
   id: string
   shareId: string
@@ -50,7 +51,8 @@ type RuntimeEvent = {
 
 type AppSettings = {
   defaultPublishMode: PublishMode
-  defaultExpiryHours: number
+  defaultExpiryValue: number
+  defaultExpiryUnit: ExpiryUnit
   defaultMaxUses?: number | null
   friendlyUrlsEnabled: boolean
   fileChangeBehavior: FileChangeBehavior
@@ -229,6 +231,7 @@ export type {
   CloudflareManagedAvailability,
   CloudflareManagedStatus,
   PublishMode,
+  ExpiryUnit,
   RuntimeEvent,
   TransferRecord,
 }

@@ -43,7 +43,8 @@ const lastSavedSettingsSignature = ref('')
 const lastManagedAvailabilityKey = ref('')
 const settingsDraft = ref<AppSettings>({
   defaultPublishMode: 'QuickTunnel',
-  defaultExpiryHours: 24,
+  defaultExpiryValue: 24,
+  defaultExpiryUnit: 'Hours',
   defaultMaxUses: null,
   friendlyUrlsEnabled: true,
   fileChangeBehavior: 'Strict',
