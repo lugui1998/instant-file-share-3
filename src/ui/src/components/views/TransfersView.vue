@@ -77,7 +77,7 @@ function formatSpeedLabel(transfer: TransferRecord) {
 
 function getStatusLabel(transfer: TransferRecord) {
   if ('isPaused' in transfer && transfer.isPaused) {
-    return 'Paused'
+    return 'Stopped'
   }
 
   if (transfer.state === 'InProgress' || transfer.isActive) {
