@@ -32,10 +32,9 @@ const navigationItems = computed(() => {
 <template>
   <aside class="rail">
     <div class="brand">
-      <div class="brand-mark">IF</div>
+      <div class="brand-mark">IFS</div>
       <div>
         <p class="eyebrow">Instant File Share</p>
-        <h1>Control Deck</h1>
       </div>
     </div>
 
