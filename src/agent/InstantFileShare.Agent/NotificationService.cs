@@ -7,6 +7,7 @@ internal sealed class NotificationService : IHostedService, IDisposable
 {
     private NotifyIcon? _notifyIcon;
     private Thread? _uiThread;
+    private SynchronizationContext? _uiContext;
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     public event Action? OpenDashboardRequested;
@@ -16,6 +17,8 @@ internal sealed class NotificationService : IHostedService, IDisposable
         _uiThread = new Thread(() =>
         {
             ApplicationConfiguration.Initialize();
+            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+            _uiContext = SynchronizationContext.Current;
             _notifyIcon = new NotifyIcon
             {
                 Icon = SystemIcons.Application,
@@ -68,9 +71,25 @@ internal sealed class NotificationService : IHostedService, IDisposable
             return;
         }
 
-        _notifyIcon.BalloonTipTitle = title;
-        _notifyIcon.BalloonTipText = text;
-        _notifyIcon.BalloonTipIcon = icon;
-        _notifyIcon.ShowBalloonTip(4000);
+        void ShowCore()
+        {
+            if (_notifyIcon is null)
+            {
+                return;
+            }
+
+            _notifyIcon.BalloonTipTitle = title;
+            _notifyIcon.BalloonTipText = text;
+            _notifyIcon.BalloonTipIcon = icon;
+            _notifyIcon.ShowBalloonTip(4000);
+        }
+
+        if (_uiContext is null || SynchronizationContext.Current == _uiContext)
+        {
+            ShowCore();
+            return;
+        }
+
+        _uiContext.Post(_ => ShowCore(), null);
     }
 }

@@ -13,5 +13,20 @@ internal static class AgentPaths
     public static string GetLogsDirectory() => Path.Combine(GetAppDataDirectory(), "logs");
 
     public static string GetRepositoryRoot()
-        => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+    {
+        var current = new DirectoryInfo(AppContext.BaseDirectory);
+
+        while (current is not null)
+        {
+            if (File.Exists(Path.Combine(current.FullName, "InstantFileShare.slnx")) ||
+                Directory.Exists(Path.Combine(current.FullName, ".git")))
+            {
+                return current.FullName;
+            }
+
+            current = current.Parent;
+        }
+
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", ".."));
+    }
 }

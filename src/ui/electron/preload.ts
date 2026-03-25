@@ -22,9 +22,32 @@ type ShareRecord = {
 
 type RuntimeSnapshot = {
   shares: ShareRecord[]
-  transfers: Array<Record<string, unknown>>
+  transfers: TransferRecord[]
   settings: Record<string, unknown>
   cloudflared: Record<string, unknown>
+}
+
+type TransferRecord = {
+  id: string
+  shareId: string
+  token: string
+  fileName: string
+  remoteAddress?: string | null
+  bytesSent: number
+  totalBytes: number
+  startedAtUtc: string
+  lastUpdatedAtUtc: string
+  completedAtUtc?: string | null
+  state: 'InProgress' | 'Paused' | 'Completed' | 'Failed'
+  isActive: boolean
+  succeeded: boolean
+  error?: string | null
+}
+
+type RuntimeEvent = {
+  type: string
+  occurredAtUtc: string
+  payload: Record<string, unknown>
 }
 
 type CloudflareManagedStatus = {
@@ -85,6 +108,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 contextBridge.exposeInMainWorld('instantFileShare', {
   getRuntime: () => request<RuntimeSnapshot>('/api/runtime'),
   getShares: () => request<ShareRecord[]>('/api/shares'),
+  getTransfers: () => request<TransferRecord[]>('/api/transfers'),
   createShare: (filePath: string, publishMode?: PublishMode) =>
     request<{ share: ShareRecord; url: string }>('/api/shares', {
       method: 'POST',
@@ -130,10 +154,10 @@ contextBridge.exposeInMainWorld('instantFileShare', {
     const response = await fetch(`${agentBaseUrl}/api/logs/cloudflare`)
     return response.text()
   },
-  connectRuntime: (onMessage: (event: Record<string, unknown>) => void) => {
+  connectRuntime: (onMessage: (event: RuntimeEvent) => void) => {
     const socket = new WebSocket('ws://127.0.0.1:46430/ws/runtime')
     socket.addEventListener('message', (event) => {
-      onMessage(JSON.parse(event.data as string) as Record<string, unknown>)
+      onMessage(JSON.parse(event.data as string) as RuntimeEvent)
     })
     return () => socket.close()
   },

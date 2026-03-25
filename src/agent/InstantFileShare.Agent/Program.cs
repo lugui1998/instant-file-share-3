@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using InstantFileShare.Core;
@@ -74,6 +75,12 @@ try
 catch
 {
     // Detection is best-effort during startup. Share creation will retry on demand.
+}
+
+if (initialSettings.OpenDashboardOnStart)
+{
+    await app.Services.GetRequiredService<global::InstantFileShare.Agent.DashboardLauncher>()
+        .Launch(global::InstantFileShare.Agent.AgentPaths.GetRepositoryRoot());
 }
 
 app.Use(async (context, next) =>
@@ -236,8 +243,22 @@ static async Task<IResult> HandleDownloadAsync(
         return Results.Empty;
     }
 
-    var remoteAddress = context.Connection.RemoteIpAddress?.ToString();
+    var remoteAddress = ResolveClientIpAddress(context);
+    var (clientSessionId, setCookie) = ResolveDownloadSession(context, token);
+    var clientFingerprint = BuildClientFingerprint(remoteAddress, context.Request.Headers.UserAgent.ToString());
+    var requestedRange = context.Request.GetTypedHeaders().Range?.Ranges.FirstOrDefault();
+    var initialBytesSent = requestedRange?.From ?? 0;
     var countsTowardUsage = !context.Request.Headers.ContainsKey("Range");
+    var transfer = await coordinator.StartTransferAsync(
+        share.Id,
+        share.Token,
+        share.FileName,
+        clientSessionId,
+        clientFingerprint,
+        remoteAddress,
+        file.Length,
+        initialBytesSent,
+        cancellationToken);
     if (settings.KeepAwakeWhileTransferring)
     {
         powerManagementService.NotifyTransferStarted();
@@ -245,23 +266,49 @@ static async Task<IResult> HandleDownloadAsync(
 
     var rawStream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
     var meteredStream = new global::InstantFileShare.Agent.MeteredReadStream(rawStream, settings.BandwidthLimitBytesPerSecond);
+    var progressCancellation = CancellationTokenSource.CreateLinkedTokenSource(context.RequestAborted);
+    var progressTask = TrackTransferProgressAsync(coordinator, transfer.Id, meteredStream, initialBytesSent, progressCancellation.Token);
     context.Response.OnCompleted(async () =>
     {
         try
         {
+            progressCancellation.Cancel();
+            try
+            {
+                await progressTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+
+            var bytesSent = initialBytesSent + meteredStream.BytesRead;
+            var reachedEnd = bytesSent >= file.Length;
+            var requestAborted = context.RequestAborted.IsCancellationRequested;
+            var paused = requestAborted && bytesSent > initialBytesSent && bytesSent < file.Length;
+            var succeeded = reachedEnd && !requestAborted;
+            var error = paused
+                ? null
+                : succeeded
+                    ? null
+                    : "Connection closed before the transfer completed.";
+
             await coordinator.MarkTransferCompletedAsync(
+                transfer.Id,
                 share.Id,
                 share.Token,
                 share.FileName,
                 remoteAddress,
-                meteredStream.BytesRead,
+                bytesSent,
                 file.Length,
+                paused,
+                succeeded,
                 countsTowardUsage,
-                countsTowardUsage ? null : "Range response does not increment share usage.",
+                error,
                 CancellationToken.None);
         }
         finally
         {
+            progressCancellation.Dispose();
             meteredStream.Dispose();
             if (settings.KeepAwakeWhileTransferring)
             {
@@ -270,5 +317,197 @@ static async Task<IResult> HandleDownloadAsync(
         }
     });
 
+    if (setCookie)
+    {
+        context.Response.Cookies.Append(
+            GetDownloadSessionCookieName(token),
+            clientSessionId,
+            new CookieOptions
+            {
+                HttpOnly = true,
+                IsEssential = true,
+                SameSite = SameSiteMode.Lax,
+                Path = $"/s/{token}",
+                Secure = context.Request.IsHttps,
+                Expires = DateTimeOffset.UtcNow.AddDays(30),
+            });
+    }
+
     return Results.File(meteredStream, fileDownloadName: share.FileName, enableRangeProcessing: true);
+}
+
+static async Task TrackTransferProgressAsync(
+    IShareCoordinator coordinator,
+    string transferId,
+    global::InstantFileShare.Agent.MeteredReadStream meteredStream,
+    long initialBytesSent,
+    CancellationToken cancellationToken)
+{
+    using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
+    while (await timer.WaitForNextTickAsync(cancellationToken))
+    {
+        await coordinator.UpdateTransferProgressAsync(transferId, initialBytesSent + meteredStream.BytesRead, cancellationToken);
+    }
+}
+
+static string? ResolveClientIpAddress(HttpContext context)
+{
+    var remoteIpAddress = context.Connection.RemoteIpAddress;
+    if (remoteIpAddress is not null && !IPAddress.IsLoopback(remoteIpAddress))
+    {
+        return remoteIpAddress.ToString();
+    }
+
+    return TryResolveForwardedClientIp(context.Request.Headers) ?? remoteIpAddress?.ToString();
+}
+
+static string? TryResolveForwardedClientIp(IHeaderDictionary headers)
+{
+    if (TryResolveHeaderIp(headers, "CF-Connecting-IP", out var cloudflareIp))
+    {
+        return cloudflareIp;
+    }
+
+    if (TryResolveHeaderIp(headers, "True-Client-IP", out var trueClientIp))
+    {
+        return trueClientIp;
+    }
+
+    if (headers.TryGetValue("X-Forwarded-For", out var forwardedForValues))
+    {
+        foreach (var forwardedForValue in forwardedForValues)
+        {
+            if (string.IsNullOrWhiteSpace(forwardedForValue))
+            {
+                continue;
+            }
+
+            var segments = forwardedForValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var segment in segments)
+            {
+                if (TryNormalizeIpAddress(segment, out var forwardedIp))
+                {
+                    return forwardedIp;
+                }
+            }
+        }
+    }
+
+    if (headers.TryGetValue("Forwarded", out var forwardedValues))
+    {
+        foreach (var forwardedValue in forwardedValues)
+        {
+            if (string.IsNullOrWhiteSpace(forwardedValue))
+            {
+                continue;
+            }
+
+            var entries = forwardedValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            foreach (var entry in entries)
+            {
+                var segments = entry.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                foreach (var segment in segments)
+                {
+                    if (!segment.StartsWith("for=", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    var candidate = segment[4..].Trim().Trim('"');
+                    if (TryNormalizeIpAddress(candidate, out var forwardedIp))
+                    {
+                        return forwardedIp;
+                    }
+                }
+            }
+        }
+    }
+
+    return null;
+}
+
+static bool TryResolveHeaderIp(IHeaderDictionary headers, string headerName, out string? ipAddress)
+{
+    ipAddress = null;
+    if (!headers.TryGetValue(headerName, out var headerValues))
+    {
+        return false;
+    }
+
+    foreach (var headerValue in headerValues)
+    {
+        if (TryNormalizeIpAddress(headerValue, out ipAddress))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool TryNormalizeIpAddress(string? rawValue, out string? ipAddress)
+{
+    ipAddress = null;
+    if (string.IsNullOrWhiteSpace(rawValue))
+    {
+        return false;
+    }
+
+    var candidate = rawValue.Trim().Trim('"');
+    if (candidate.Length == 0 || candidate.Equals("unknown", StringComparison.OrdinalIgnoreCase))
+    {
+        return false;
+    }
+
+    if (candidate[0] == '[')
+    {
+        var closingBracketIndex = candidate.IndexOf(']');
+        if (closingBracketIndex <= 1)
+        {
+            return false;
+        }
+
+        candidate = candidate[1..closingBracketIndex];
+    }
+    else
+    {
+        var colonIndex = candidate.LastIndexOf(':');
+        if (colonIndex > 0 && candidate.IndexOf(':') == colonIndex)
+        {
+            candidate = candidate[..colonIndex];
+        }
+    }
+
+    if (!IPAddress.TryParse(candidate, out var parsedIpAddress))
+    {
+        return false;
+    }
+
+    ipAddress = parsedIpAddress.ToString();
+    return true;
+}
+
+static (string SessionId, bool SetCookie) ResolveDownloadSession(HttpContext context, string token)
+{
+    var cookieName = GetDownloadSessionCookieName(token);
+    if (context.Request.Cookies.TryGetValue(cookieName, out var existingSessionId) &&
+        !string.IsNullOrWhiteSpace(existingSessionId))
+    {
+        return (existingSessionId, false);
+    }
+
+    return (Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant(), true);
+}
+
+static string GetDownloadSessionCookieName(string token) => $"ifs-download-{token}";
+
+static string? BuildClientFingerprint(string? remoteAddress, string? userAgent)
+{
+    if (string.IsNullOrWhiteSpace(remoteAddress) || string.IsNullOrWhiteSpace(userAgent))
+    {
+        return null;
+    }
+
+    var payload = $"{remoteAddress}\n{userAgent.Trim()}";
+    return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
 }

@@ -169,6 +169,47 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         return SaveSingletonJsonAsync("cloudflared_state", "cloudflared", JsonSerializer.Serialize(state, JsonOptions), cancellationToken);
     }
 
+    public async Task<IReadOnlyList<TransferSnapshot>> ListTransfersAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT * FROM transfers ORDER BY started_at_utc DESC;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        var transfers = new List<TransferSnapshot>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            transfers.Add(MapTransfer(reader));
+        }
+
+        return transfers;
+    }
+
+    public async Task SaveTransferAsync(TransferSnapshot transfer, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+        await UpsertTransferAsync(connection, transfer, cancellationToken);
+    }
+
+    public async Task PruneCompletedTransfersAsync(DateTimeOffset completedBeforeUtc, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            DELETE FROM transfers
+            WHERE completed_at_utc IS NOT NULL
+              AND completed_at_utc < $completedBeforeUtc;
+            """;
+        command.Parameters.AddWithValue("$completedBeforeUtc", completedBeforeUtc.UtcDateTime.ToString("O"));
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private async Task<ShareRecord?> GetShareByAsync(string fieldName, string fieldValue, CancellationToken cancellationToken)
     {
         await using var connection = OpenConnection();
@@ -230,6 +271,54 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private async Task UpsertTransferAsync(SqliteConnection connection, TransferSnapshot transfer, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO transfers (
+                id, share_id, token, file_name, client_session_id, client_fingerprint, remote_address, bytes_sent, total_bytes,
+                started_at_utc, last_updated_at_utc, completed_at_utc, state, is_active, succeeded, error
+            ) VALUES (
+                $id, $shareId, $token, $fileName, $clientSessionId, $clientFingerprint, $remoteAddress, $bytesSent, $totalBytes,
+                $startedAtUtc, $lastUpdatedAtUtc, $completedAtUtc, $state, $isActive, $succeeded, $error
+            )
+            ON CONFLICT(id) DO UPDATE SET
+                share_id = excluded.share_id,
+                token = excluded.token,
+                file_name = excluded.file_name,
+                client_session_id = excluded.client_session_id,
+                client_fingerprint = excluded.client_fingerprint,
+                remote_address = excluded.remote_address,
+                bytes_sent = excluded.bytes_sent,
+                total_bytes = excluded.total_bytes,
+                started_at_utc = excluded.started_at_utc,
+                last_updated_at_utc = excluded.last_updated_at_utc,
+                completed_at_utc = excluded.completed_at_utc,
+                state = excluded.state,
+                is_active = excluded.is_active,
+                succeeded = excluded.succeeded,
+                error = excluded.error;
+            """;
+        command.Parameters.AddWithValue("$id", transfer.Id);
+        command.Parameters.AddWithValue("$shareId", transfer.ShareId);
+        command.Parameters.AddWithValue("$token", transfer.Token);
+        command.Parameters.AddWithValue("$fileName", transfer.FileName);
+        command.Parameters.AddWithValue("$clientSessionId", (object?)transfer.ClientSessionId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$clientFingerprint", (object?)transfer.ClientFingerprint ?? DBNull.Value);
+        command.Parameters.AddWithValue("$remoteAddress", (object?)transfer.RemoteAddress ?? DBNull.Value);
+        command.Parameters.AddWithValue("$bytesSent", transfer.BytesSent);
+        command.Parameters.AddWithValue("$totalBytes", transfer.TotalBytes);
+        command.Parameters.AddWithValue("$startedAtUtc", transfer.StartedAtUtc.UtcDateTime.ToString("O"));
+        command.Parameters.AddWithValue("$lastUpdatedAtUtc", transfer.LastUpdatedAtUtc.UtcDateTime.ToString("O"));
+        command.Parameters.AddWithValue("$completedAtUtc", transfer.CompletedAtUtc?.UtcDateTime.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$state", (int)transfer.State);
+        command.Parameters.AddWithValue("$isActive", transfer.IsActive ? 1 : 0);
+        command.Parameters.AddWithValue("$succeeded", transfer.Succeeded ? 1 : 0);
+        command.Parameters.AddWithValue("$error", (object?)transfer.Error ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private async Task SaveSingletonJsonAsync(string tableName, string key, string json, CancellationToken cancellationToken)
     {
         await using var connection = OpenConnection();
@@ -277,6 +366,29 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         };
     }
 
+    private static TransferSnapshot MapTransfer(SqliteDataReader reader)
+    {
+        return new TransferSnapshot
+        {
+            Id = reader.GetString(reader.GetOrdinal("id")),
+            ShareId = reader.GetString(reader.GetOrdinal("share_id")),
+            Token = reader.GetString(reader.GetOrdinal("token")),
+            FileName = reader.GetString(reader.GetOrdinal("file_name")),
+            ClientSessionId = reader.IsDBNull(reader.GetOrdinal("client_session_id")) ? null : reader.GetString(reader.GetOrdinal("client_session_id")),
+            ClientFingerprint = reader.IsDBNull(reader.GetOrdinal("client_fingerprint")) ? null : reader.GetString(reader.GetOrdinal("client_fingerprint")),
+            RemoteAddress = reader.IsDBNull(reader.GetOrdinal("remote_address")) ? null : reader.GetString(reader.GetOrdinal("remote_address")),
+            BytesSent = reader.GetInt64(reader.GetOrdinal("bytes_sent")),
+            TotalBytes = reader.GetInt64(reader.GetOrdinal("total_bytes")),
+            StartedAtUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("started_at_utc"))),
+            LastUpdatedAtUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("last_updated_at_utc"))),
+            CompletedAtUtc = reader.IsDBNull(reader.GetOrdinal("completed_at_utc")) ? null : DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("completed_at_utc"))),
+            State = (TransferState)reader.GetInt32(reader.GetOrdinal("state")),
+            IsActive = reader.GetInt64(reader.GetOrdinal("is_active")) != 0,
+            Succeeded = reader.GetInt64(reader.GetOrdinal("succeeded")) != 0,
+            Error = reader.IsDBNull(reader.GetOrdinal("error")) ? null : reader.GetString(reader.GetOrdinal("error")),
+        };
+    }
+
     private SqliteConnection OpenConnection() => new($"Data Source={_databasePath}");
 
     private static readonly string[] Schema =
@@ -317,6 +429,26 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         CREATE TABLE IF NOT EXISTS cloudflared_state (
             key TEXT PRIMARY KEY,
             json TEXT NOT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS transfers (
+            id TEXT PRIMARY KEY,
+            share_id TEXT NOT NULL,
+            token TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            client_session_id TEXT NULL,
+            client_fingerprint TEXT NULL,
+            remote_address TEXT NULL,
+            bytes_sent INTEGER NOT NULL,
+            total_bytes INTEGER NOT NULL,
+            started_at_utc TEXT NOT NULL,
+            last_updated_at_utc TEXT NOT NULL,
+            completed_at_utc TEXT NULL,
+            state INTEGER NOT NULL,
+            is_active INTEGER NOT NULL,
+            succeeded INTEGER NOT NULL,
+            error TEXT NULL
         );
         """,
     };

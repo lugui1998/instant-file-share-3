@@ -14,6 +14,8 @@ import {
   type CloudflareManagedAvailability,
   type CloudflareManagedStatus,
   type PublishMode,
+  type RuntimeEvent,
+  type TransferRecord,
 } from './agentBridge'
 import type { BandwidthUnit, ViewKey } from './types/ui'
 
@@ -49,17 +51,20 @@ const settingsDraft = ref<AppSettings>({
   bandwidthLimitBytesPerSecond: null,
   cloudflaredPathOverride: '',
   startOnLogin: true,
+  openDashboardOnStart: false,
   manualBindAddress: '127.0.0.1',
   manualPublicPort: 46431,
   manualBaseUrl: '',
   localApiPort: 46430,
   showLogs: false,
   addFileContextMenuButton: false,
+  transferLogRetentionDays: 30,
 })
 
 let disconnect: () => void = () => {}
 let managedAvailabilityTimer: ReturnType<typeof setTimeout> | null = null
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null
+let transferPollingTimer: ReturnType<typeof setInterval> | null = null
 
 const transfers = computed(() => runtime.value?.transfers ?? [])
 const currentSettingsSignature = computed(() => JSON.stringify(buildSettingsPayload()))
@@ -77,6 +82,19 @@ const viewLoaders: Partial<Record<ViewKey, () => Promise<void>>> = {
 
 function getErrorMessage(cause: unknown, fallback: string) {
   return cause instanceof Error ? cause.message : fallback
+}
+
+function ensureRuntimeState() {
+  if (!runtime.value) {
+    runtime.value = {
+      shares: [],
+      transfers: [],
+      settings: { ...settingsDraft.value },
+      cloudflared: {},
+    }
+  }
+
+  return runtime.value
 }
 
 async function runAction(action: () => Promise<void>, fallback: string) {
@@ -109,6 +127,17 @@ async function loadRuntime() {
     await nextTick()
     isHydratingSettings.value = false
     pending.value = false
+  }
+}
+
+async function loadTransfers(silent = false) {
+  try {
+    const latestTransfers = await agentBridge.getTransfers()
+    ensureRuntimeState().transfers = latestTransfers
+  } catch (cause) {
+    if (!silent) {
+      error.value = getErrorMessage(cause, 'Failed to load transfers.')
+    }
   }
 }
 
@@ -181,6 +210,67 @@ function buildShareUrl(share: AgentShareRecord) {
   return share.slug
     ? `${baseUrl}/s/${share.token}/${encodeURIComponent(share.slug)}`
     : `${baseUrl}/s/${share.token}`
+}
+
+function sortTransfers(transfers: TransferRecord[]) {
+  return [...transfers].sort((left, right) => {
+    if (left.isActive !== right.isActive) {
+      return left.isActive ? -1 : 1
+    }
+
+    return new Date(right.startedAtUtc).getTime() - new Date(left.startedAtUtc).getTime()
+  })
+}
+
+function upsertTransfer(transfer: TransferRecord) {
+  const runtimeState = ensureRuntimeState()
+  const existingIndex = runtimeState.transfers.findIndex((entry) => entry.id === transfer.id)
+
+  if (existingIndex >= 0) {
+    runtimeState.transfers.splice(existingIndex, 1, transfer)
+  } else {
+    runtimeState.transfers.unshift(transfer)
+  }
+
+  runtimeState.transfers = sortTransfers(runtimeState.transfers)
+}
+
+function applyRuntimeEvent(event: RuntimeEvent) {
+  switch (event.type) {
+    case 'TransferStarted':
+    case 'TransferProgress':
+    case 'TransferPaused':
+    case 'TransferCompleted':
+    case 'TransferFailed':
+      upsertTransfer(event.payload as unknown as TransferRecord)
+      break
+    case 'ShareCreated':
+    case 'ShareUpdated':
+    case 'ShareRevoked':
+    case 'SettingsUpdated':
+    case 'CloudflaredUpdated':
+      void loadRuntime()
+      break
+    default:
+      break
+  }
+}
+
+function startTransferPolling() {
+  if (transferPollingTimer) {
+    return
+  }
+
+  transferPollingTimer = setInterval(() => {
+    void loadTransfers(true)
+  }, 500)
+}
+
+function stopTransferPolling() {
+  if (transferPollingTimer) {
+    clearInterval(transferPollingTimer)
+    transferPollingTimer = null
+  }
 }
 
 async function copyShareLink(share: AgentShareRecord) {
@@ -345,8 +435,8 @@ function buildSettingsPayload(): AppSettings {
 }
 
 onMounted(async () => {
-  disconnect = agentBridge.connectRuntime(() => {
-    void loadRuntime()
+  disconnect = agentBridge.connectRuntime((event) => {
+    applyRuntimeEvent(event)
   })
   await loadRuntime()
 })
@@ -359,6 +449,8 @@ onUnmounted(() => {
   if (settingsSaveTimer) {
     clearTimeout(settingsSaveTimer)
   }
+
+  stopTransferPolling()
 
   disconnect()
 })
@@ -387,6 +479,13 @@ watch(currentManagedAvailabilityKey, (nextKey) => {
 })
 
 watch(activeView, (nextView) => {
+  if (nextView === 'transfers') {
+    void loadTransfers()
+    startTransferPolling()
+  } else {
+    stopTransferPolling()
+  }
+
   const loader = viewLoaders[nextView]
 
   if (loader) {
@@ -403,27 +502,33 @@ watch(
   },
 )
 
-watch(currentSettingsSignature, (nextSignature) => {
-  if (
-    !runtime.value ||
-    isHydratingSettings.value ||
-    isSavingSettings.value ||
-    nextSignature === lastSavedSettingsSignature.value
-  ) {
-    return
-  }
+watch(
+  [settingsDraft, bandwidthValue, bandwidthUnit],
+  () => {
+    const nextSignature = currentSettingsSignature.value
 
-  if (settingsSaveTimer) {
-    clearTimeout(settingsSaveTimer)
-  }
-
-  settingsSaveTimer = setTimeout(async () => {
-    try {
-      await saveSettings()
-    } catch {
+    if (
+      !runtime.value ||
+      isHydratingSettings.value ||
+      isSavingSettings.value ||
+      nextSignature === lastSavedSettingsSignature.value
+    ) {
+      return
     }
-  }, 400)
-})
+
+    if (settingsSaveTimer) {
+      clearTimeout(settingsSaveTimer)
+    }
+
+    settingsSaveTimer = setTimeout(async () => {
+      try {
+        await saveSettings()
+      } catch {
+      }
+    }, 400)
+  },
+  { deep: true },
+)
 </script>
 
 <template>

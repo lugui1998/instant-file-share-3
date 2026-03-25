@@ -94,6 +94,74 @@ namespace
             || response.find("\"success\":true") != std::string::npos;
     }
 
+    std::wstring ExtractMessage(const std::string& response)
+    {
+        const auto messageKey = response.find("\"Message\":\"");
+        const auto lowercaseKey = response.find("\"message\":\"");
+        const auto keyPosition = messageKey != std::string::npos ? messageKey : lowercaseKey;
+        if (keyPosition == std::string::npos)
+        {
+            return {};
+        }
+
+        const auto valueStart = response.find('"', keyPosition + 10);
+        if (valueStart == std::string::npos)
+        {
+            return {};
+        }
+
+        std::string value;
+        value.reserve(128);
+
+        for (auto index = valueStart + 1; index < response.size(); ++index)
+        {
+            const auto character = response[index];
+            if (character == '\\' && index + 1 < response.size())
+            {
+                const auto escaped = response[++index];
+                switch (escaped)
+                {
+                case '\\':
+                case '"':
+                case '/':
+                    value.push_back(escaped);
+                    break;
+                case 'n':
+                    value.push_back('\n');
+                    break;
+                case 'r':
+                    value.push_back('\r');
+                    break;
+                case 't':
+                    value.push_back('\t');
+                    break;
+                default:
+                    value.push_back(escaped);
+                    break;
+                }
+
+                continue;
+            }
+
+            if (character == '"')
+            {
+                break;
+            }
+
+            value.push_back(character);
+        }
+
+        if (value.empty())
+        {
+            return {};
+        }
+
+        const auto length = MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), nullptr, 0);
+        std::wstring output(length, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, value.data(), static_cast<int>(value.size()), output.data(), length);
+        return output;
+    }
+
     bool SetRegistryString(HKEY root, const wchar_t* subKey, const wchar_t* valueName, const std::wstring& value)
     {
         HKEY key = nullptr;
@@ -193,7 +261,11 @@ namespace
 
         if (!ContainsSuccessFlag(response))
         {
-            errorMessage = L"The agent rejected the share request.";
+            errorMessage = ExtractMessage(response);
+            if (errorMessage.empty())
+            {
+                errorMessage = L"The agent rejected the share request.";
+            }
             return false;
         }
 
@@ -228,8 +300,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
         }
-
-        MessageBoxW(nullptr, L"Registered 'Copy Share Link' in the file context menu.", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
         return 0;
     }
 
@@ -240,8 +310,6 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
         }
-
-        MessageBoxW(nullptr, L"Removed 'Copy Share Link' from the file context menu.", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
         return 0;
     }
 
