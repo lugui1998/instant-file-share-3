@@ -2,10 +2,11 @@
 
 Windows 11-only MVP for creating temporary download links directly from a local machine. The repo is a polyglot monorepo with:
 
-- `src/agent`: C# native agent, SQLite store, localhost/public HTTP server, cloudflared supervision
-- `src/shell-extension`: C++/Win32 named-pipe shell helper scaffold built with CMake
+- `src/agent`: .NET 8 native agent, SQLite store, localhost/public HTTP server, tray runtime, `cloudflared` supervision
+- `src/shell-extension`: C++/Win32 named-pipe shell helper built with CMake
 - `src/ui`: Electron + Vue + TypeScript dashboard
 - `tests`: .NET tests for shared backend utilities
+- `docs`: architecture and protocol notes
 
 ## Prerequisites
 
@@ -18,13 +19,19 @@ Windows 11-only MVP for creating temporary download links directly from a local 
 
 ## Getting started
 
+Bootstrap dependencies and the native build directory:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\bootstrap.ps1
+```
+
 One-shot full build:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 ```
 
-1. Build the backend and tests:
+1. Build the backend and run core tests:
 
    ```powershell
    dotnet build InstantFileShare.slnx
@@ -49,41 +56,50 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 4. Run the agent during development:
 
    ```powershell
-   dotnet run --project src/agent/InstantFileShare.Agent/InstantFileShare.Agent.csproj
+   powershell -ExecutionPolicy Bypass -File .\scripts\dev-agent.ps1
    ```
 
 5. Run the Electron dashboard during development in a second terminal:
 
    ```powershell
-   cd src/ui
-   npm run electron:dev
+   powershell -ExecutionPolicy Bypass -File .\scripts\dev-ui.ps1
    ```
 
-6. Register the file context-menu entry through the native shell helper:
+## Installer build
 
-   ```powershell
-   .\build\shell-extension\Debug\instant_file_share_shell.exe --register-context-menu
-   ```
+The repo now includes a Windows installer pipeline that stages:
 
-   To remove it later:
+- a published `win-x64` self-contained agent
+- the Release shell helper
+- a packaged Electron dashboard directory
 
-   ```powershell
-   .\build\shell-extension\Debug\instant_file_share_shell.exe --unregister-context-menu
-   ```
+To build the staged release artifacts and, if Inno Setup is installed, compile the installer:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
+```
+
+Notes:
+
+- the script outputs staged files to `artifacts\package\stage`
+- if `iscc` is available on `PATH`, the installer is written to `artifacts\package\installer`
+- if Inno Setup is not installed, the script still prepares the staged files so the installer can be compiled later
 
 ## Current MVP behaviors
 
-- local agent owns the share database, tray notifications, download server, and `cloudflared` process supervision
+- the local agent owns the share database, tray notifications, download server, startup integration, and `cloudflared` process supervision
 - Explorer integration communicates through the `InstantFileShare.Agent` named pipe
+- the shell helper forwards the selected file path to the agent; share creation stays in the agent
 - public downloads are served from `/s/{token}` and `/s/{token}/{slug}`
 - quick tunnel, managed Cloudflare, and manual publish modes are modeled in the agent
-- shell helper remains a thin command forwarder
+- runtime data is exposed through the local REST API and `/ws/runtime`
 
 ## Notes
 
 - `cloudflared` quick tunnels are best-effort and session-scoped
 - the app serves live file references only
-- the current context-menu integration is registered by the native shell helper; on Windows 11 it still appears in the classic menu under `Show more options`
+- `Start on login` is applied through the current-user Windows Run key
+- file context-menu integration depends on the built shell helper and appears in the classic Windows 11 menu under `Show more options`
 
 ## To-Do
 

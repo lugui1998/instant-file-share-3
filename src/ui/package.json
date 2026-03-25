@@ -2,6 +2,9 @@
   "name": "instant-file-share-ui",
   "private": true,
   "version": "0.1.0",
+  "productName": "Instant File Share",
+  "description": "Windows desktop dashboard for Instant File Share.",
+  "author": "Instant File Share",
   "type": "module",
   "main": "dist-electron/electron/main.js",
   "scripts": {
@@ -12,6 +15,7 @@
     "build": "npm run build:renderer && npm run build:electron",
     "build:renderer": "vue-tsc --noEmit && vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
+    "package:win": "npm run build && electron-builder --win dir",
     "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "preview": "vite preview"
   },
@@ -23,9 +27,29 @@
     "@vitejs/plugin-vue": "^6.0.0",
     "concurrently": "^9.2.1",
     "electron": "^35.1.5",
+    "electron-builder": "^26.0.12",
     "typescript": "^5.9.3",
     "vite": "^8.0.1",
     "vue-tsc": "^2.2.10",
     "wait-on": "^8.0.3"
+  },
+  "build": {
+    "appId": "com.instantfileshare.app",
+    "productName": "Instant File Share",
+    "directories": {
+      "output": "../../artifacts/package/ui"
+    },
+    "files": [
+      "dist/**",
+      "dist-electron/**",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        "dir"
+      ]
+    }
   }
 }

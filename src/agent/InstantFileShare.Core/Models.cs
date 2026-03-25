@@ -51,7 +51,7 @@ public sealed record AppSettings
     public string? ManualBaseUrl { get; init; }
     public int LocalApiPort { get; init; } = Defaults.LocalApiPort;
     public bool ShowLogs { get; init; } = false;
-    public bool AddFileContextMenuButton { get; init; } = false;
+    public bool AddFileContextMenuButton { get; init; } = true;
     public int TransferLogRetentionDays { get; init; } = 30;
 }
 
