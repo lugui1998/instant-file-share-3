@@ -208,11 +208,45 @@ function createBrowserBridge(): AgentBridge {
       return response.text()
     },
     connectRuntime: (onMessage: (event: RuntimeEvent) => void) => {
-      const socket = new WebSocket(runtimeSocketUrl)
-      socket.addEventListener('message', (event) => {
-        onMessage(JSON.parse(event.data as string) as RuntimeEvent)
-      })
-      return () => socket.close()
+      let socket: WebSocket | null = null
+      let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+      let disposed = false
+
+      const connect = () => {
+        if (disposed) {
+          return
+        }
+
+        socket = new WebSocket(runtimeSocketUrl)
+        socket.addEventListener('message', (event) => {
+          onMessage(JSON.parse(event.data as string) as RuntimeEvent)
+        })
+        socket.addEventListener('error', () => {
+          socket?.close()
+        })
+        socket.addEventListener('close', () => {
+          socket = null
+          if (disposed || reconnectTimer) {
+            return
+          }
+
+          reconnectTimer = setTimeout(() => {
+            reconnectTimer = null
+            connect()
+          }, 2000)
+        })
+      }
+
+      connect()
+
+      return () => {
+        disposed = true
+        if (reconnectTimer) {
+          clearTimeout(reconnectTimer)
+          reconnectTimer = null
+        }
+        socket?.close()
+      }
     },
   }
 }

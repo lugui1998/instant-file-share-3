@@ -66,6 +66,7 @@ let disconnect: () => void = () => {}
 let managedAvailabilityTimer: ReturnType<typeof setTimeout> | null = null
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null
 let transferPollingTimer: ReturnType<typeof setInterval> | null = null
+let runtimeRetryTimer: ReturnType<typeof setTimeout> | null = null
 
 const transfers = computed(() => runtime.value?.transfers ?? [])
 const currentSettingsSignature = computed(() => JSON.stringify(buildSettingsPayload()))
@@ -122,8 +123,18 @@ async function loadRuntime() {
     bandwidthValue.value = bandwidth.value
     bandwidthUnit.value = bandwidth.unit
     lastSavedSettingsSignature.value = JSON.stringify(buildSettingsPayload())
+    if (runtimeRetryTimer) {
+      clearTimeout(runtimeRetryTimer)
+      runtimeRetryTimer = null
+    }
   } catch (cause) {
     error.value = getErrorMessage(cause, 'Failed to contact the local agent.')
+    if (!runtimeRetryTimer) {
+      runtimeRetryTimer = setTimeout(() => {
+        runtimeRetryTimer = null
+        void loadRuntime()
+      }, 2000)
+    }
   } finally {
     await nextTick()
     isHydratingSettings.value = false
@@ -449,6 +460,10 @@ onUnmounted(() => {
 
   if (settingsSaveTimer) {
     clearTimeout(settingsSaveTimer)
+  }
+
+  if (runtimeRetryTimer) {
+    clearTimeout(runtimeRetryTimer)
   }
 
   stopTransferPolling()
