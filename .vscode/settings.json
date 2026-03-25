@@ -1,5 +1,0 @@
-{
-  "files.eol": "\r\n",
-  "cmake.configureOnOpen": false,
-  "typescript.tsdk": "src/ui/node_modules/typescript/lib"
-}
