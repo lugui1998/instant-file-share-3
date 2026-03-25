@@ -83,11 +83,29 @@ public static class FileNameSlug
 
 public static class ShareUrlBuilder
 {
-    public static string Build(string baseUrl, string token, string? slug)
+    public static string Build(string baseUrl, string token, string? slug, string? fileName = null)
     {
         baseUrl = baseUrl.TrimEnd('/');
-        return string.IsNullOrWhiteSpace(slug)
+        var friendlySegment = BuildFriendlySegment(slug, fileName);
+
+        return string.IsNullOrWhiteSpace(friendlySegment)
             ? $"{baseUrl}/s/{token}"
-            : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(slug)}";
+            : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(friendlySegment)}";
+    }
+
+    public static string? BuildFriendlySegment(string? slug, string? fileName)
+    {
+        if (string.IsNullOrWhiteSpace(slug))
+        {
+            return null;
+        }
+
+        var extension = Path.GetExtension(fileName);
+        if (string.IsNullOrWhiteSpace(extension) || slug.EndsWith(extension, StringComparison.OrdinalIgnoreCase))
+        {
+            return slug;
+        }
+
+        return $"{slug}{extension}";
     }
 }

@@ -28,4 +28,20 @@ public sealed class ShareUtilitiesTests
 
         Assert.Equal("https://example.com/s/abc123/report", url);
     }
+
+    [Fact]
+    public void Build_ShouldAppendFileExtensionToFriendlySlug()
+    {
+        var url = ShareUrlBuilder.Build("https://example.com/", "abc123", "quarterly-report", "Quarterly Report.pdf");
+
+        Assert.Equal("https://example.com/s/abc123/quarterly-report.pdf", url);
+    }
+
+    [Fact]
+    public void Build_ShouldNotDuplicateExistingFileExtension()
+    {
+        var url = ShareUrlBuilder.Build("https://example.com/", "abc123", "quarterly-report.pdf", "Quarterly Report.pdf");
+
+        Assert.Equal("https://example.com/s/abc123/quarterly-report.pdf", url);
+    }
 }

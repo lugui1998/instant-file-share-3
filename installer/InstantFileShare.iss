@@ -30,6 +30,9 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\ui\{#DashboardExe}
 
+[Tasks]
+Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"; Flags: unchecked
+
 [Files]
 Source: "{#StageDir}\agent\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageDir}\shell\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -37,7 +40,7 @@ Source: "{#StageDir}\ui\*"; DestDir: "{app}\ui"; Flags: ignoreversion recursesub
 
 [Icons]
 Name: "{autoprograms}\{#AppName}\Dashboard"; Filename: "{app}\ui\{#DashboardExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\ui\{#DashboardExe}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AgentExe}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\{#AgentExe}"; Description: "Start Instant File Share"; Flags: nowait skipifsilent

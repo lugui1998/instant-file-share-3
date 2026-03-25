@@ -219,8 +219,15 @@ async function revokeShare(shareId: string) {
 
 function buildShareUrl(share: AgentShareRecord) {
   const baseUrl = share.publicBaseUrl.replace(/\/$/, '')
-  return share.slug
-    ? `${baseUrl}/s/${share.token}/${encodeURIComponent(share.slug)}`
+  const extension = share.fileName.includes('.') ? share.fileName.slice(share.fileName.lastIndexOf('.')) : ''
+  const friendlySegment = share.slug
+    ? share.slug.toLowerCase().endsWith(extension.toLowerCase())
+      ? share.slug
+      : `${share.slug}${extension}`
+    : null
+
+  return friendlySegment
+    ? `${baseUrl}/s/${share.token}/${encodeURIComponent(friendlySegment)}`
     : `${baseUrl}/s/${share.token}`
 }
 

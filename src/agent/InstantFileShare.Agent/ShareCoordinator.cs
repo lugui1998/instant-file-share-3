@@ -42,7 +42,7 @@ internal sealed class ShareCoordinator(
         var existingShare = await TryGetReusableShareAsync(fileInfo, request, settings, mode, publicBaseUrl, cancellationToken);
         if (existingShare is not null)
         {
-            return (existingShare, ShareUrlBuilder.Build(existingShare.PublicBaseUrl, existingShare.Token, existingShare.Slug));
+            return (existingShare, ShareUrlBuilder.Build(existingShare.PublicBaseUrl, existingShare.Token, existingShare.Slug, existingShare.FileName));
         }
 
         var share = new ShareRecord
@@ -65,7 +65,7 @@ internal sealed class ShareCoordinator(
 
         await shareStore.AddShareAsync(share, cancellationToken);
         await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareCreated, DateTimeOffset.UtcNow, share), cancellationToken);
-        return (share, ShareUrlBuilder.Build(publicBaseUrl, share.Token, share.Slug));
+        return (share, ShareUrlBuilder.Build(publicBaseUrl, share.Token, share.Slug, share.FileName));
     }
 
     private async Task<ShareRecord?> TryGetReusableShareAsync(
