@@ -17,7 +17,13 @@ internal sealed class ShareCoordinator(
     IHttpClientFactory httpClientFactory) : IShareCoordinator
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-    private readonly List<TransferSnapshot> _transfers = [];
+    private static readonly TimeSpan TransferResumeWindow = TimeSpan.FromMinutes(30);
+    private const long TransferResumeToleranceBytes = 1024 * 1024;
+    private readonly object _transferLock = new();
+    private readonly SemaphoreSlim _transferLoadGate = new(1, 1);
+    private readonly Dictionary<string, TransferSnapshot> _activeTransfers = [];
+    private readonly List<TransferSnapshot> _completedTransfers = [];
+    private bool _transfersLoaded;
 
     public async Task<(ShareRecord Share, string Url)> CreateShareAsync(CreateShareRequest request, CancellationToken cancellationToken)
     {
@@ -31,6 +37,12 @@ internal sealed class ShareCoordinator(
         var mode = request.PublishMode ?? settings.DefaultPublishMode;
         var publicBaseUrl = await EnsureTunnelBaseUrlAsync(mode, cancellationToken)
             ?? throw new InvalidOperationException(GetMissingPublishModeMessage(mode));
+
+        var existingShare = await TryGetReusableShareAsync(fileInfo, request, mode, publicBaseUrl, cancellationToken);
+        if (existingShare is not null)
+        {
+            return (existingShare, ShareUrlBuilder.Build(existingShare.PublicBaseUrl, existingShare.Token, existingShare.Slug));
+        }
 
         var share = new ShareRecord
         {
@@ -53,6 +65,38 @@ internal sealed class ShareCoordinator(
         await shareStore.AddShareAsync(share, cancellationToken);
         await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareCreated, DateTimeOffset.UtcNow, share), cancellationToken);
         return (share, ShareUrlBuilder.Build(publicBaseUrl, share.Token, share.Slug));
+    }
+
+    private async Task<ShareRecord?> TryGetReusableShareAsync(
+        FileInfo fileInfo,
+        CreateShareRequest request,
+        PublishMode mode,
+        string publicBaseUrl,
+        CancellationToken cancellationToken)
+    {
+        var normalizedFilePath = fileInfo.FullName;
+        var normalizedBaseUrl = NormalizeBaseUrl(publicBaseUrl);
+        var shares = await shareStore.ListSharesAsync(cancellationToken);
+
+        foreach (var share in shares)
+        {
+            if (!string.Equals(share.FilePath, normalizedFilePath, StringComparison.OrdinalIgnoreCase) ||
+                share.PublishMode != mode ||
+                !string.Equals(NormalizeBaseUrl(share.PublicBaseUrl), normalizedBaseUrl, StringComparison.OrdinalIgnoreCase) ||
+                (request.ExpiresAtUtc is not null && share.ExpiresAtUtc != request.ExpiresAtUtc) ||
+                (request.MaxUses is not null && share.MaxUses != request.MaxUses))
+            {
+                continue;
+            }
+
+            var resolvedShare = await ResolveDownloadAsync(share.Token, cancellationToken);
+            if (resolvedShare?.State == ShareState.Active)
+            {
+                return share;
+            }
+        }
+
+        return null;
     }
 
     public Task<IReadOnlyList<ShareRecord>> ListSharesAsync(CancellationToken cancellationToken) => shareStore.ListSharesAsync(cancellationToken);
@@ -124,6 +168,7 @@ internal sealed class ShareCoordinator(
         await shareStore.SaveSettingsAsync(settings, cancellationToken);
         startupRegistrationService.Apply(settings.StartOnLogin);
         await contextMenuRegistrationService.ApplyAsync(settings.AddFileContextMenuButton, cancellationToken);
+        await PruneTransfersAsync(cancellationToken);
         await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.SettingsUpdated, DateTimeOffset.UtcNow, settings), cancellationToken);
     }
 
@@ -134,43 +179,187 @@ internal sealed class ShareCoordinator(
         => shareStore.SavePublishProfileAsync(profile, cancellationToken);
 
     public Task<IReadOnlyList<TransferSnapshot>> GetTransfersAsync(CancellationToken cancellationToken)
-        => Task.FromResult<IReadOnlyList<TransferSnapshot>>(_transfers.OrderByDescending(entry => entry.StartedAtUtc).ToList());
-
-    public async Task MarkTransferCompletedAsync(string shareId, string token, string fileName, string? remoteAddress, long bytesSent, long totalBytes, bool succeeded, string? error, CancellationToken cancellationToken)
     {
-        var startedAt = DateTimeOffset.UtcNow;
-        var transfer = new TransferSnapshot
-        {
-            ShareId = shareId,
-            Token = token,
-            FileName = fileName,
-            RemoteAddress = remoteAddress,
-            BytesSent = bytesSent,
-            TotalBytes = totalBytes,
-            StartedAtUtc = startedAt,
-            CompletedAtUtc = DateTimeOffset.UtcNow,
-            Succeeded = succeeded,
-            Error = error,
-        };
+        return GetTransfersCoreAsync(cancellationToken);
+    }
 
-        _transfers.Add(transfer);
-        if (_transfers.Count > 100)
+    private async Task<IReadOnlyList<TransferSnapshot>> GetTransfersCoreAsync(CancellationToken cancellationToken)
+    {
+        await EnsureTransfersLoadedAsync(cancellationToken);
+        lock (_transferLock)
         {
-            _transfers.RemoveRange(0, _transfers.Count - 100);
+            var active = _activeTransfers.Values.OrderByDescending(entry => entry.StartedAtUtc);
+            var completed = _completedTransfers.OrderByDescending(entry => entry.StartedAtUtc);
+            return active.Concat(completed).ToList();
+        }
+    }
+
+    public async Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, CancellationToken cancellationToken)
+    {
+        await EnsureTransfersLoadedAsync(cancellationToken);
+        TransferSnapshot transfer;
+        lock (_transferLock)
+        {
+            var resumedTransferIndex = bytesSent > 0
+                ? _completedTransfers.FindLastIndex((entry) => IsMatchingResumableTransfer(
+                    entry,
+                    shareId,
+                    token,
+                    clientSessionId,
+                    clientFingerprint,
+                    totalBytes,
+                    bytesSent))
+                : -1;
+
+            if (resumedTransferIndex >= 0)
+            {
+                var resumedTransfer = _completedTransfers[resumedTransferIndex];
+                _completedTransfers.RemoveAt(resumedTransferIndex);
+                transfer = resumedTransfer with
+                {
+                    BytesSent = Math.Max(resumedTransfer.BytesSent, bytesSent),
+                    LastUpdatedAtUtc = DateTimeOffset.UtcNow,
+                    CompletedAtUtc = null,
+                    State = TransferState.InProgress,
+                    IsActive = true,
+                    Succeeded = false,
+                    Error = null,
+                };
+            }
+            else
+            {
+                transfer = new TransferSnapshot
+                {
+                    Id = Guid.NewGuid().ToString("N"),
+                    ShareId = shareId,
+                    Token = token,
+                    FileName = fileName,
+                    ClientSessionId = clientSessionId,
+                    ClientFingerprint = clientFingerprint,
+                    RemoteAddress = remoteAddress,
+                    BytesSent = bytesSent,
+                    TotalBytes = totalBytes,
+                    StartedAtUtc = DateTimeOffset.UtcNow,
+                    LastUpdatedAtUtc = DateTimeOffset.UtcNow,
+                    CompletedAtUtc = null,
+                    State = TransferState.InProgress,
+                    IsActive = true,
+                    Succeeded = false,
+                    Error = null,
+                };
+            }
+
+            _activeTransfers[transfer.Id] = transfer;
         }
 
+        await shareStore.SaveTransferAsync(transfer, cancellationToken);
+
+        await runtimeEventStream.PublishAsync(
+            new RuntimeEvent(RuntimeEventType.TransferStarted, DateTimeOffset.UtcNow, transfer),
+            cancellationToken);
+
+        return transfer;
+    }
+
+    public Task UpdateTransferProgressAsync(string transferId, long bytesSent, CancellationToken cancellationToken)
+    {
+        return UpdateTransferProgressCoreAsync(transferId, bytesSent, cancellationToken);
+    }
+
+    private async Task UpdateTransferProgressCoreAsync(string transferId, long bytesSent, CancellationToken cancellationToken)
+    {
+        await EnsureTransfersLoadedAsync(cancellationToken);
+        TransferSnapshot? updatedTransfer = null;
+        lock (_transferLock)
+        {
+            if (_activeTransfers.TryGetValue(transferId, out var transfer))
+            {
+                updatedTransfer = transfer with
+                {
+                    BytesSent = Math.Max(transfer.BytesSent, bytesSent),
+                    LastUpdatedAtUtc = DateTimeOffset.UtcNow,
+                    State = TransferState.InProgress,
+                };
+                _activeTransfers[transferId] = updatedTransfer;
+            }
+        }
+
+        if (updatedTransfer is null)
+        {
+            return;
+        }
+
+        await shareStore.SaveTransferAsync(updatedTransfer, cancellationToken);
+        await runtimeEventStream.PublishAsync(
+            new RuntimeEvent(RuntimeEventType.TransferProgress, DateTimeOffset.UtcNow, updatedTransfer),
+            cancellationToken);
+    }
+
+    public async Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? error, CancellationToken cancellationToken)
+    {
+        await EnsureTransfersLoadedAsync(cancellationToken);
+        TransferSnapshot completedTransfer;
+        RuntimeEventType eventType;
+        TransferSnapshot? activeTransfer = null;
+        lock (_transferLock)
+        {
+            var startedAt = DateTimeOffset.UtcNow;
+            if (_activeTransfers.Remove(transferId, out activeTransfer))
+            {
+                startedAt = activeTransfer.StartedAtUtc;
+                remoteAddress ??= activeTransfer.RemoteAddress;
+                bytesSent = Math.Max(bytesSent, activeTransfer.BytesSent);
+            }
+
+            completedTransfer = new TransferSnapshot
+            {
+                Id = transferId,
+                ShareId = shareId,
+                Token = token,
+                FileName = fileName,
+                ClientSessionId = activeTransfer?.ClientSessionId,
+                ClientFingerprint = activeTransfer?.ClientFingerprint,
+                RemoteAddress = remoteAddress,
+                BytesSent = bytesSent,
+                TotalBytes = totalBytes,
+                StartedAtUtc = startedAt,
+                LastUpdatedAtUtc = DateTimeOffset.UtcNow,
+                CompletedAtUtc = DateTimeOffset.UtcNow,
+                State = paused ? TransferState.Paused : succeeded ? TransferState.Completed : TransferState.Failed,
+                IsActive = false,
+                Succeeded = succeeded,
+                Error = error,
+            };
+
+            _completedTransfers.Add(completedTransfer);
+            if (_completedTransfers.Count > 100)
+            {
+                _completedTransfers.RemoveRange(0, _completedTransfers.Count - 100);
+            }
+        }
+
+        eventType = paused
+            ? RuntimeEventType.TransferPaused
+            : succeeded
+                ? RuntimeEventType.TransferCompleted
+                : RuntimeEventType.TransferFailed;
+
+        await shareStore.SaveTransferAsync(completedTransfer, cancellationToken);
+
         var share = await shareStore.GetShareByIdAsync(shareId, cancellationToken);
-        if (share is not null && succeeded && bytesSent >= totalBytes)
+        if (share is not null && countsTowardUsage && succeeded && bytesSent >= totalBytes)
         {
             share = share with { UseCount = share.UseCount + 1, LastAccessedAtUtc = DateTimeOffset.UtcNow };
             await shareStore.UpdateShareAsync(share, cancellationToken);
         }
 
+        await PruneTransfersAsync(cancellationToken);
+
         await runtimeEventStream.PublishAsync(
             new RuntimeEvent(
-                succeeded ? RuntimeEventType.TransferCompleted : RuntimeEventType.TransferFailed,
+                eventType,
                 DateTimeOffset.UtcNow,
-                transfer),
+                completedTransfer),
             cancellationToken);
     }
 
@@ -445,10 +634,126 @@ internal sealed class ShareCoordinator(
         return new RuntimeSnapshot
         {
             Shares = await shareStore.ListSharesAsync(cancellationToken),
-            Transfers = await GetTransfersAsync(cancellationToken),
+            Transfers = await GetTransfersCoreAsync(cancellationToken),
             Settings = await shareStore.GetSettingsAsync(cancellationToken),
             Cloudflared = await shareStore.GetCloudflaredStateAsync(cancellationToken),
         };
+    }
+
+    private async Task EnsureTransfersLoadedAsync(CancellationToken cancellationToken)
+    {
+        if (_transfersLoaded)
+        {
+            return;
+        }
+
+        await _transferLoadGate.WaitAsync(cancellationToken);
+        try
+        {
+            if (_transfersLoaded)
+            {
+                return;
+            }
+
+            var transfers = await shareStore.ListTransfersAsync(cancellationToken);
+            var staleTransfers = new List<TransferSnapshot>();
+
+            lock (_transferLock)
+            {
+                _activeTransfers.Clear();
+                _completedTransfers.Clear();
+
+                foreach (var transfer in transfers)
+                {
+                    if (transfer.IsActive || transfer.State == TransferState.InProgress)
+                    {
+                        var staleTransfer = transfer with
+                        {
+                            IsActive = false,
+                            State = TransferState.Paused,
+                            CompletedAtUtc = transfer.CompletedAtUtc ?? transfer.LastUpdatedAtUtc,
+                            Error = null,
+                            Succeeded = false,
+                        };
+                        _completedTransfers.Add(staleTransfer);
+                        staleTransfers.Add(staleTransfer);
+                        continue;
+                    }
+
+                    _completedTransfers.Add(transfer);
+                }
+
+                _transfersLoaded = true;
+            }
+
+            foreach (var staleTransfer in staleTransfers)
+            {
+                await shareStore.SaveTransferAsync(staleTransfer, cancellationToken);
+            }
+
+            await PruneTransfersAsync(cancellationToken);
+        }
+        finally
+        {
+            _transferLoadGate.Release();
+        }
+    }
+
+    private async Task PruneTransfersAsync(CancellationToken cancellationToken)
+    {
+        var retentionDays = Math.Max(1, (await shareStore.GetSettingsAsync(cancellationToken)).TransferLogRetentionDays);
+        var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays);
+
+        lock (_transferLock)
+        {
+            _completedTransfers.RemoveAll(transfer => transfer.CompletedAtUtc is not null && transfer.CompletedAtUtc < cutoff);
+        }
+
+        await shareStore.PruneCompletedTransfersAsync(cutoff, cancellationToken);
+    }
+
+    private static bool IsMatchingResumableTransfer(
+        TransferSnapshot entry,
+        string shareId,
+        string token,
+        string? clientSessionId,
+        string? clientFingerprint,
+        long totalBytes,
+        long requestedFrom)
+    {
+        if (entry.State is not TransferState.Paused and not TransferState.Failed)
+        {
+            return false;
+        }
+
+        if (entry.ShareId != shareId || entry.Token != token || entry.TotalBytes != totalBytes)
+        {
+            return false;
+        }
+
+        if (entry.LastUpdatedAtUtc < DateTimeOffset.UtcNow.Subtract(TransferResumeWindow))
+        {
+            return false;
+        }
+
+        if (requestedFrom <= 0 || requestedFrom > entry.BytesSent)
+        {
+            return false;
+        }
+
+        if (entry.BytesSent - requestedFrom > TransferResumeToleranceBytes)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(clientSessionId))
+        {
+            return string.Equals(entry.ClientSessionId, clientSessionId, StringComparison.Ordinal);
+        }
+
+        return string.IsNullOrWhiteSpace(entry.ClientSessionId) &&
+               !string.IsNullOrWhiteSpace(clientFingerprint) &&
+               string.Equals(entry.ClientFingerprint, clientFingerprint, StringComparison.Ordinal);
     }
 
     private async Task<string?> EnsureQuickTunnelUrlAsync(AppSettings settings, CancellationToken cancellationToken)
@@ -535,6 +840,8 @@ internal sealed class ShareCoordinator(
             _ => "No public URL is available for the selected publish mode.",
         };
     }
+
+    private static string NormalizeBaseUrl(string baseUrl) => baseUrl.Trim().TrimEnd('/');
 
     private async Task<CloudflareLoginToken?> TryReadCloudflareLoginTokenAsync(CancellationToken cancellationToken)
     {

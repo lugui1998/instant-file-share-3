@@ -1,0 +1,10 @@
+HTTP/1.1 206 Partial Content
+Content-Length: 262144
+Content-Type: application/octet-stream
+Date: Wed, 25 Mar 2026 00:26:01 GMT
+Server: Kestrel
+Accept-Ranges: bytes
+Content-Range: bytes 0-262143/1048576
+Set-Cookie: ifs-download-4JHtZJbBF77I6VdJIYQUGN=d05eaf608b03e4686a7ec9614c4b5654; expires=Fri, 24 Apr 2026 00:26:01 GMT; path=/s/4JHtZJbBF77I6VdJIYQUGN; samesite=lax; httponly
+Content-Disposition: attachment; filename=resume-test.bin; filename*=UTF-8''resume-test.bin
+

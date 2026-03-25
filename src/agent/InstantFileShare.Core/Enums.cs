@@ -38,4 +38,14 @@ public enum RuntimeEventType
     TransferFailed = 5,
     SettingsUpdated = 6,
     CloudflaredUpdated = 7,
+    TransferProgress = 8,
+    TransferPaused = 9,
+}
+
+public enum TransferState
+{
+    InProgress = 0,
+    Paused = 1,
+    Completed = 2,
+    Failed = 3,
 }

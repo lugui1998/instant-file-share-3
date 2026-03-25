@@ -26,10 +26,26 @@ type AgentRuntimeSnapshot = {
 type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
 type FileChangeBehavior = 'Strict' | 'Lenient'
 type TransferRecord = Record<string, unknown> & {
+  id: string
+  shareId: string
+  token: string
   fileName?: string | null
   remoteAddress?: string | null
-  bytesSent?: number | null
-  succeeded?: boolean | null
+  bytesSent: number
+  totalBytes: number
+  startedAtUtc: string
+  lastUpdatedAtUtc: string
+  completedAtUtc?: string | null
+  state: 'InProgress' | 'Paused' | 'Completed' | 'Failed'
+  isActive: boolean
+  succeeded: boolean
+  error?: string | null
+}
+
+type RuntimeEvent = {
+  type: string
+  occurredAtUtc: string
+  payload: Record<string, unknown>
 }
 
 type AppSettings = {
@@ -42,12 +58,14 @@ type AppSettings = {
   bandwidthLimitBytesPerSecond?: number | null
   cloudflaredPathOverride?: string | null
   startOnLogin: boolean
+  openDashboardOnStart: boolean
   manualBindAddress: string
   manualPublicPort: number
   manualBaseUrl?: string | null
   localApiPort: number
   showLogs: boolean
   addFileContextMenuButton: boolean
+  transferLogRetentionDays: number
 }
 
 type CloudflareDomainOption = {
@@ -90,6 +108,7 @@ type CloudflaredDashboardStatus = {
 type AgentBridge = {
   getRuntime(): Promise<AgentRuntimeSnapshot>
   getShares(): Promise<AgentShareRecord[]>
+  getTransfers(): Promise<TransferRecord[]>
   createShare(filePath: string, publishMode?: string): Promise<{ share: AgentShareRecord; url: string }>
   revokeShare(shareId: string): Promise<void>
   getSettings(): Promise<Record<string, unknown>>
@@ -109,7 +128,7 @@ type AgentBridge = {
   createManagedTunnel(domain: string, subdomain: string): Promise<Record<string, unknown>>
   getAgentLogs(): Promise<string>
   getCloudflareLogs(): Promise<string>
-  connectRuntime(onMessage: (event: Record<string, unknown>) => void): () => void
+  connectRuntime(onMessage: (event: RuntimeEvent) => void): () => void
 }
 
 const agentBaseUrl = import.meta.env.VITE_AGENT_BASE_URL ?? 'http://127.0.0.1:46430'
@@ -140,6 +159,7 @@ function createBrowserBridge(): AgentBridge {
   return {
     getRuntime: () => request<AgentRuntimeSnapshot>('/api/runtime'),
     getShares: () => request<AgentShareRecord[]>('/api/shares'),
+    getTransfers: () => request<TransferRecord[]>('/api/transfers'),
     createShare: (filePath: string, publishMode?: string) =>
       request<{ share: AgentShareRecord; url: string }>('/api/shares', {
         method: 'POST',
@@ -185,10 +205,10 @@ function createBrowserBridge(): AgentBridge {
       const response = await fetch(`${agentBaseUrl}/api/logs/cloudflare`)
       return response.text()
     },
-    connectRuntime: (onMessage: (event: Record<string, unknown>) => void) => {
+    connectRuntime: (onMessage: (event: RuntimeEvent) => void) => {
       const socket = new WebSocket(runtimeSocketUrl)
       socket.addEventListener('message', (event) => {
-        onMessage(JSON.parse(event.data as string) as Record<string, unknown>)
+        onMessage(JSON.parse(event.data as string) as RuntimeEvent)
       })
       return () => socket.close()
     },
@@ -209,5 +229,6 @@ export type {
   CloudflareManagedAvailability,
   CloudflareManagedStatus,
   PublishMode,
+  RuntimeEvent,
   TransferRecord,
 }

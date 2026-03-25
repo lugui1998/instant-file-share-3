@@ -4,8 +4,12 @@ using InstantFileShare.Core;
 
 namespace InstantFileShare.Agent;
 
-internal sealed class PipeCommandServer(IPipeCommandHandler handler) : BackgroundService
+internal sealed class PipeCommandServer(
+    IPipeCommandHandler handler,
+    ILogger<PipeCommandServer> logger) : BackgroundService
 {
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         while (!stoppingToken.IsCancellationRequested)
@@ -28,17 +32,18 @@ internal sealed class PipeCommandServer(IPipeCommandHandler handler) : Backgroun
             {
                 var command = string.IsNullOrWhiteSpace(payload)
                     ? null
-                    : JsonSerializer.Deserialize<PipeCommand>(payload);
+                    : JsonSerializer.Deserialize<PipeCommand>(payload, JsonOptions);
                 result = command is null
                     ? new PipeCommandResult(false, "Invalid payload.")
                     : await handler.HandleAsync(command, stoppingToken);
             }
             catch (Exception exception)
             {
+                logger.LogError(exception, "Pipe command failed. Payload: {Payload}", payload);
                 result = new PipeCommandResult(false, exception.Message);
             }
 
-            await writer.WriteLineAsync(JsonSerializer.Serialize(result));
+            await writer.WriteLineAsync(JsonSerializer.Serialize(result, JsonOptions));
         }
     }
 }

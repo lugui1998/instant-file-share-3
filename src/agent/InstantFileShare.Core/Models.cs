@@ -44,12 +44,14 @@ public sealed record AppSettings
     public long? BandwidthLimitBytesPerSecond { get; init; } = null;
     public string? CloudflaredPathOverride { get; init; }
     public bool StartOnLogin { get; init; } = true;
+    public bool OpenDashboardOnStart { get; init; } = false;
     public string ManualBindAddress { get; init; } = Defaults.PublicBindAddress;
     public int ManualPublicPort { get; init; } = Defaults.PublicPort;
     public string? ManualBaseUrl { get; init; }
     public int LocalApiPort { get; init; } = Defaults.LocalApiPort;
     public bool ShowLogs { get; init; } = false;
     public bool AddFileContextMenuButton { get; init; } = false;
+    public int TransferLogRetentionDays { get; init; } = 30;
 }
 
 public sealed record CloudflaredState
@@ -65,14 +67,20 @@ public sealed record CloudflaredState
 
 public sealed record TransferSnapshot
 {
+    public required string Id { get; init; }
     public required string ShareId { get; init; }
     public required string Token { get; init; }
     public required string FileName { get; init; }
+    public string? ClientSessionId { get; init; }
+    public string? ClientFingerprint { get; init; }
     public string? RemoteAddress { get; init; }
     public long BytesSent { get; init; }
     public long TotalBytes { get; init; }
     public DateTimeOffset StartedAtUtc { get; init; }
+    public DateTimeOffset LastUpdatedAtUtc { get; init; }
     public DateTimeOffset? CompletedAtUtc { get; init; }
+    public TransferState State { get; init; }
+    public bool IsActive { get; init; }
     public bool Succeeded { get; init; }
     public string? Error { get; init; }
 }

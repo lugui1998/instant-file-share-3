@@ -81,6 +81,11 @@ const cloudflareLoginLabel = computed(() =>
       />
       <ToggleField v-model="settingsDraft.startOnLogin" input-id="start-on-login" label="Start on login" />
       <ToggleField
+        v-model="settingsDraft.openDashboardOnStart"
+        input-id="open-dashboard-on-start"
+        label="Open Dashboard on start"
+      />
+      <ToggleField
         v-model="settingsDraft.addFileContextMenuButton"
         input-id="file-context-button"
         label="Add to file context menu"
@@ -120,7 +125,15 @@ const cloudflareLoginLabel = computed(() =>
         <input id="local-api-port" v-model.number="settingsDraft.localApiPort" type="number" min="1" max="65535" />
       </div>
 
-      <p v-if="saveMessage" class="save-message">{{ saveMessage }}</p>
+      <div class="field">
+        <label for="transfer-log-retention-days">Transfer log retention days</label>
+        <input
+          id="transfer-log-retention-days"
+          v-model.number="settingsDraft.transferLogRetentionDays"
+          type="number"
+          min="1"
+        />
+      </div>
     </SettingCard>
 
     <SettingCard eyebrow="Cloudflare">
