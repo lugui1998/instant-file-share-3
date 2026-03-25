@@ -19,6 +19,7 @@ internal sealed class ShareCoordinator(
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan TransferResumeWindow = TimeSpan.FromMinutes(30);
     private const long TransferResumeToleranceBytes = 1024 * 1024;
+    private static readonly TimeSpan ExpiryComparisonTolerance = TimeSpan.FromSeconds(5);
     private readonly object _transferLock = new();
     private readonly SemaphoreSlim _transferLoadGate = new(1, 1);
     private readonly Dictionary<string, TransferSnapshot> _activeTransfers = [];
@@ -38,7 +39,7 @@ internal sealed class ShareCoordinator(
         var publicBaseUrl = await EnsureTunnelBaseUrlAsync(mode, cancellationToken)
             ?? throw new InvalidOperationException(GetMissingPublishModeMessage(mode));
 
-        var existingShare = await TryGetReusableShareAsync(fileInfo, request, mode, publicBaseUrl, cancellationToken);
+        var existingShare = await TryGetReusableShareAsync(fileInfo, request, settings, mode, publicBaseUrl, cancellationToken);
         if (existingShare is not null)
         {
             return (existingShare, ShareUrlBuilder.Build(existingShare.PublicBaseUrl, existingShare.Token, existingShare.Slug));
@@ -70,6 +71,7 @@ internal sealed class ShareCoordinator(
     private async Task<ShareRecord?> TryGetReusableShareAsync(
         FileInfo fileInfo,
         CreateShareRequest request,
+        AppSettings settings,
         PublishMode mode,
         string publicBaseUrl,
         CancellationToken cancellationToken)
@@ -83,8 +85,7 @@ internal sealed class ShareCoordinator(
             if (!string.Equals(share.FilePath, normalizedFilePath, StringComparison.OrdinalIgnoreCase) ||
                 share.PublishMode != mode ||
                 !string.Equals(NormalizeBaseUrl(share.PublicBaseUrl), normalizedBaseUrl, StringComparison.OrdinalIgnoreCase) ||
-                (request.ExpiresAtUtc is not null && share.ExpiresAtUtc != request.ExpiresAtUtc) ||
-                (request.MaxUses is not null && share.MaxUses != request.MaxUses))
+                !IsShareCompatibleWithRequest(share, request, settings))
             {
                 continue;
             }
@@ -842,6 +843,39 @@ internal sealed class ShareCoordinator(
     }
 
     private static string NormalizeBaseUrl(string baseUrl) => baseUrl.Trim().TrimEnd('/');
+
+    private static bool IsShareCompatibleWithRequest(ShareRecord share, CreateShareRequest request, AppSettings settings)
+    {
+        if (share.MaxUses != (request.MaxUses ?? settings.DefaultMaxUses))
+        {
+            return false;
+        }
+
+        if (request.ExpiresAtUtc is not null)
+        {
+            return share.ExpiresAtUtc == request.ExpiresAtUtc;
+        }
+
+        if (settings.DefaultExpiryValue <= 0)
+        {
+            return share.ExpiresAtUtc is null;
+        }
+
+        if (share.ExpiresAtUtc is null)
+        {
+            return false;
+        }
+
+        var expectedLifetime = settings.DefaultExpiryUnit switch
+        {
+            ExpiryUnit.Minutes => TimeSpan.FromMinutes(settings.DefaultExpiryValue),
+            ExpiryUnit.Days => TimeSpan.FromDays(settings.DefaultExpiryValue),
+            _ => TimeSpan.FromHours(settings.DefaultExpiryValue),
+        };
+
+        var actualLifetime = share.ExpiresAtUtc.Value - share.CreatedAtUtc;
+        return (actualLifetime - expectedLifetime).Duration() <= ExpiryComparisonTolerance;
+    }
 
     private static DateTimeOffset? ResolveDefaultExpiry(AppSettings settings)
     {
