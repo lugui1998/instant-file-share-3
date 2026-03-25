@@ -15,6 +15,7 @@ var initialSettings = await store.GetSettingsAsync(CancellationToken.None);
 var fileLogStore = new global::InstantFileShare.Infrastructure.FileLogStore(global::InstantFileShare.Agent.AgentPaths.GetLogsDirectory());
 
 var builder = WebApplication.CreateBuilder(args);
+var isDevelopment = builder.Environment.IsDevelopment();
 builder.Logging.AddProvider(new global::InstantFileShare.Agent.AgentFileLoggerProvider(fileLogStore));
 
 builder.WebHost.ConfigureKestrel(options =>
@@ -25,6 +26,19 @@ builder.WebHost.ConfigureKestrel(options =>
         ? parsed
         : IPAddress.Parse(Defaults.PublicBindAddress);
     options.Listen(bindAddress, initialSettings.ManualPublicPort);
+});
+
+builder.Services.AddCors(options =>
+{
+    options.AddPolicy("DevelopmentCors", policy =>
+        policy.AllowAnyOrigin()
+            .AllowAnyHeader()
+            .AllowAnyMethod());
+
+    options.AddPolicy("ReleaseCors", policy =>
+        policy.SetIsOriginAllowed(static origin => IsAllowedControlOrigin(origin))
+            .AllowAnyHeader()
+            .AllowAnyMethod());
 });
 
 builder.Services.ConfigureHttpJsonOptions(options =>
@@ -51,6 +65,7 @@ builder.Services.AddSingleton<IHostedService>(provider => provider.GetRequiredSe
 
 var app = builder.Build();
 app.UseWebSockets();
+app.UseCors(isDevelopment ? "DevelopmentCors" : "ReleaseCors");
 
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 jsonOptions.Converters.Add(new JsonStringEnumConverter());
@@ -604,4 +619,25 @@ static string FormatFileSize(long bytes)
     }
 
     return unitIndex == 0 ? $"{size:0} {units[unitIndex]}" : $"{size:0.0} {units[unitIndex]}";
+}
+
+static bool IsAllowedControlOrigin(string? origin)
+{
+    if (string.IsNullOrWhiteSpace(origin))
+    {
+        return false;
+    }
+
+    if (string.Equals(origin, "null", StringComparison.OrdinalIgnoreCase))
+    {
+        return true;
+    }
+
+    if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))
+    {
+        return false;
+    }
+
+    return string.Equals(uri.Host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase);
 }
