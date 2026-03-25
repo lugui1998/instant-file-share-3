@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, type OpenDialogOptions } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -6,12 +6,17 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rendererUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173'
 let mainWindow: BrowserWindow | null = null
 
+function getRendererEntry() {
+  return path.join(app.getAppPath(), 'dist', 'index.html')
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1320,
     height: 880,
     minWidth: 1100,
     minHeight: 760,
+    autoHideMenuBar: true,
     backgroundColor: '#101112',
     title: 'Instant File Share',
     webPreferences: {
@@ -25,11 +30,13 @@ function createWindow() {
   if (!app.isPackaged) {
     void mainWindow.loadURL(rendererUrl)
   } else {
-    void mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'))
+    void mainWindow.loadFile(getRendererEntry())
   }
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null)
+
   ipcMain.handle('cloudflared:pickExecutable', async () => {
     const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
     const options: OpenDialogOptions = {

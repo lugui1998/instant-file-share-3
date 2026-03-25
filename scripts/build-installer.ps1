@@ -64,7 +64,10 @@ function Resolve-InnoSetupCompiler {
 Write-Host 'Cleaning staged package output...'
 Remove-Item $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $installerOutput -Recurse -Force -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Path $agentStage, $shellStage, $uiStage, $installerOutput | Out-Null
+
+foreach ($directory in @($stageRoot, $agentStage, $shellStage, $uiStage, $installerOutput)) {
+  New-Item -ItemType Directory -Path $directory -Force | Out-Null
+}
 
 Write-Host 'Publishing agent...'
 dotnet publish `

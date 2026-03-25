@@ -85,6 +85,14 @@ Notes:
 - if `iscc` is available on `PATH`, the installer is written to `artifacts\package\installer`
 - if Inno Setup is not installed, the script still prepares the staged files so the installer can be compiled later
 
+For a fully clean local uninstall before reinstalling, use:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-clean.ps1
+```
+
+That script stops the installed processes, runs the installer uninstaller when present, removes startup/context-menu registration, and deletes the local app data under `%LOCALAPPDATA%\InstantFileShare`.
+
 ## Current MVP behaviors
 
 - the local agent owns the share database, tray notifications, download server, startup integration, and `cloudflared` process supervision

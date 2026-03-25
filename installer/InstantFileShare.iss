@@ -40,7 +40,7 @@ Name: "{autoprograms}\{#AppName}\Dashboard"; Filename: "{app}\ui\{#DashboardExe}
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\ui\{#DashboardExe}"
 
 [Run]
-Filename: "{app}\{#AgentExe}"; Description: "Start Instant File Share agent"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AgentExe}"; Description: "Start Instant File Share"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -50,8 +50,10 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     Exec(ExpandConstant('{cmd}'), '/c taskkill /IM "{#AgentExe}" /F', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    Exec(ExpandConstant('{cmd}'), '/c taskkill /IM "{#DashboardExe}" /F', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
     Exec(ExpandConstant('{app}\instant_file_share_shell.exe'), '--unregister-context-menu', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'InstantFileShare');
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\*\shell\InstantFileShare');
+    DelTree(ExpandConstant('{localappdata}\InstantFileShare'), True, True, True);
   end;
 end;
