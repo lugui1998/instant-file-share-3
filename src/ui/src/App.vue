@@ -58,7 +58,7 @@ const settingsDraft = ref<AppSettings>({
   manualBaseUrl: '',
   localApiPort: 46430,
   showLogs: false,
-  addFileContextMenuButton: false,
+  addFileContextMenuButton: true,
   transferLogRetentionDays: 30,
 })
 

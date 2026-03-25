@@ -17,13 +17,6 @@ public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger)
 
     public Task Launch(string repositoryRoot)
     {
-        var uiPath = Path.Combine(repositoryRoot, "src", "ui");
-        var packageJson = Path.Combine(uiPath, "package.json");
-        if (!File.Exists(packageJson))
-        {
-            return Task.CompletedTask;
-        }
-
         lock (_sync)
         {
             if (_process is { HasExited: false })
@@ -34,14 +27,11 @@ public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger)
             DisposeTrackedProcess();
             ReleaseJobHandle();
 
-            var startInfo = new ProcessStartInfo
+            var startInfo = CreateStartInfo(repositoryRoot);
+            if (startInfo is null)
             {
-                FileName = "cmd.exe",
-                Arguments = "/c npm run electron:dev",
-                WorkingDirectory = uiPath,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-            };
+                return Task.CompletedTask;
+            }
 
             try
             {
@@ -76,6 +66,48 @@ public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger)
         }
 
         return Task.CompletedTask;
+    }
+
+    private static ProcessStartInfo? CreateStartInfo(string repositoryRoot)
+    {
+        var installedUiExe = ResolveInstalledUiExecutable();
+        if (installedUiExe is not null)
+        {
+            return new ProcessStartInfo
+            {
+                FileName = installedUiExe,
+                WorkingDirectory = Path.GetDirectoryName(installedUiExe)!,
+                UseShellExecute = true,
+            };
+        }
+
+        var uiPath = Path.Combine(repositoryRoot, "src", "ui");
+        var packageJson = Path.Combine(uiPath, "package.json");
+        if (!File.Exists(packageJson))
+        {
+            return null;
+        }
+
+        return new ProcessStartInfo
+        {
+            FileName = "cmd.exe",
+            Arguments = "/c npm run electron:dev",
+            WorkingDirectory = uiPath,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+    }
+
+    private static string? ResolveInstalledUiExecutable()
+    {
+        var baseDirectory = AppContext.BaseDirectory;
+        var candidates = new[]
+        {
+            Path.Combine(baseDirectory, "ui", "Instant File Share.exe"),
+            Path.Combine(baseDirectory, "ui", "InstantFileShare.UI.exe"),
+        };
+
+        return candidates.FirstOrDefault(File.Exists);
     }
 
     public void Dispose()

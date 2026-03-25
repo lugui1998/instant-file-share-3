@@ -47,9 +47,12 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
 
     private static string? ResolveShellHelperPath()
     {
+        var baseDirectory = AppContext.BaseDirectory;
         var repositoryRoot = AgentPaths.GetRepositoryRoot();
         var candidates = new[]
         {
+            Path.Combine(baseDirectory, "instant_file_share_shell.exe"),
+            Path.Combine(baseDirectory, "shell", "instant_file_share_shell.exe"),
             Path.Combine(repositoryRoot, "build", "shell-extension", "Debug", "instant_file_share_shell.exe"),
             Path.Combine(repositoryRoot, "build", "shell-extension", "Release", "instant_file_share_shell.exe"),
         };
