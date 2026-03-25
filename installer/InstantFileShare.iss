@@ -41,6 +41,7 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\ui\{#DashboardExe}"
 
 [Run]
 Filename: "{app}\{#AgentExe}"; Description: "Start Instant File Share"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\ui\{#DashboardExe}"; Description: "Open Instant File Share Dashboard"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
