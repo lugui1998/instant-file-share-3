@@ -1,13 +1,50 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu, type OpenDialogOptions } from 'electron'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rendererUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173'
+const agentBaseUrl = 'http://127.0.0.1:46430'
 let mainWindow: BrowserWindow | null = null
 
 function getRendererEntry() {
   return path.join(app.getAppPath(), 'dist', 'index.html')
+}
+
+function getInstalledAgentPath() {
+  return path.resolve(path.dirname(process.execPath), '..', 'InstantFileShare.Agent.exe')
+}
+
+async function isAgentReachable() {
+  try {
+    const response = await fetch(`${agentBaseUrl}/`)
+    return response.ok
+  } catch {
+    return false
+  }
+}
+
+async function ensureInstalledAgentRunning() {
+  if (!app.isPackaged) {
+    return
+  }
+
+  if (await isAgentReachable()) {
+    return
+  }
+
+  const agentPath = getInstalledAgentPath()
+  try {
+    const child = spawn(agentPath, [], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+    })
+    child.unref()
+  } catch {
+    return
+  }
 }
 
 function createWindow() {
@@ -55,11 +92,15 @@ app.whenReady().then(() => {
     return result.canceled ? null : (result.filePaths[0] ?? null)
   })
 
-  createWindow()
+  void ensureInstalledAgentRunning().finally(() => {
+    createWindow()
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow()
+      void ensureInstalledAgentRunning().finally(() => {
+        createWindow()
+      })
     }
   })
 })

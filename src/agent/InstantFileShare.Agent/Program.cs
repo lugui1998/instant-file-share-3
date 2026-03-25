@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using InstantFileShare.Core;
@@ -227,6 +228,21 @@ static async Task<IResult> HandleDownloadAsync(
     var settings = await coordinator.GetSettingsAsync(cancellationToken);
 
     var isHead = HttpMethods.IsHead(context.Request.Method);
+    var isMetadataPreview = IsMetadataPreviewRequest(context.Request);
+
+    if (isMetadataPreview)
+    {
+        var metadataHtml = BuildShareMetadataHtml(context, share, file);
+
+        if (isHead)
+        {
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.ContentLength = Encoding.UTF8.GetByteCount(metadataHtml);
+            return Results.Empty;
+        }
+
+        return Results.Content(metadataHtml, "text/html; charset=utf-8");
+    }
 
     if (isHead)
     {
@@ -502,4 +518,90 @@ static string? BuildClientFingerprint(string? remoteAddress, string? userAgent)
 
     var payload = $"{remoteAddress}\n{userAgent.Trim()}";
     return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
+}
+
+static bool IsMetadataPreviewRequest(HttpRequest request)
+{
+    if (request.Headers.ContainsKey("Range"))
+    {
+        return false;
+    }
+
+    var userAgent = request.Headers.UserAgent.ToString();
+    if (string.IsNullOrWhiteSpace(userAgent))
+    {
+        return false;
+    }
+
+    var normalizedUserAgent = userAgent.ToLowerInvariant();
+    return normalizedUserAgent.Contains("discordbot", StringComparison.Ordinal) ||
+           normalizedUserAgent.Contains("whatsapp", StringComparison.Ordinal) ||
+           normalizedUserAgent.Contains("facebookexternalhit", StringComparison.Ordinal) ||
+           normalizedUserAgent.Contains("twitterbot", StringComparison.Ordinal) ||
+           normalizedUserAgent.Contains("slackbot", StringComparison.Ordinal) ||
+           normalizedUserAgent.Contains("linkedinbot", StringComparison.Ordinal) ||
+           normalizedUserAgent.Contains("telegrambot", StringComparison.Ordinal) ||
+           normalizedUserAgent.Contains("skypeuripreview", StringComparison.Ordinal) ||
+           normalizedUserAgent.Contains("googlebot", StringComparison.Ordinal) ||
+           normalizedUserAgent.Contains("preview", StringComparison.Ordinal);
+}
+
+static string BuildShareMetadataHtml(HttpContext context, ShareRecord share, FileInfo file)
+{
+    var currentUrl = $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{context.Request.Path}";
+    var fileName = WebUtility.HtmlEncode(share.FileName);
+    var description = WebUtility.HtmlEncode($"Download {share.FileName} ({FormatFileSize(file.Length)}) shared via Instant File Share.");
+    var encodedUrl = WebUtility.HtmlEncode(currentUrl);
+    var downloadLabel = WebUtility.HtmlEncode($"Open this link to download {share.FileName}.");
+
+    var html = new StringBuilder();
+    html.AppendLine("<!doctype html>");
+    html.AppendLine("<html lang=\"en\">");
+    html.AppendLine("  <head>");
+    html.AppendLine("    <meta charset=\"utf-8\" />");
+    html.AppendLine("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />");
+    html.AppendLine($"    <title>{fileName}</title>");
+    html.AppendLine($"    <meta name=\"description\" content=\"{description}\" />");
+    html.AppendLine("    <meta name=\"robots\" content=\"noindex, nofollow\" />");
+    html.AppendLine($"    <meta property=\"og:title\" content=\"{fileName}\" />");
+    html.AppendLine($"    <meta property=\"og:description\" content=\"{description}\" />");
+    html.AppendLine("    <meta property=\"og:type\" content=\"website\" />");
+    html.AppendLine($"    <meta property=\"og:url\" content=\"{encodedUrl}\" />");
+    html.AppendLine("    <meta property=\"og:site_name\" content=\"Instant File Share\" />");
+    html.AppendLine("    <meta name=\"twitter:card\" content=\"summary\" />");
+    html.AppendLine($"    <meta name=\"twitter:title\" content=\"{fileName}\" />");
+    html.AppendLine($"    <meta name=\"twitter:description\" content=\"{description}\" />");
+    html.AppendLine("    <style>");
+    html.AppendLine("      body { font-family: Segoe UI, Arial, sans-serif; background: #101112; color: #f3efe7; padding: 2rem; }");
+    html.AppendLine("      .card { max-width: 720px; margin: 0 auto; padding: 1.5rem; border-radius: 18px; background: #1b1f24; border: 1px solid rgba(255,255,255,0.08); }");
+    html.AppendLine("      .eyebrow { color: #ffb57d; text-transform: uppercase; letter-spacing: 0.12em; font-size: 0.72rem; }");
+    html.AppendLine("      h1 { margin: 0.35rem 0 0.75rem; font-size: 1.7rem; }");
+    html.AppendLine("      p { margin: 0; color: #d4d0ca; }");
+    html.AppendLine("    </style>");
+    html.AppendLine("  </head>");
+    html.AppendLine("  <body>");
+    html.AppendLine("    <main class=\"card\">");
+    html.AppendLine("      <p class=\"eyebrow\">Instant File Share</p>");
+    html.AppendLine($"      <h1>{fileName}</h1>");
+    html.AppendLine($"      <p>{description}</p>");
+    html.AppendLine($"      <p style=\"margin-top: 0.9rem;\">{downloadLabel}</p>");
+    html.AppendLine("    </main>");
+    html.AppendLine("  </body>");
+    html.AppendLine("</html>");
+    return html.ToString();
+}
+
+static string FormatFileSize(long bytes)
+{
+    string[] units = ["B", "KB", "MB", "GB", "TB"];
+    double size = bytes;
+    var unitIndex = 0;
+
+    while (size >= 1024 && unitIndex < units.Length - 1)
+    {
+        size /= 1024;
+        unitIndex++;
+    }
+
+    return unitIndex == 0 ? $"{size:0} {units[unitIndex]}" : $"{size:0.0} {units[unitIndex]}";
 }
