@@ -41,7 +41,7 @@ const cloudflareLoginLabel = computed(() =>
   <section class="settings-grid">
     <SettingCard eyebrow="Sharing">
       <div class="field">
-        <label for="default-publish-mode">Default publish mode</label>
+        <label for="default-publish-mode">Publish Mode</label>
         <select id="default-publish-mode" v-model="settingsDraft.defaultPublishMode">
           <option value="QuickTunnel">Quick Tunnel</option>
           <option value="ManagedCloudflare">Custom Cloudflare Domain</option>
@@ -50,12 +50,19 @@ const cloudflareLoginLabel = computed(() =>
       </div>
 
       <div class="field">
-        <label for="default-expiry-hours">Default expiry hours</label>
-        <input id="default-expiry-hours" v-model.number="settingsDraft.defaultExpiryHours" type="number" min="1" />
+        <label for="default-expiry-value">Expiry</label>
+        <div class="input-group">
+          <input id="default-expiry-value" v-model.number="settingsDraft.defaultExpiryValue" type="number" min="0" />
+          <select v-model="settingsDraft.defaultExpiryUnit" class="unit-select">
+            <option value="Minutes">Minutes</option>
+            <option value="Hours">Hours</option>
+            <option value="Days">Days</option>
+          </select>
+        </div>
       </div>
 
       <div class="field">
-        <label for="default-max-uses">Default max uses</label>
+        <label for="default-max-uses">Max Uses</label>
         <input
           id="default-max-uses"
           v-model.number="settingsDraft.defaultMaxUses"
