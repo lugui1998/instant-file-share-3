@@ -26,13 +26,6 @@ builder.WebHost.ConfigureKestrel(options =>
     options.Listen(bindAddress, initialSettings.ManualPublicPort);
 });
 
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-        policy.AllowAnyOrigin()
-            .AllowAnyHeader()
-            .AllowAnyMethod());
-});
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.Converters.Add(new JsonStringEnumConverter());
@@ -57,7 +50,6 @@ builder.Services.AddSingleton<IHostedService>(provider => provider.GetRequiredSe
 
 var app = builder.Build();
 app.UseWebSockets();
-app.UseCors();
 
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 jsonOptions.Converters.Add(new JsonStringEnumConverter());
