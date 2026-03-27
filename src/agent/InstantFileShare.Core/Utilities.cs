@@ -6,37 +6,22 @@ namespace InstantFileShare.Core;
 public static class ShareTokenGenerator
 {
     private const string Alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    public const int MinLength = 6;
+    public const int RecommendedLength = 11;
+    public const int MaxLength = 128;
 
-    public static string Generate(int byteCount = 16)
+    public static string Generate(int length = RecommendedLength)
     {
-        Span<byte> buffer = stackalloc byte[byteCount];
-        RandomNumberGenerator.Fill(buffer);
-        return ToBase62(buffer);
-    }
+        ArgumentOutOfRangeException.ThrowIfLessThan(length, MinLength);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(length, MaxLength);
 
-    private static string ToBase62(ReadOnlySpan<byte> bytes)
-    {
-        var value = new System.Numerics.BigInteger(bytes, isUnsigned: true, isBigEndian: true);
-        if (value.IsZero)
+        var buffer = new char[length];
+        for (var index = 0; index < buffer.Length; index++)
         {
-            return Alphabet[0].ToString();
+            buffer[index] = Alphabet[RandomNumberGenerator.GetInt32(Alphabet.Length)];
         }
 
-        var builder = new StringBuilder();
-        var target = new System.Numerics.BigInteger(62);
-
-        while (value > 0)
-        {
-            value = System.Numerics.BigInteger.DivRem(value, target, out var remainder);
-            builder.Insert(0, Alphabet[(int)remainder]);
-        }
-
-        while (builder.Length < 22)
-        {
-            builder.Insert(0, Alphabet[0]);
-        }
-
-        return builder.ToString();
+        return new string(buffer);
     }
 }
 

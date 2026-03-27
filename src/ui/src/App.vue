@@ -43,10 +43,15 @@ const lastSavedSettingsSignature = ref('')
 const lastManagedAvailabilityKey = ref('')
 const settingsDraft = ref<AppSettings>({
   defaultPublishMode: 'QuickTunnel',
+  publicTokenLength: 11,
   defaultExpiryValue: 24,
   defaultExpiryUnit: 'Hours',
   defaultMaxUses: null,
   friendlyUrlsEnabled: true,
+  sendMetadataToCrawlers: true,
+  openImagesInBrowser: true,
+  openVideosInBrowser: true,
+  openPdfInBrowser: true,
   fileChangeBehavior: 'Strict',
   keepAwakeWhileTransferring: true,
   bandwidthLimitBytesPerSecond: null,
@@ -579,6 +584,7 @@ watch(
       <TransfersView
         v-else-if="activeView === 'transfers'"
         :transfers="transfers"
+        :allow-rich-embed="settingsDraft.sendMetadataToCrawlers"
       />
 
       <SettingsView

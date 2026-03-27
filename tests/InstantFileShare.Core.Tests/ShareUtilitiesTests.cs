@@ -4,12 +4,15 @@ namespace InstantFileShare.Core.Tests;
 
 public sealed class ShareUtilitiesTests
 {
-    [Fact]
-    public void Generate_ShouldProduceBase62TokenWithMinimumLength()
+    [Theory]
+    [InlineData(6)]
+    [InlineData(11)]
+    [InlineData(22)]
+    public void Generate_ShouldProduceBase62TokenWithRequestedLength(int length)
     {
-        var token = ShareTokenGenerator.Generate();
+        var token = ShareTokenGenerator.Generate(length);
 
-        Assert.True(token.Length >= 22);
+        Assert.Equal(length, token.Length);
         Assert.Matches("^[0-9A-Za-z]+$", token);
     }
 
@@ -43,5 +46,43 @@ public sealed class ShareUtilitiesTests
         var url = ShareUrlBuilder.Build("https://example.com/", "abc123", "quarterly-report.pdf", "Quarterly Report.pdf");
 
         Assert.Equal("https://example.com/s/abc123/quarterly-report.pdf", url);
+    }
+
+    [Theory]
+    [InlineData("photo.JPG", "image/jpeg", ShareFileTypeCategory.Image, true)]
+    [InlineData("clip.mp4", "video/mp4", ShareFileTypeCategory.Video, true)]
+    [InlineData("report.pdf", "application/pdf", ShareFileTypeCategory.Pdf, true)]
+    [InlineData("archive.zip", ShareFileResponsePolicy.DefaultContentType, ShareFileTypeCategory.Other, false)]
+    [InlineData("README", ShareFileResponsePolicy.DefaultContentType, ShareFileTypeCategory.Other, false)]
+    public void Resolve_ShouldReturnExpectedFileResponsePolicy(
+        string fileName,
+        string contentType,
+        ShareFileTypeCategory category,
+        bool preferInline)
+    {
+        var metadata = ShareFileResponsePolicy.Resolve(fileName);
+
+        Assert.Equal(contentType, metadata.ContentType);
+        Assert.Equal(category, metadata.Category);
+        Assert.Equal(preferInline, metadata.PreferInline);
+    }
+
+    [Fact]
+    public void Resolve_ShouldRespectConfiguredBrowserBehavior()
+    {
+        var settings = new AppSettings
+        {
+            OpenImagesInBrowser = false,
+            OpenVideosInBrowser = false,
+            OpenPdfInBrowser = false,
+        };
+
+        var imageMetadata = ShareFileResponsePolicy.Resolve("photo.jpg", settings);
+        var videoMetadata = ShareFileResponsePolicy.Resolve("clip.mp4", settings);
+        var pdfMetadata = ShareFileResponsePolicy.Resolve("report.pdf", settings);
+
+        Assert.False(imageMetadata.PreferInline);
+        Assert.False(videoMetadata.PreferInline);
+        Assert.False(pdfMetadata.PreferInline);
     }
 }

@@ -31,6 +31,7 @@ type TransferRecord = Record<string, unknown> & {
   shareId: string
   token: string
   fileName?: string | null
+  requesterName?: string | null
   remoteAddress?: string | null
   bytesSent: number
   totalBytes: number
@@ -51,10 +52,15 @@ type RuntimeEvent = {
 
 type AppSettings = {
   defaultPublishMode: PublishMode
+  publicTokenLength: number
   defaultExpiryValue: number
   defaultExpiryUnit: ExpiryUnit
   defaultMaxUses?: number | null
   friendlyUrlsEnabled: boolean
+  sendMetadataToCrawlers: boolean
+  openImagesInBrowser: boolean
+  openVideosInBrowser: boolean
+  openPdfInBrowser: boolean
   fileChangeBehavior: FileChangeBehavior
   keepAwakeWhileTransferring: boolean
   bandwidthLimitBytesPerSecond?: number | null

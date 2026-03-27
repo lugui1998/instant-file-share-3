@@ -1,21 +1,25 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import type { TransferRecord } from '../../agentBridge'
+import HelpTooltip from '../settings/HelpTooltip.vue'
 import PanelHeader from '../PanelHeader.vue'
 
 const props = defineProps<{
   transfers: TransferRecord[]
+  allowRichEmbed: boolean
 }>()
 
 const pausedThresholdMs = 1500
 const now = ref(Date.now())
 const displayedTransfers = computed(() =>
-  props.transfers.map((transfer) => ({
-    ...transfer,
-    isPaused:
-      transfer.state === 'Paused' ||
-      (transfer.isActive && now.value - new Date(transfer.lastUpdatedAtUtc).getTime() >= pausedThresholdMs),
-  })),
+  props.transfers
+    .filter((transfer) => !props.allowRichEmbed || !transfer.requesterName)
+    .map((transfer) => ({
+      ...transfer,
+      isPaused:
+        transfer.state === 'Paused' ||
+        (transfer.isActive && now.value - new Date(transfer.lastUpdatedAtUtc).getTime() >= pausedThresholdMs),
+    })),
 )
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
@@ -76,6 +80,10 @@ function formatSpeedLabel(transfer: TransferRecord) {
 }
 
 function getStatusLabel(transfer: TransferRecord) {
+  if (transfer.requesterName) {
+    return 'Crawler preview'
+  }
+
   if ('isPaused' in transfer && transfer.isPaused) {
     return 'Stopped'
   }
@@ -89,6 +97,14 @@ function getStatusLabel(transfer: TransferRecord) {
   }
 
   return 'Failed / partial'
+}
+
+function getRemotePrimaryLabel(transfer: TransferRecord) {
+  return transfer.requesterName ?? transfer.remoteAddress ?? 'n/a'
+}
+
+function isCrawlerTransfer(transfer: TransferRecord) {
+  return Boolean(transfer.requesterName)
 }
 
 onMounted(() => {
@@ -121,20 +137,34 @@ onUnmounted(() => {
         <tbody>
           <tr v-for="transfer in displayedTransfers" :key="transfer.id">
             <td>{{ transfer.fileName ?? 'Unknown file' }}</td>
-            <td>{{ transfer.remoteAddress ?? 'n/a' }}</td>
+            <td>
+              <div class="status-copy">
+                <strong>{{ getRemotePrimaryLabel(transfer) }}</strong>
+                <span v-if="transfer.requesterName && transfer.remoteAddress">{{ transfer.remoteAddress }}</span>
+              </div>
+            </td>
             <td class="progress-cell">
-              <div class="progress-meta">
-                <strong>{{ Math.round(getProgressPercent(transfer)) }}%</strong>
-                <span>
-                  {{ formatProgressLabel(transfer) }}
-                  <template v-if="formatSpeedLabel(transfer)">
-                    • {{ formatSpeedLabel(transfer) }}
-                  </template>
-                </span>
+              <div v-if="isCrawlerTransfer(transfer)" class="status-copy">
+                <div class="progress-inline-label">
+                  <strong>Fetched Metadata</strong>
+                  <HelpTooltip text="Platforms send these requests to read page metadata and build the rich embed preview without downloading the shared file." />
+                </div>
+                <span>No file download</span>
               </div>
-              <div class="progress-track" :aria-label="formatProgressLabel(transfer)" role="progressbar" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="Math.round(getProgressPercent(transfer))">
-                <div class="progress-fill" :class="{ active: transfer.isActive && !transfer.isPaused, paused: transfer.isPaused }" :style="{ width: `${getProgressPercent(transfer)}%` }" />
-              </div>
+              <template v-else>
+                <div class="progress-meta">
+                  <strong>{{ Math.round(getProgressPercent(transfer)) }}%</strong>
+                  <span>
+                    {{ formatProgressLabel(transfer) }}
+                    <template v-if="formatSpeedLabel(transfer)">
+                      • {{ formatSpeedLabel(transfer) }}
+                    </template>
+                  </span>
+                </div>
+                <div class="progress-track" :aria-label="formatProgressLabel(transfer)" role="progressbar" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="Math.round(getProgressPercent(transfer))">
+                  <div class="progress-fill" :class="{ active: transfer.isActive && !transfer.isPaused, paused: transfer.isPaused }" :style="{ width: `${getProgressPercent(transfer)}%` }" />
+                </div>
+              </template>
             </td>
             <td>
               <div class="status-copy">
@@ -143,7 +173,7 @@ onUnmounted(() => {
               </div>
             </td>
           </tr>
-          <tr v-if="!transfers.length">
+          <tr v-if="!displayedTransfers.length">
             <td class="empty-state" colspan="4">No transfer events yet.</td>
           </tr>
         </tbody>

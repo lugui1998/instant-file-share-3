@@ -36,10 +36,15 @@ public sealed record PublishProfile
 public sealed record AppSettings
 {
     public PublishMode DefaultPublishMode { get; init; } = PublishMode.QuickTunnel;
+    public int PublicTokenLength { get; init; } = ShareTokenGenerator.RecommendedLength;
     public int DefaultExpiryValue { get; init; } = 24;
     public ExpiryUnit DefaultExpiryUnit { get; init; } = ExpiryUnit.Hours;
     public int? DefaultMaxUses { get; init; } = null;
     public bool FriendlyUrlsEnabled { get; init; } = true;
+    public bool SendMetadataToCrawlers { get; init; } = true;
+    public bool OpenImagesInBrowser { get; init; } = true;
+    public bool OpenVideosInBrowser { get; init; } = true;
+    public bool OpenPdfInBrowser { get; init; } = true;
     public FileChangeBehavior FileChangeBehavior { get; init; } = FileChangeBehavior.Strict;
     public bool KeepAwakeWhileTransferring { get; init; } = true;
     public long? BandwidthLimitBytesPerSecond { get; init; } = null;
@@ -72,6 +77,7 @@ public sealed record TransferSnapshot
     public required string ShareId { get; init; }
     public required string Token { get; init; }
     public required string FileName { get; init; }
+    public string? RequesterName { get; init; }
     public string? ClientSessionId { get; init; }
     public string? ClientFingerprint { get; init; }
     public string? RemoteAddress { get; init; }

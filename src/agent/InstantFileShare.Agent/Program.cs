@@ -244,11 +244,15 @@ static async Task<IResult> HandleDownloadAsync(
     var settings = await coordinator.GetSettingsAsync(cancellationToken);
 
     var isHead = HttpMethods.IsHead(context.Request.Method);
-    var isMetadataPreview = IsMetadataPreviewRequest(context.Request);
+    var crawlerName = ResolveMetadataCrawlerName(context.Request);
+    var isMetadataPreview = crawlerName is not null;
+    var fileResponseMetadata = ShareFileResponsePolicy.Resolve(share.FileName, settings);
+    var remoteAddress = ResolveClientIpAddress(context);
+    var userAgent = context.Request.Headers.UserAgent.ToString();
 
-    if (isMetadataPreview)
+    if (isMetadataPreview && settings.SendMetadataToCrawlers)
     {
-        var metadataHtml = BuildShareMetadataHtml(context, share, file);
+        var metadataHtml = BuildShareMetadataHtml(context, share, file, fileResponseMetadata);
 
         if (isHead)
         {
@@ -263,13 +267,12 @@ static async Task<IResult> HandleDownloadAsync(
     if (isHead)
     {
         context.Response.ContentLength = file.Length;
-        context.Response.Headers["Content-Disposition"] = $"attachment; filename=\"{share.FileName}\"";
+        ApplyFileResponseHeaders(context.Response, share.FileName, fileResponseMetadata);
         return Results.Empty;
     }
 
-    var remoteAddress = ResolveClientIpAddress(context);
     var (clientSessionId, setCookie) = ResolveDownloadSession(context, token);
-    var clientFingerprint = BuildClientFingerprint(remoteAddress, context.Request.Headers.UserAgent.ToString());
+    var clientFingerprint = BuildClientFingerprint(remoteAddress, userAgent);
     var requestedRange = context.Request.GetTypedHeaders().Range?.Ranges.FirstOrDefault();
     var initialBytesSent = requestedRange?.From ?? 0;
     var countsTowardUsage = !context.Request.Headers.ContainsKey("Range");
@@ -282,6 +285,7 @@ static async Task<IResult> HandleDownloadAsync(
         remoteAddress,
         file.Length,
         initialBytesSent,
+        requesterName: null,
         cancellationToken);
     if (settings.KeepAwakeWhileTransferring)
     {
@@ -328,6 +332,7 @@ static async Task<IResult> HandleDownloadAsync(
                 succeeded,
                 countsTowardUsage,
                 error,
+                requesterName: null,
                 CancellationToken.None);
         }
         finally
@@ -357,7 +362,8 @@ static async Task<IResult> HandleDownloadAsync(
             });
     }
 
-    return Results.File(meteredStream, fileDownloadName: share.FileName, enableRangeProcessing: true);
+    ApplyFileResponseHeaders(context.Response, share.FileName, fileResponseMetadata);
+    return Results.File(meteredStream, contentType: fileResponseMetadata.ContentType, enableRangeProcessing: true);
 }
 
 static async Task TrackTransferProgressAsync(
@@ -536,39 +542,98 @@ static string? BuildClientFingerprint(string? remoteAddress, string? userAgent)
     return Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(payload))).ToLowerInvariant();
 }
 
-static bool IsMetadataPreviewRequest(HttpRequest request)
+static string? ResolveMetadataCrawlerName(HttpRequest request)
 {
     if (request.Headers.ContainsKey("Range"))
     {
-        return false;
+        return null;
     }
 
     var userAgent = request.Headers.UserAgent.ToString();
     if (string.IsNullOrWhiteSpace(userAgent))
     {
-        return false;
+        return null;
     }
 
     var normalizedUserAgent = userAgent.ToLowerInvariant();
-    return normalizedUserAgent.Contains("discordbot", StringComparison.Ordinal) ||
-           normalizedUserAgent.Contains("whatsapp", StringComparison.Ordinal) ||
-           normalizedUserAgent.Contains("facebookexternalhit", StringComparison.Ordinal) ||
-           normalizedUserAgent.Contains("twitterbot", StringComparison.Ordinal) ||
-           normalizedUserAgent.Contains("slackbot", StringComparison.Ordinal) ||
-           normalizedUserAgent.Contains("linkedinbot", StringComparison.Ordinal) ||
-           normalizedUserAgent.Contains("telegrambot", StringComparison.Ordinal) ||
-           normalizedUserAgent.Contains("skypeuripreview", StringComparison.Ordinal) ||
-           normalizedUserAgent.Contains("googlebot", StringComparison.Ordinal) ||
-           normalizedUserAgent.Contains("preview", StringComparison.Ordinal);
+    if (normalizedUserAgent.Contains("discordbot", StringComparison.Ordinal))
+    {
+        return "Discordbot";
+    }
+
+    if (normalizedUserAgent.Contains("whatsapp", StringComparison.Ordinal))
+    {
+        return "WhatsApp";
+    }
+
+    if (normalizedUserAgent.Contains("facebookexternalhit", StringComparison.Ordinal))
+    {
+        return "Facebook";
+    }
+
+    if (normalizedUserAgent.Contains("twitterbot", StringComparison.Ordinal))
+    {
+        return "Twitterbot";
+    }
+
+    if (normalizedUserAgent.Contains("slackbot", StringComparison.Ordinal))
+    {
+        return "Slackbot";
+    }
+
+    if (normalizedUserAgent.Contains("linkedinbot", StringComparison.Ordinal))
+    {
+        return "LinkedIn";
+    }
+
+    if (normalizedUserAgent.Contains("telegrambot", StringComparison.Ordinal))
+    {
+        return "Telegram";
+    }
+
+    if (normalizedUserAgent.Contains("skypeuripreview", StringComparison.Ordinal))
+    {
+        return "Skype Preview";
+    }
+
+    if (normalizedUserAgent.Contains("googlebot", StringComparison.Ordinal))
+    {
+        return "Googlebot";
+    }
+
+    if (normalizedUserAgent.Contains("preview", StringComparison.Ordinal))
+    {
+        return "Link Preview";
+    }
+
+    return null;
 }
 
-static string BuildShareMetadataHtml(HttpContext context, ShareRecord share, FileInfo file)
+static void ApplyFileResponseHeaders(HttpResponse response, string fileName, ShareFileResponseMetadata metadata)
+{
+    response.ContentType = metadata.ContentType;
+    response.Headers["Content-Disposition"] = BuildContentDispositionHeader(metadata.ContentDispositionType, fileName);
+}
+
+static string BuildContentDispositionHeader(string dispositionType, string fileName)
+{
+    var escapedFileName = fileName
+        .Replace("\\", "\\\\", StringComparison.Ordinal)
+        .Replace("\"", "\\\"", StringComparison.Ordinal);
+
+    return $"{dispositionType}; filename=\"{escapedFileName}\"; filename*=UTF-8''{Uri.EscapeDataString(fileName)}";
+}
+
+static string BuildShareMetadataHtml(HttpContext context, ShareRecord share, FileInfo file, ShareFileResponseMetadata fileResponseMetadata)
 {
     var currentUrl = $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{context.Request.Path}";
     var fileName = WebUtility.HtmlEncode(share.FileName);
-    var description = WebUtility.HtmlEncode($"Download {share.FileName} ({FormatFileSize(file.Length)}) shared via Instant File Share.");
+    var actionVerb = fileResponseMetadata.PreferInline ? "View" : "Download";
+    var description = WebUtility.HtmlEncode($"{actionVerb} {share.FileName} ({FormatFileSize(file.Length)}) shared via Instant File Share.");
     var encodedUrl = WebUtility.HtmlEncode(currentUrl);
-    var downloadLabel = WebUtility.HtmlEncode($"Open this link to download {share.FileName}.");
+    var actionLabel = fileResponseMetadata.PreferInline
+        ? WebUtility.HtmlEncode($"Open this link to view {share.FileName} in your browser or download it.")
+        : WebUtility.HtmlEncode($"Open this link to download {share.FileName}.");
 
     var html = new StringBuilder();
     html.AppendLine("<!doctype html>");
@@ -600,7 +665,7 @@ static string BuildShareMetadataHtml(HttpContext context, ShareRecord share, Fil
     html.AppendLine("      <p class=\"eyebrow\">Instant File Share</p>");
     html.AppendLine($"      <h1>{fileName}</h1>");
     html.AppendLine($"      <p>{description}</p>");
-    html.AppendLine($"      <p style=\"margin-top: 0.9rem;\">{downloadLabel}</p>");
+    html.AppendLine($"      <p style=\"margin-top: 0.9rem;\">{actionLabel}</p>");
     html.AppendLine("    </main>");
     html.AppendLine("  </body>");
     html.AppendLine("</html>");
