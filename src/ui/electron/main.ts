@@ -12,6 +12,10 @@ function getRendererEntry() {
   return path.join(app.getAppPath(), 'dist', 'index.html')
 }
 
+function getWindowIconPath() {
+  return path.join(app.getAppPath(), 'icon.ico')
+}
+
 function getInstalledAgentPath() {
   return path.resolve(path.dirname(process.execPath), '..', 'InstantFileShare.Agent.exe')
 }
@@ -55,6 +59,7 @@ function createWindow() {
     minHeight: 760,
     autoHideMenuBar: true,
     backgroundColor: '#101112',
+    icon: getWindowIconPath(),
     title: 'Instant File Share',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
