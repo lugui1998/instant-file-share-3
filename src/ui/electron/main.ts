@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rendererUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173'
 const agentBaseUrl = 'http://127.0.0.1:46430'
+const windowsAppId = 'com.instantfileshare.app'
 let mainWindow: BrowserWindow | null = null
 
 function getRendererEntry() {
@@ -13,6 +14,10 @@ function getRendererEntry() {
 }
 
 function getWindowIconPath() {
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'icon.ico')
+  }
+
   return path.join(app.getAppPath(), 'icon.ico')
 }
 
@@ -69,6 +74,13 @@ function createWindow() {
     },
   })
 
+  if (process.platform === 'win32') {
+    mainWindow.setAppDetails({
+      appId: windowsAppId,
+      appIconPath: getWindowIconPath(),
+    })
+  }
+
   if (!app.isPackaged) {
     void mainWindow.loadURL(rendererUrl)
   } else {
@@ -77,6 +89,10 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.platform === 'win32') {
+    app.setAppUserModelId(windowsAppId)
+  }
+
   Menu.setApplicationMenu(null)
 
   ipcMain.handle('cloudflared:pickExecutable', async () => {

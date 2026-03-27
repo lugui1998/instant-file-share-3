@@ -252,6 +252,32 @@ static async Task<IResult> HandleDownloadAsync(
 
     if (isMetadataPreview && settings.SendMetadataToCrawlers)
     {
+        var previewTransfer = await coordinator.StartTransferAsync(
+            share.Id,
+            share.Token,
+            share.FileName,
+            clientSessionId: null,
+            clientFingerprint: BuildClientFingerprint(remoteAddress, userAgent),
+            remoteAddress,
+            totalBytes: 0,
+            bytesSent: 0,
+            requesterName: crawlerName,
+            cancellationToken);
+        await coordinator.MarkTransferCompletedAsync(
+            previewTransfer.Id,
+            share.Id,
+            share.Token,
+            share.FileName,
+            remoteAddress,
+            bytesSent: 0,
+            totalBytes: 0,
+            paused: false,
+            succeeded: true,
+            countsTowardUsage: false,
+            error: null,
+            requesterName: crawlerName,
+            cancellationToken);
+
         var metadataHtml = BuildShareMetadataHtml(context, share, file, fileResponseMetadata);
 
         if (isHead)

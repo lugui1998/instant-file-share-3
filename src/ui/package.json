@@ -45,10 +45,15 @@
       "icon.ico",
       "package.json"
     ],
+    "extraResources": [
+      {
+        "from": "icon.ico",
+        "to": "icon.ico"
+      }
+    ],
     "asar": true,
     "win": {
       "icon": "icon.ico",
-      "signAndEditExecutable": false,
       "target": [
         "dir"
       ]
