@@ -90,25 +90,11 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
       <div class="field">
         <div class="field-label-row">
           <label for="default-max-uses">Max Uses</label>
-          <HelpTooltip text="Limits how many completed downloads a new share allows before it becomes unavailable. Leave it empty for unlimited use." />
+          <HelpTooltip text="Limits how many a shared file can be downloaded before the link expires. Incomplete downloads and Metadata requests do not count towards this limit." />
         </div>
         <input
           id="default-max-uses"
           v-model.number="settingsDraft.defaultMaxUses"
-          type="number"
-          min="0"
-          placeholder="Unlimited"
-        />
-      </div>
-
-      <div class="field">
-        <div class="field-label-row">
-          <label for="shares-items-per-page">Shares per page</label>
-          <HelpTooltip text="Controls how many rows are shown per page on the Shares screen. Use 0 to disable pagination there." />
-        </div>
-        <input
-          id="shares-items-per-page"
-          v-model.number="settingsDraft.sharesItemsPerPage"
           type="number"
           min="0"
           placeholder="Unlimited"
@@ -124,6 +110,20 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
           <option value="Strict">Stop serving file</option>
           <option value="Lenient">Serve updated file</option>
         </select>
+      </div>
+
+       <div class="field">
+        <div class="field-label-row">
+          <label for="shares-items-per-page">Items per page</label>
+          <HelpTooltip text="Controls how many rows are shown per page on the Shares section. Use 0 to disable pagination there." />
+        </div>
+        <input
+          id="shares-items-per-page"
+          v-model.number="settingsDraft.sharesItemsPerPage"
+          type="number"
+          min="0"
+          placeholder="Unlimited"
+        />
       </div>
 
       <ToggleField
@@ -211,8 +211,8 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
 
       <div class="field">
         <div class="field-label-row">
-          <label for="history-items-per-page">History items per page</label>
-          <HelpTooltip text="Controls how many rows are shown per page on the History screen. Use 0 to show all rows at once." />
+          <label for="history-items-per-page">Items per page</label>
+          <HelpTooltip text="Controls how many rows are shown per page on the History section. Use 0 to show all rows at once." />
         </div>
         <input
           id="history-items-per-page"
