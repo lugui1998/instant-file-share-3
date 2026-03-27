@@ -318,6 +318,12 @@ td {
   gap: 0.2rem;
 }
 
+.progress-inline-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
 .progress-meta {
   margin-bottom: 0.5rem;
 }
@@ -370,6 +376,49 @@ td {
   overflow: hidden;
 }
 
+.settings-card {
+  height: 100%;
+}
+
+.settings-card-sharing {
+  grid-area: sharing;
+}
+
+.settings-card-file-types {
+  grid-area: filetypes;
+}
+
+.settings-card-server {
+  grid-area: server;
+}
+
+.settings-card-cloudflare {
+  grid-area: cloudflare;
+}
+
+.settings-card-debug {
+  grid-area: debug;
+}
+
+.field-label-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.field-help,
+.field-warning {
+  font-size: 0.85rem;
+}
+
+.field-help {
+  color: #a7b0bb;
+}
+
+.field-warning {
+  color: #ffb57d;
+}
+
 .toggle-row {
   display: flex;
   align-items: center;
@@ -379,6 +428,32 @@ td {
 
 .toggle-row input {
   width: auto;
+}
+
+.help-tooltip {
+  width: 1rem;
+  height: 1rem;
+  border-radius: 999px;
+  display: inline-grid;
+  place-items: center;
+  font-size: 0.64rem;
+  font-weight: 600;
+  line-height: 1;
+  color: #a7b0bb;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: help;
+  flex: 0 0 auto;
+  opacity: 0.82;
+  transition: opacity 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.help-tooltip:hover,
+.help-tooltip:focus-visible {
+  opacity: 1;
+  color: #d4d0ca;
+  border-color: rgba(255, 255, 255, 0.18);
+  outline: none;
 }
 
 .save-message {
@@ -428,8 +503,39 @@ pre {
   }
 }
 
+@media (min-width: 1100px) {
+  .settings-grid {
+    grid-template-columns: minmax(320px, 1.08fr) minmax(260px, 0.88fr) minmax(320px, 1fr);
+    grid-template-areas:
+      "sharing filetypes server"
+      "sharing cloudflare server"
+      "sharing debug server";
+  }
+}
+
+@media (min-width: 1100px) and (max-width: 1399px) {
+  .settings-grid {
+    grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
+    grid-template-areas:
+      "sharing server"
+      "filetypes server"
+      "cloudflare debug";
+  }
+}
+
+@media (max-width: 1099px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "sharing"
+      "filetypes"
+      "server"
+      "cloudflare"
+      "debug";
+  }
+}
+
 @media (max-width: 1400px) {
-  .settings-grid,
   .diagnostics-grid {
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   }

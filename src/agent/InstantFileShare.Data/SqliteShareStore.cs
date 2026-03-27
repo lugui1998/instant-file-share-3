@@ -23,6 +23,8 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        await EnsureTransfersColumnsAsync(connection, cancellationToken);
+
         if (await ReadSingletonJsonAsync(connection, "settings", "settings", cancellationToken) is null)
         {
             await SaveSettingsAsync(new AppSettings(), cancellationToken);
@@ -277,16 +279,17 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         command.CommandText =
             """
             INSERT INTO transfers (
-                id, share_id, token, file_name, client_session_id, client_fingerprint, remote_address, bytes_sent, total_bytes,
+                id, share_id, token, file_name, requester_name, client_session_id, client_fingerprint, remote_address, bytes_sent, total_bytes,
                 started_at_utc, last_updated_at_utc, completed_at_utc, state, is_active, succeeded, error
             ) VALUES (
-                $id, $shareId, $token, $fileName, $clientSessionId, $clientFingerprint, $remoteAddress, $bytesSent, $totalBytes,
+                $id, $shareId, $token, $fileName, $requesterName, $clientSessionId, $clientFingerprint, $remoteAddress, $bytesSent, $totalBytes,
                 $startedAtUtc, $lastUpdatedAtUtc, $completedAtUtc, $state, $isActive, $succeeded, $error
             )
             ON CONFLICT(id) DO UPDATE SET
                 share_id = excluded.share_id,
                 token = excluded.token,
                 file_name = excluded.file_name,
+                requester_name = excluded.requester_name,
                 client_session_id = excluded.client_session_id,
                 client_fingerprint = excluded.client_fingerprint,
                 remote_address = excluded.remote_address,
@@ -304,6 +307,7 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         command.Parameters.AddWithValue("$shareId", transfer.ShareId);
         command.Parameters.AddWithValue("$token", transfer.Token);
         command.Parameters.AddWithValue("$fileName", transfer.FileName);
+        command.Parameters.AddWithValue("$requesterName", (object?)transfer.RequesterName ?? DBNull.Value);
         command.Parameters.AddWithValue("$clientSessionId", (object?)transfer.ClientSessionId ?? DBNull.Value);
         command.Parameters.AddWithValue("$clientFingerprint", (object?)transfer.ClientFingerprint ?? DBNull.Value);
         command.Parameters.AddWithValue("$remoteAddress", (object?)transfer.RemoteAddress ?? DBNull.Value);
@@ -374,6 +378,7 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             ShareId = reader.GetString(reader.GetOrdinal("share_id")),
             Token = reader.GetString(reader.GetOrdinal("token")),
             FileName = reader.GetString(reader.GetOrdinal("file_name")),
+            RequesterName = reader.IsDBNull(reader.GetOrdinal("requester_name")) ? null : reader.GetString(reader.GetOrdinal("requester_name")),
             ClientSessionId = reader.IsDBNull(reader.GetOrdinal("client_session_id")) ? null : reader.GetString(reader.GetOrdinal("client_session_id")),
             ClientFingerprint = reader.IsDBNull(reader.GetOrdinal("client_fingerprint")) ? null : reader.GetString(reader.GetOrdinal("client_fingerprint")),
             RemoteAddress = reader.IsDBNull(reader.GetOrdinal("remote_address")) ? null : reader.GetString(reader.GetOrdinal("remote_address")),
@@ -390,6 +395,28 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
     }
 
     private SqliteConnection OpenConnection() => new($"Data Source={_databasePath}");
+
+    private static async Task EnsureTransfersColumnsAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var columnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info(transfers);";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columnNames.Add(reader.GetString(1));
+            }
+        }
+
+        if (!columnNames.Contains("requester_name"))
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE transfers ADD COLUMN requester_name TEXT NULL;";
+            await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
 
     private static readonly string[] Schema =
     {
@@ -437,6 +464,7 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             share_id TEXT NOT NULL,
             token TEXT NOT NULL,
             file_name TEXT NOT NULL,
+            requester_name TEXT NULL,
             client_session_id TEXT NULL,
             client_fingerprint TEXT NULL,
             remote_address TEXT NULL,

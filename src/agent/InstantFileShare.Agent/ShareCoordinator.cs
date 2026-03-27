@@ -45,10 +45,11 @@ internal sealed class ShareCoordinator(
             return (existingShare, ShareUrlBuilder.Build(existingShare.PublicBaseUrl, existingShare.Token, existingShare.Slug, existingShare.FileName));
         }
 
+        var token = await GenerateUniqueShareTokenAsync(NormalizePublicTokenLength(settings.PublicTokenLength), cancellationToken);
         var share = new ShareRecord
         {
             Id = Guid.NewGuid().ToString("N"),
-            Token = ShareTokenGenerator.Generate(),
+            Token = token,
             FilePath = fileInfo.FullName,
             FileName = fileInfo.Name,
             Slug = settings.FriendlyUrlsEnabled ? FileNameSlug.Create(fileInfo.Name) : null,
@@ -166,6 +167,7 @@ internal sealed class ShareCoordinator(
 
     public async Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken)
     {
+        settings = settings with { PublicTokenLength = NormalizePublicTokenLength(settings.PublicTokenLength) };
         await shareStore.SaveSettingsAsync(settings, cancellationToken);
         startupRegistrationService.Apply(settings.StartOnLogin);
         await contextMenuRegistrationService.ApplyAsync(settings.AddFileContextMenuButton, cancellationToken);
@@ -195,7 +197,7 @@ internal sealed class ShareCoordinator(
         }
     }
 
-    public async Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, CancellationToken cancellationToken)
+    public async Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, string? requesterName, CancellationToken cancellationToken)
     {
         await EnsureTransfersLoadedAsync(cancellationToken);
         TransferSnapshot transfer;
@@ -235,6 +237,7 @@ internal sealed class ShareCoordinator(
                     ShareId = shareId,
                     Token = token,
                     FileName = fileName,
+                    RequesterName = requesterName,
                     ClientSessionId = clientSessionId,
                     ClientFingerprint = clientFingerprint,
                     RemoteAddress = remoteAddress,
@@ -296,7 +299,7 @@ internal sealed class ShareCoordinator(
             cancellationToken);
     }
 
-    public async Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? error, CancellationToken cancellationToken)
+    public async Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? error, string? requesterName, CancellationToken cancellationToken)
     {
         await EnsureTransfersLoadedAsync(cancellationToken);
         TransferSnapshot completedTransfer;
@@ -309,6 +312,7 @@ internal sealed class ShareCoordinator(
             {
                 startedAt = activeTransfer.StartedAtUtc;
                 remoteAddress ??= activeTransfer.RemoteAddress;
+                requesterName ??= activeTransfer.RequesterName;
                 bytesSent = Math.Max(bytesSent, activeTransfer.BytesSent);
             }
 
@@ -318,6 +322,7 @@ internal sealed class ShareCoordinator(
                 ShareId = shareId,
                 Token = token,
                 FileName = fileName,
+                RequesterName = requesterName,
                 ClientSessionId = activeTransfer?.ClientSessionId,
                 ClientFingerprint = activeTransfer?.ClientFingerprint,
                 RemoteAddress = remoteAddress,
@@ -890,6 +895,27 @@ internal sealed class ShareCoordinator(
             ExpiryUnit.Days => DateTimeOffset.UtcNow.AddDays(settings.DefaultExpiryValue),
             _ => DateTimeOffset.UtcNow.AddHours(settings.DefaultExpiryValue),
         };
+    }
+
+    private async Task<string> GenerateUniqueShareTokenAsync(int tokenLength, CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 32;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var token = ShareTokenGenerator.Generate(tokenLength);
+            if (await shareStore.GetShareByTokenAsync(token, cancellationToken) is null)
+            {
+                return token;
+            }
+        }
+
+        throw new InvalidOperationException("Failed to allocate a unique public share token.");
+    }
+
+    private static int NormalizePublicTokenLength(int tokenLength)
+    {
+        return Math.Clamp(tokenLength, ShareTokenGenerator.MinLength, ShareTokenGenerator.MaxLength);
     }
 
     private async Task<CloudflareLoginToken?> TryReadCloudflareLoginTokenAsync(CancellationToken cancellationToken)

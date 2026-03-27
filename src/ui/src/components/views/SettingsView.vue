@@ -7,6 +7,7 @@ import type {
   CloudflareManagedStatus,
 } from '../../agentBridge'
 import type { BandwidthUnit } from '../../types/ui'
+import HelpTooltip from '../settings/HelpTooltip.vue'
 import SettingCard from '../settings/SettingCard.vue'
 import ToggleField from '../settings/ToggleField.vue'
 
@@ -35,13 +36,17 @@ const availableDomains = computed(() => props.managedStatus?.domains ?? [])
 const cloudflareLoginLabel = computed(() =>
   props.cloudflaredStatus?.loggedIn ? 'Log out' : 'Start Cloudflare login',
 )
+const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenLength < 11)
 </script>
 
 <template>
   <section class="settings-grid">
-    <SettingCard eyebrow="Sharing">
+    <SettingCard class="settings-card settings-card-sharing" eyebrow="Sharing">
       <div class="field">
-        <label for="default-publish-mode">Publish Mode</label>
+        <div class="field-label-row">
+          <label for="default-publish-mode">Publish Mode</label>
+          <HelpTooltip text="Chooses how new share links are published by default: Quick Tunnel, your own Cloudflare hostname, or a manually exposed address." />
+        </div>
         <select id="default-publish-mode" v-model="settingsDraft.defaultPublishMode">
           <option value="QuickTunnel">Quick Tunnel</option>
           <option value="ManagedCloudflare">Custom Cloudflare Domain</option>
@@ -50,7 +55,28 @@ const cloudflareLoginLabel = computed(() =>
       </div>
 
       <div class="field">
-        <label for="default-expiry-value">Expiry</label>
+        <div class="field-label-row">
+          <label for="public-token-length">Public token length</label>
+          <HelpTooltip text="Controls how many characters are used in public share URLs. Shorter links are easier to guess; 11 or more characters is recommended for public sharing." />
+        </div>
+        <input
+          id="public-token-length"
+          v-model.number="settingsDraft.publicTokenLength"
+          type="number"
+          min="6"
+          max="128"
+        />
+        <span class="field-help">Recommended default: 11 characters.</span>
+        <span v-if="isShortPublicTokenLength" class="field-warning">
+          Shorter links are easier to guess. Use 11 or more characters for public sharing.
+        </span>
+      </div>
+
+      <div class="field">
+        <div class="field-label-row">
+          <label for="default-expiry-value">Expiry</label>
+          <HelpTooltip text="Sets the default lifetime for new shares. Use 0 to keep shares from expiring automatically." />
+        </div>
         <div class="input-group">
           <input id="default-expiry-value" v-model.number="settingsDraft.defaultExpiryValue" type="number" min="0" />
           <select v-model="settingsDraft.defaultExpiryUnit" class="unit-select">
@@ -62,7 +88,10 @@ const cloudflareLoginLabel = computed(() =>
       </div>
 
       <div class="field">
-        <label for="default-max-uses">Max Uses</label>
+        <div class="field-label-row">
+          <label for="default-max-uses">Max Uses</label>
+          <HelpTooltip text="Limits how many completed downloads a new share allows before it becomes unavailable. Leave it empty for unlimited use." />
+        </div>
         <input
           id="default-max-uses"
           v-model.number="settingsDraft.defaultMaxUses"
@@ -73,35 +102,81 @@ const cloudflareLoginLabel = computed(() =>
       </div>
 
       <div class="field">
-        <label for="file-change-behavior">Changed file behavior</label>
+        <div class="field-label-row">
+          <label for="file-change-behavior">If the shared file changes</label>
+          <HelpTooltip text="Choose whether an existing share should stop working when the original file changes, or keep serving the latest version found at that path." />
+        </div>
         <select id="file-change-behavior" v-model="settingsDraft.fileChangeBehavior">
-          <option value="Strict">Strict</option>
-          <option value="Lenient">Lenient</option>
+          <option value="Strict">Stop serving file</option>
+          <option value="Lenient">Serve updated file</option>
         </select>
       </div>
 
-      <ToggleField v-model="settingsDraft.friendlyUrlsEnabled" input-id="friendly-urls" label="Friendly URLs enabled" />
+      <ToggleField
+        v-model="settingsDraft.friendlyUrlsEnabled"
+        input-id="friendly-urls"
+        label="Friendly URLs"
+        help-text="Adds a readable filename slug after the share token in generated links."
+      />
       <ToggleField
         v-model="settingsDraft.keepAwakeWhileTransferring"
         input-id="keep-awake"
-        label="Keep the PC awake while transfers are active"
+        label="Keep PC awake"
+        help-text="Prevents the machine from sleeping while file transfers are active, so long downloads do not get interrupted."
       />
-      <ToggleField v-model="settingsDraft.startOnLogin" input-id="start-on-login" label="Start on login" />
+      <ToggleField
+        v-model="settingsDraft.startOnLogin"
+        input-id="start-on-login"
+        label="Start on login"
+        help-text="Launches the server automatically when you sign in to Windows."
+      />
       <ToggleField
         v-model="settingsDraft.openDashboardOnStart"
         input-id="open-dashboard-on-start"
         label="Open Dashboard on start"
+        help-text="Opens the desktop dashboard window whenever the agent starts."
       />
       <ToggleField
         v-model="settingsDraft.addFileContextMenuButton"
         input-id="file-context-button"
         label="Add to file context menu"
+        help-text="Adds a Share with Instant File Share action to the Windows file context menu."
       />
     </SettingCard>
 
-    <SettingCard eyebrow="Server">
+    <SettingCard class="settings-card settings-card-file-types" eyebrow="Metadata">
+      <ToggleField
+        v-model="settingsDraft.sendMetadataToCrawlers"
+        input-id="send-metadata-to-crawlers"
+        label="Allow rich embed"
+        help-text="Allows chat services and link preview crawlers to generate rich embeds instead of only showing a plain share URL."
+      />
+      <ToggleField
+        v-model="settingsDraft.openImagesInBrowser"
+        input-id="open-images-in-browser"
+        label="Open Images in Browser"
+        help-text="When enabled, supported image shares are served inline so browsers can display them. When disabled, they are forced to download."
+      />
+      <ToggleField
+        v-model="settingsDraft.openVideosInBrowser"
+        input-id="open-videos-in-browser"
+        label="Open Videos in Browser"
+        help-text="When enabled, supported video shares are served inline so browsers can try to play them. When disabled, they are forced to download."
+      />
+      <ToggleField
+        v-model="settingsDraft.openPdfInBrowser"
+        input-id="open-pdf-in-browser"
+        label="Open PDF Files in Browser"
+        help-text="When enabled, PDF shares are opened inline in browsers that support PDF viewing. When disabled, they are forced to download."
+      />
+    </SettingCard>
+
+    <SettingCard class="settings-card settings-card-server" eyebrow="Server">
       <div class="field">
-        <label for="bandwidth-limit">Bandwidth limit bytes/sec</label>
+        <div class="field-label-row">
+          <label for="bandwidth-limit">Transfer Speed Limit</label>
+          <HelpTooltip text="Caps outgoing transfer speed for each served download. Leave it empty to allow full speed." />
+        </div>
         <div class="input-group">
           <input id="bandwidth-limit" v-model.number="bandwidthValue" type="number" min="0" placeholder="Unlimited" />
           <select v-model="bandwidthUnit" class="unit-select">
@@ -113,27 +188,42 @@ const cloudflareLoginLabel = computed(() =>
       </div>
 
       <div class="field">
-        <label for="manual-bind-address">Manual mode bind address</label>
+        <div class="field-label-row">
+          <label for="manual-bind-address">Manual mode bind address</label>
+          <HelpTooltip text="Controls which local network interface the public listener binds to when using Manual mode." />
+        </div>
         <input id="manual-bind-address" v-model="settingsDraft.manualBindAddress" placeholder="127.0.0.1 or 0.0.0.0" />
       </div>
 
       <div class="field">
-        <label for="manual-public-port">Manual mode public port</label>
+        <div class="field-label-row">
+          <label for="manual-public-port">Manual mode public port</label>
+          <HelpTooltip text="Port used for public share requests in Manual mode. Your router or reverse proxy must expose this port if you want outside access." />
+        </div>
         <input id="manual-public-port" v-model.number="settingsDraft.manualPublicPort" type="number" min="1" max="65535" />
       </div>
 
       <div class="field">
-        <label for="manual-base-url">Manual base URL override</label>
+        <div class="field-label-row">
+          <label for="manual-base-url">Manual base URL override</label>
+          <HelpTooltip text="Optional public URL to embed in generated Manual-mode links instead of auto-detecting an address." />
+        </div>
         <input id="manual-base-url" v-model="settingsDraft.manualBaseUrl" placeholder="Optional https://files.example.com" />
       </div>
 
       <div class="field">
-        <label for="local-api-port">Local API port</label>
+        <div class="field-label-row">
+          <label for="local-api-port">Local API port</label>
+          <HelpTooltip text="Port used by the dashboard and local integrations to talk to the agent on this machine." />
+        </div>
         <input id="local-api-port" v-model.number="settingsDraft.localApiPort" type="number" min="1" max="65535" />
       </div>
 
       <div class="field">
-        <label for="transfer-log-retention-days">Transfer log retention days</label>
+        <div class="field-label-row">
+          <label for="transfer-log-retention-days">Transfer log retention days</label>
+          <HelpTooltip text="How long completed transfer history is kept before old records are pruned." />
+        </div>
         <input
           id="transfer-log-retention-days"
           v-model.number="settingsDraft.transferLogRetentionDays"
@@ -143,20 +233,26 @@ const cloudflareLoginLabel = computed(() =>
       </div>
     </SettingCard>
 
-    <SettingCard eyebrow="Cloudflare">
+    <SettingCard class="settings-card settings-card-cloudflare" eyebrow="Cloudflare">
       <div class="managed-block">
         <strong v-if="cloudflaredStatus?.installedVersion">Version: {{ cloudflaredStatus.installedVersion }}</strong>
         <strong v-else>cloudflared not installed</strong>
       </div>
 
       <div class="field">
-        <label for="cloudflared-path">Cloudflared path override</label>
+        <div class="field-label-row">
+          <label for="cloudflared-path">Cloudflared path override</label>
+          <HelpTooltip text="Lets you point the agent at a specific cloudflared executable instead of relying on PATH detection." />
+        </div>
         <input id="cloudflared-path" accept=".exe" type="file" @click.prevent="emit('pickCloudflaredPath')" />
         <span v-if="settingsDraft.cloudflaredPathOverride" class="path-hint">{{ settingsDraft.cloudflaredPathOverride }}</span>
       </div>
 
       <div class="field">
-        <label for="managed-domain">Domain</label>
+        <div class="field-label-row">
+          <label for="managed-domain">Domain</label>
+          <HelpTooltip text="Choose which Cloudflare-managed domain should host your share links." />
+        </div>
         <select id="managed-domain" v-model="selectedDomain" :disabled="!availableDomains.length">
           <option value="" disabled>Select a domain</option>
           <option v-for="domain in availableDomains" :key="domain.zoneId" :value="domain.name">
@@ -166,7 +262,10 @@ const cloudflareLoginLabel = computed(() =>
       </div>
 
       <div class="field">
-        <label for="managed-subdomain">Subdomain</label>
+        <div class="field-label-row">
+          <label for="managed-subdomain">Subdomain</label>
+          <HelpTooltip text="Subdomain prefix to use under the selected domain for managed Cloudflare sharing." />
+        </div>
         <input id="managed-subdomain" v-model="managedSubdomain" placeholder="share" />
       </div>
 
@@ -199,8 +298,13 @@ const cloudflareLoginLabel = computed(() =>
       </div>
     </SettingCard>
 
-    <SettingCard eyebrow="Debug">
-      <ToggleField v-model="settingsDraft.showLogs" input-id="show-logs" label="Show logs" />
+    <SettingCard class="settings-card settings-card-debug" eyebrow="Debug">
+      <ToggleField
+        v-model="settingsDraft.showLogs"
+        input-id="show-logs"
+        label="Show logs"
+        help-text="Shows the log views in the sidebar so you can inspect agent and cloudflared output."
+      />
     </SettingCard>
   </section>
 </template>

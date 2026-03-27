@@ -39,3 +39,5 @@ Example response:
 - `HEAD /s/{token}`
 - `GET /s/{token}/{slug}`
 - `HEAD /s/{token}/{slug}`
+
+Browser-previewable files such as PDFs, common images, and common web video formats are served inline when possible. Other file types are returned as attachments.

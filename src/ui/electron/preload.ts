@@ -32,6 +32,7 @@ type TransferRecord = {
   shareId: string
   token: string
   fileName: string
+  requesterName?: string | null
   remoteAddress?: string | null
   bytesSent: number
   totalBytes: number

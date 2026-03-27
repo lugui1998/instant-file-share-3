@@ -117,6 +117,5 @@ That script stops the installed processes, runs the installer uninstaller when p
 - E2E encryption
 - folder sharing
 - ZIP generation and compression
-- Windows file ID resiliency
 - QR code support
 - HTTPS certificate management

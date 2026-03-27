@@ -36,9 +36,9 @@ public interface IShareCoordinator
     Task<IReadOnlyList<PublishProfile>> GetPublishProfilesAsync(CancellationToken cancellationToken);
     Task SavePublishProfileAsync(PublishProfile profile, CancellationToken cancellationToken);
     Task<IReadOnlyList<TransferSnapshot>> GetTransfersAsync(CancellationToken cancellationToken);
-    Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, CancellationToken cancellationToken);
+    Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, string? requesterName, CancellationToken cancellationToken);
     Task UpdateTransferProgressAsync(string transferId, long bytesSent, CancellationToken cancellationToken);
-    Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? error, CancellationToken cancellationToken);
+    Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? error, string? requesterName, CancellationToken cancellationToken);
     Task<CloudflaredState> GetCloudflaredStateAsync(CancellationToken cancellationToken);
     Task<CloudflaredDetectionResult> DetectCloudflaredAsync(CancellationToken cancellationToken);
     Task<string?> EnsureTunnelBaseUrlAsync(PublishMode mode, CancellationToken cancellationToken);
