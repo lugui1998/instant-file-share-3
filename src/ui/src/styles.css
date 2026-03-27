@@ -33,11 +33,16 @@ button {
   border-radius: 16px;
   padding: 0.9rem 1.2rem;
   cursor: pointer;
-  transition: transform 140ms ease, opacity 140ms ease;
+  transition: transform 140ms ease, opacity 140ms ease, filter 140ms ease;
 }
 
-button:hover {
+button:not(:disabled):hover {
   transform: translateY(-1px);
+}
+
+button:not(:disabled):active {
+  transform: translateY(1px) scale(0.985);
+  filter: brightness(0.96);
 }
 
 button.primary {
