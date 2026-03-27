@@ -43,7 +43,7 @@ Name: "{autoprograms}\{#AppName}\Dashboard"; Filename: "{app}\ui\{#DashboardExe}
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AgentExe}"; Parameters: "--open-dashboard"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AgentExe}"; Parameters: "--open-dashboard"; Description: "Start Instant File Share"; Flags: nowait skipifsilent
+Filename: "{app}\{#AgentExe}"; Parameters: "--open-dashboard"; Description: "Start Instant File Share"; Flags: nowait skipifsilent postinstall
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
