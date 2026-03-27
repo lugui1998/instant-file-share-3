@@ -11,9 +11,15 @@
   box-sizing: border-box;
 }
 
+html,
+body {
+  height: 100%;
+}
+
 body {
   margin: 0;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 button,
@@ -35,9 +41,11 @@ button:hover {
 }
 
 button.primary {
-  background: linear-gradient(135deg, #ff7f45, #ffba45);
-  color: #151515;
+  background: linear-gradient(135deg, rgba(255, 138, 84, 0.22), rgba(255, 186, 69, 0.14));
+  color: #f3efe7;
+  border: 1px solid rgba(255, 181, 125, 0.22);
   font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 button.secondary {
@@ -51,20 +59,23 @@ button.danger {
 }
 
 #app {
-  min-height: 100vh;
+  height: 100vh;
 }
 
 .shell {
   display: grid;
   grid-template-columns: 300px 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .rail {
+  height: 100%;
   padding: 2rem 1.5rem;
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(8, 10, 13, 0.72);
   backdrop-filter: blur(12px);
+  overflow-y: auto;
 }
 
 .brand {
@@ -122,8 +133,10 @@ button.danger {
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
-  min-height: 100vh;
+  min-height: 0;
+  height: 100%;
   min-width: 0;
+  overflow-y: auto;
 }
 
 .panel {
@@ -223,6 +236,25 @@ select {
   align-items: start;
   gap: 1rem;
   margin-bottom: 1rem;
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.pagination-copy {
+  color: #a7b0bb;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.pagination-actions {
+  display: flex;
+  gap: 0.55rem;
 }
 
 .pill {
@@ -388,6 +420,10 @@ td {
   grid-area: filetypes;
 }
 
+.settings-card-history {
+  grid-area: history;
+}
+
 .settings-card-server {
   grid-area: server;
 }
@@ -404,6 +440,30 @@ td {
   display: flex;
   align-items: center;
   gap: 0.55rem;
+}
+
+.file-picker-field {
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  background: rgba(10, 12, 16, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  color: inherit;
+  padding: 0.95rem 1rem;
+  display: block;
+}
+
+.file-picker-value {
+  min-width: 0;
+  color: #d4d0ca;
+  font-size: 0.92rem;
+  word-break: break-all;
+  display: block;
+}
+
+.file-picker-value.empty {
+  color: #8f98a4;
 }
 
 .field-help,
@@ -508,8 +568,8 @@ pre {
     grid-template-columns: minmax(320px, 1.08fr) minmax(260px, 0.88fr) minmax(320px, 1fr);
     grid-template-areas:
       "sharing filetypes server"
-      "sharing cloudflare server"
-      "sharing debug server";
+      "sharing history server"
+      "sharing cloudflare debug";
   }
 }
 
@@ -518,7 +578,7 @@ pre {
     grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
     grid-template-areas:
       "sharing server"
-      "filetypes server"
+      "filetypes history"
       "cloudflare debug";
   }
 }
@@ -529,6 +589,7 @@ pre {
     grid-template-areas:
       "sharing"
       "filetypes"
+      "history"
       "server"
       "cloudflare"
       "debug";
@@ -538,5 +599,14 @@ pre {
 @media (max-width: 1400px) {
   .diagnostics-grid {
     grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
+  }
+
+  .panel-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .pagination-controls {
+    justify-content: space-between;
   }
 }

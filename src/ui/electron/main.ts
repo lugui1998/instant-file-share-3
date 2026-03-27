@@ -53,7 +53,7 @@ async function ensureInstalledAgentRunning() {
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1320,
+    width: 1480,
     height: 880,
     minWidth: 1100,
     minHeight: 760,

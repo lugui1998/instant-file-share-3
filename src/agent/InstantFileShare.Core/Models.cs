@@ -57,7 +57,10 @@ public sealed record AppSettings
     public int LocalApiPort { get; init; } = Defaults.LocalApiPort;
     public bool ShowLogs { get; init; } = false;
     public bool AddFileContextMenuButton { get; init; } = true;
-    public int TransferLogRetentionDays { get; init; } = 30;
+    public int HistoryRetentionValue { get; init; } = 3;
+    public HistoryRetentionUnit HistoryRetentionUnit { get; init; } = HistoryRetentionUnit.Months;
+    public int HistoryItemsPerPage { get; init; } = 25;
+    public int SharesItemsPerPage { get; init; } = 25;
 }
 
 public sealed record CloudflaredState

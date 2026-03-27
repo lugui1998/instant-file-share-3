@@ -28,6 +28,15 @@ public enum ExpiryUnit
     Days = 2,
 }
 
+public enum HistoryRetentionUnit
+{
+    Minutes = 0,
+    Hours = 1,
+    Days = 2,
+    Months = 3,
+    Years = 4,
+}
+
 public enum CloudflaredOwnership
 {
     Unknown = 0,
