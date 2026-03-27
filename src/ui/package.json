@@ -42,10 +42,12 @@
     "files": [
       "dist/**",
       "dist-electron/**",
+      "icon.ico",
       "package.json"
     ],
     "asar": true,
     "win": {
+      "icon": "icon.ico",
       "signAndEditExecutable": false,
       "target": [
         "dir"

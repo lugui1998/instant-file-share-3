@@ -13,6 +13,7 @@ var store = new SqliteShareStore(databasePath);
 await store.InitializeAsync(CancellationToken.None);
 var initialSettings = await store.GetSettingsAsync(CancellationToken.None);
 var fileLogStore = new global::InstantFileShare.Infrastructure.FileLogStore(global::InstantFileShare.Agent.AgentPaths.GetLogsDirectory());
+var launchDashboardRequested = args.Any(argument => string.Equals(argument, "--open-dashboard", StringComparison.OrdinalIgnoreCase));
 
 var builder = WebApplication.CreateBuilder(args);
 var isDevelopment = builder.Environment.IsDevelopment();
@@ -85,7 +86,7 @@ catch
     // Detection is best-effort during startup. Share creation will retry on demand.
 }
 
-if (initialSettings.OpenDashboardOnStart)
+if (initialSettings.OpenDashboardOnStart || launchDashboardRequested)
 {
     await app.Services.GetRequiredService<global::InstantFileShare.Agent.DashboardLauncher>()
         .Launch(global::InstantFileShare.Agent.AgentPaths.GetRepositoryRoot());
@@ -626,11 +627,6 @@ static bool IsAllowedControlOrigin(string? origin)
     if (string.IsNullOrWhiteSpace(origin))
     {
         return false;
-    }
-
-    if (string.Equals(origin, "null", StringComparison.OrdinalIgnoreCase))
-    {
-        return true;
     }
 
     if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri))

@@ -40,11 +40,10 @@ Source: "{#StageDir}\ui\*"; DestDir: "{app}\ui"; Flags: ignoreversion recursesub
 
 [Icons]
 Name: "{autoprograms}\{#AppName}\Dashboard"; Filename: "{app}\ui\{#DashboardExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AgentExe}"; Tasks: desktopicon
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AgentExe}"; Parameters: "--open-dashboard"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#AgentExe}"; Description: "Start Instant File Share"; Flags: nowait skipifsilent
-Filename: "{app}\ui\{#DashboardExe}"; Description: "Open Instant File Share Dashboard"; Flags: nowait skipifsilent
+Filename: "{app}\{#AgentExe}"; Parameters: "--open-dashboard"; Description: "Start Instant File Share"; Flags: nowait skipifsilent
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

@@ -6,6 +6,7 @@ namespace InstantFileShare.Agent;
 internal sealed class NotificationService : IHostedService, IDisposable
 {
     private NotifyIcon? _notifyIcon;
+    private Icon? _appIcon;
     private Thread? _uiThread;
     private SynchronizationContext? _uiContext;
     private readonly TaskCompletionSource _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -19,9 +20,10 @@ internal sealed class NotificationService : IHostedService, IDisposable
             ApplicationConfiguration.Initialize();
             SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
             _uiContext = SynchronizationContext.Current;
+            _appIcon = ResolveAppIcon();
             _notifyIcon = new NotifyIcon
             {
-                Icon = SystemIcons.Application,
+                Icon = _appIcon ?? SystemIcons.Application,
                 Text = "Instant File Share",
                 Visible = true,
                 ContextMenuStrip = BuildMenu(),
@@ -46,6 +48,9 @@ internal sealed class NotificationService : IHostedService, IDisposable
             _notifyIcon = null;
         }
 
+        _appIcon?.Dispose();
+        _appIcon = null;
+
         Application.ExitThread();
         return Task.CompletedTask;
     }
@@ -55,6 +60,24 @@ internal sealed class NotificationService : IHostedService, IDisposable
     public void ShowError(string title, string text) => Show(title, text, ToolTipIcon.Error);
 
     public void Dispose() => _notifyIcon?.Dispose();
+
+    private static Icon? ResolveAppIcon()
+    {
+        var executablePath = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(executablePath) || !File.Exists(executablePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Icon.ExtractAssociatedIcon(executablePath);
+        }
+        catch
+        {
+            return null;
+        }
+    }
 
     private ContextMenuStrip BuildMenu()
     {
