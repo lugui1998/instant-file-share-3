@@ -14,7 +14,7 @@ const emit = defineEmits<{
 const navigationItems = computed(() => {
   const items: Array<{ key: ViewKey; label: string }> = [
     { key: 'shares', label: 'Shares' },
-    { key: 'transfers', label: 'Transfers' },
+    { key: 'transfers', label: 'History' },
     { key: 'settings', label: 'Settings' },
   ]
 

@@ -103,6 +103,20 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
 
       <div class="field">
         <div class="field-label-row">
+          <label for="shares-items-per-page">Shares per page</label>
+          <HelpTooltip text="Controls how many rows are shown per page on the Shares screen. Use 0 to disable pagination there." />
+        </div>
+        <input
+          id="shares-items-per-page"
+          v-model.number="settingsDraft.sharesItemsPerPage"
+          type="number"
+          min="0"
+          placeholder="Unlimited"
+        />
+      </div>
+
+      <div class="field">
+        <div class="field-label-row">
           <label for="file-change-behavior">If the shared file changes</label>
           <HelpTooltip text="Choose whether an existing share should stop working when the original file changes, or keep serving the latest version found at that path." />
         </div>
@@ -171,6 +185,45 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
       />
     </SettingCard>
 
+    <SettingCard class="settings-card settings-card-history" eyebrow="History">
+      <div class="field">
+        <div class="field-label-row">
+          <label for="history-retention-value">Keep history for</label>
+          <HelpTooltip text="How long completed transfer history is kept before older entries are pruned. Use 0 for unlimited retention." />
+        </div>
+        <div class="input-group">
+          <input
+            id="history-retention-value"
+            v-model.number="settingsDraft.historyRetentionValue"
+            type="number"
+            min="0"
+            placeholder="Unlimited"
+          />
+          <select v-model="settingsDraft.historyRetentionUnit" class="unit-select">
+            <option value="Minutes">Minutes</option>
+            <option value="Hours">Hours</option>
+            <option value="Days">Days</option>
+            <option value="Months">Months</option>
+            <option value="Years">Years</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <div class="field-label-row">
+          <label for="history-items-per-page">History items per page</label>
+          <HelpTooltip text="Controls how many rows are shown per page on the History screen. Use 0 to show all rows at once." />
+        </div>
+        <input
+          id="history-items-per-page"
+          v-model.number="settingsDraft.historyItemsPerPage"
+          type="number"
+          min="0"
+          placeholder="Unlimited"
+        />
+      </div>
+    </SettingCard>
+
     <SettingCard class="settings-card settings-card-server" eyebrow="Server">
       <div class="field">
         <div class="field-label-row">
@@ -219,18 +272,6 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
         <input id="local-api-port" v-model.number="settingsDraft.localApiPort" type="number" min="1" max="65535" />
       </div>
 
-      <div class="field">
-        <div class="field-label-row">
-          <label for="transfer-log-retention-days">Transfer log retention days</label>
-          <HelpTooltip text="How long completed transfer history is kept before old records are pruned." />
-        </div>
-        <input
-          id="transfer-log-retention-days"
-          v-model.number="settingsDraft.transferLogRetentionDays"
-          type="number"
-          min="1"
-        />
-      </div>
     </SettingCard>
 
     <SettingCard class="settings-card settings-card-cloudflare" eyebrow="Cloudflare">
@@ -244,8 +285,16 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
           <label for="cloudflared-path">Cloudflared path override</label>
           <HelpTooltip text="Lets you point the agent at a specific cloudflared executable instead of relying on PATH detection." />
         </div>
-        <input id="cloudflared-path" accept=".exe" type="file" @click.prevent="emit('pickCloudflaredPath')" />
-        <span v-if="settingsDraft.cloudflaredPathOverride" class="path-hint">{{ settingsDraft.cloudflaredPathOverride }}</span>
+        <button
+          id="cloudflared-path"
+          class="file-picker-field"
+          type="button"
+          @click="emit('pickCloudflaredPath')"
+        >
+          <span class="file-picker-value" :class="{ empty: !settingsDraft.cloudflaredPathOverride }">
+            {{ settingsDraft.cloudflaredPathOverride || 'Using auto-detected cloudflared path' }}
+          </span>
+        </button>
       </div>
 
       <div class="field">

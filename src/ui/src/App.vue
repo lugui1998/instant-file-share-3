@@ -64,7 +64,10 @@ const settingsDraft = ref<AppSettings>({
   localApiPort: 46430,
   showLogs: false,
   addFileContextMenuButton: true,
-  transferLogRetentionDays: 30,
+  historyRetentionValue: 3,
+  historyRetentionUnit: 'Months',
+  historyItemsPerPage: 25,
+  sharesItemsPerPage: 25,
 })
 
 let disconnect: () => void = () => {}
@@ -448,12 +451,26 @@ function serializeBandwidthLimit(value: number | null, unit: BandwidthUnit) {
   }
 }
 
+function normalizeWholeNumber(value: number | null | undefined, fallback: number, minimum = 0, maximum?: number) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback
+  }
+
+  const normalized = Math.max(minimum, Math.round(value))
+  return typeof maximum === 'number' ? Math.min(maximum, normalized) : normalized
+}
+
 function buildSettingsPayload(): AppSettings {
   return {
     ...settingsDraft.value,
+    publicTokenLength: normalizeWholeNumber(settingsDraft.value.publicTokenLength, 11, 6, 128),
     cloudflaredPathOverride: settingsDraft.value.cloudflaredPathOverride || null,
     manualBaseUrl: settingsDraft.value.manualBaseUrl || null,
     defaultMaxUses: settingsDraft.value.defaultMaxUses ?? null,
+    historyRetentionValue: normalizeWholeNumber(settingsDraft.value.historyRetentionValue, 3, 0),
+    historyRetentionUnit: settingsDraft.value.historyRetentionUnit,
+    historyItemsPerPage: normalizeWholeNumber(settingsDraft.value.historyItemsPerPage, 25, 0),
+    sharesItemsPerPage: normalizeWholeNumber(settingsDraft.value.sharesItemsPerPage, 25, 0),
     bandwidthLimitBytesPerSecond: serializeBandwidthLimit(bandwidthValue.value, bandwidthUnit.value),
   }
 }
@@ -576,6 +593,7 @@ watch(
         v-model:draft-mode="draftMode"
         :pending="pending"
         :shares="runtime?.shares ?? []"
+        :items-per-page="settingsDraft.sharesItemsPerPage"
         @copy-share="copyShareLink"
         @create-share="createShare"
         @revoke-share="revokeShare"
@@ -585,6 +603,7 @@ watch(
         v-else-if="activeView === 'transfers'"
         :transfers="transfers"
         :allow-rich-embed="settingsDraft.sendMetadataToCrawlers"
+        :items-per-page="settingsDraft.historyItemsPerPage"
       />
 
       <SettingsView

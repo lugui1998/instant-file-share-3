@@ -26,6 +26,7 @@ type AgentRuntimeSnapshot = {
 type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
 type FileChangeBehavior = 'Strict' | 'Lenient'
 type ExpiryUnit = 'Minutes' | 'Hours' | 'Days'
+type HistoryRetentionUnit = 'Minutes' | 'Hours' | 'Days' | 'Months' | 'Years'
 type TransferRecord = Record<string, unknown> & {
   id: string
   shareId: string
@@ -73,7 +74,10 @@ type AppSettings = {
   localApiPort: number
   showLogs: boolean
   addFileContextMenuButton: boolean
-  transferLogRetentionDays: number
+  historyRetentionValue: number
+  historyRetentionUnit: HistoryRetentionUnit
+  historyItemsPerPage: number
+  sharesItemsPerPage: number
 }
 
 type CloudflareDomainOption = {

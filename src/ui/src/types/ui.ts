@@ -2,3 +2,4 @@ export type ViewKey = 'shares' | 'transfers' | 'settings' | 'logs' | 'cloudflare
 
 export type BandwidthUnit = 'B/s' | 'KB/s' | 'MB/s'
 export type ExpiryUnit = 'Minutes' | 'Hours' | 'Days'
+export type HistoryRetentionUnit = 'Minutes' | 'Hours' | 'Days' | 'Months' | 'Years'

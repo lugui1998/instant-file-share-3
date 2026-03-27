@@ -31,14 +31,14 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             }
         }
 
-        if (VerifyRegistrationState(enabled))
-        {
-            return;
-        }
-
         if (enabled && helperPath is not null)
         {
             RegisterDirectly(helperPath);
+            return;
+        }
+
+        if (VerifyRegistrationState(enabled))
+        {
             return;
         }
 
@@ -78,8 +78,20 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
 
         verbKey.SetValue(string.Empty, "Copy Share Link", RegistryValueKind.String);
         verbKey.SetValue("MUIVerb", "Copy Share Link", RegistryValueKind.String);
-        verbKey.SetValue("Icon", helperPath, RegistryValueKind.String);
+        verbKey.SetValue("Icon", ResolveContextMenuIconPath() ?? helperPath, RegistryValueKind.String);
         commandKey.SetValue(string.Empty, $"\"{helperPath}\" \"%1\"", RegistryValueKind.String);
+    }
+
+    private static string? ResolveContextMenuIconPath()
+    {
+        if (!string.IsNullOrWhiteSpace(Environment.ProcessPath) && File.Exists(Environment.ProcessPath))
+        {
+            return Environment.ProcessPath;
+        }
+
+        var executableName = "InstantFileShare.Agent.exe";
+        var executablePath = Path.Combine(AppContext.BaseDirectory, executableName);
+        return File.Exists(executablePath) ? executablePath : null;
     }
 
     private static void UnregisterDirectly()

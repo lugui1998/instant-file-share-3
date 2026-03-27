@@ -167,7 +167,13 @@ internal sealed class ShareCoordinator(
 
     public async Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken)
     {
-        settings = settings with { PublicTokenLength = NormalizePublicTokenLength(settings.PublicTokenLength) };
+        settings = settings with
+        {
+            PublicTokenLength = NormalizePublicTokenLength(settings.PublicTokenLength),
+            HistoryRetentionValue = Math.Max(0, settings.HistoryRetentionValue),
+            HistoryItemsPerPage = Math.Max(0, settings.HistoryItemsPerPage),
+            SharesItemsPerPage = Math.Max(0, settings.SharesItemsPerPage),
+        };
         await shareStore.SaveSettingsAsync(settings, cancellationToken);
         startupRegistrationService.Apply(settings.StartOnLogin);
         await contextMenuRegistrationService.ApplyAsync(settings.AddFileContextMenuButton, cancellationToken);
@@ -707,15 +713,19 @@ internal sealed class ShareCoordinator(
 
     private async Task PruneTransfersAsync(CancellationToken cancellationToken)
     {
-        var retentionDays = Math.Max(1, (await shareStore.GetSettingsAsync(cancellationToken)).TransferLogRetentionDays);
-        var cutoff = DateTimeOffset.UtcNow.AddDays(-retentionDays);
+        var settings = await shareStore.GetSettingsAsync(cancellationToken);
+        var cutoff = ResolveHistoryRetentionCutoff(settings);
+        if (cutoff is null)
+        {
+            return;
+        }
 
         lock (_transferLock)
         {
-            _completedTransfers.RemoveAll(transfer => transfer.CompletedAtUtc is not null && transfer.CompletedAtUtc < cutoff);
+            _completedTransfers.RemoveAll(transfer => transfer.CompletedAtUtc is not null && transfer.CompletedAtUtc < cutoff.Value);
         }
 
-        await shareStore.PruneCompletedTransfersAsync(cutoff, cancellationToken);
+        await shareStore.PruneCompletedTransfersAsync(cutoff.Value, cancellationToken);
     }
 
     private static bool IsMatchingResumableTransfer(
@@ -916,6 +926,23 @@ internal sealed class ShareCoordinator(
     private static int NormalizePublicTokenLength(int tokenLength)
     {
         return Math.Clamp(tokenLength, ShareTokenGenerator.MinLength, ShareTokenGenerator.MaxLength);
+    }
+
+    private static DateTimeOffset? ResolveHistoryRetentionCutoff(AppSettings settings)
+    {
+        if (settings.HistoryRetentionValue <= 0)
+        {
+            return null;
+        }
+
+        return settings.HistoryRetentionUnit switch
+        {
+            HistoryRetentionUnit.Minutes => DateTimeOffset.UtcNow.AddMinutes(-settings.HistoryRetentionValue),
+            HistoryRetentionUnit.Hours => DateTimeOffset.UtcNow.AddHours(-settings.HistoryRetentionValue),
+            HistoryRetentionUnit.Months => DateTimeOffset.UtcNow.AddMonths(-settings.HistoryRetentionValue),
+            HistoryRetentionUnit.Years => DateTimeOffset.UtcNow.AddYears(-settings.HistoryRetentionValue),
+            _ => DateTimeOffset.UtcNow.AddDays(-settings.HistoryRetentionValue),
+        };
     }
 
     private async Task<CloudflareLoginToken?> TryReadCloudflareLoginTokenAsync(CancellationToken cancellationToken)

@@ -1,17 +1,20 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { TransferRecord } from '../../agentBridge'
 import HelpTooltip from '../settings/HelpTooltip.vue'
 import PanelHeader from '../PanelHeader.vue'
+import TablePagination from '../TablePagination.vue'
 
 const props = defineProps<{
   transfers: TransferRecord[]
   allowRichEmbed: boolean
+  itemsPerPage: number
 }>()
 
 const pausedThresholdMs = 1500
 const now = ref(Date.now())
-const displayedTransfers = computed(() =>
+const currentPage = ref(1)
+const filteredTransfers = computed(() =>
   props.transfers
     .filter((transfer) => !props.allowRichEmbed || !transfer.requesterName)
     .map((transfer) => ({
@@ -21,6 +24,21 @@ const displayedTransfers = computed(() =>
         (transfer.isActive && now.value - new Date(transfer.lastUpdatedAtUtc).getTime() >= pausedThresholdMs),
     })),
 )
+const pageCount = computed(() => {
+  if (props.itemsPerPage <= 0) {
+    return filteredTransfers.value.length > 0 ? 1 : 0
+  }
+
+  return Math.max(1, Math.ceil(filteredTransfers.value.length / props.itemsPerPage))
+})
+const displayedTransfers = computed(() => {
+  if (props.itemsPerPage <= 0) {
+    return filteredTransfers.value
+  }
+
+  const startIndex = (currentPage.value - 1) * props.itemsPerPage
+  return filteredTransfers.value.slice(startIndex, startIndex + props.itemsPerPage)
+})
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
@@ -118,11 +136,22 @@ onUnmounted(() => {
     clearInterval(refreshTimer)
   }
 })
+
+watch([filteredTransfers, () => props.itemsPerPage], () => {
+  currentPage.value = Math.min(currentPage.value, Math.max(1, pageCount.value || 1))
+}, { deep: true })
 </script>
 
 <template>
   <section class="panel">
-    <PanelHeader eyebrow="Transfers" title="" />
+    <PanelHeader eyebrow="History" title="">
+      <TablePagination
+        :current-page="currentPage"
+        :page-count="pageCount"
+        :total-items="filteredTransfers.length"
+        @update-page="currentPage = $event"
+      />
+    </PanelHeader>
 
     <div class="table-shell">
       <table>
@@ -174,7 +203,7 @@ onUnmounted(() => {
             </td>
           </tr>
           <tr v-if="!displayedTransfers.length">
-            <td class="empty-state" colspan="4">No transfer events yet.</td>
+            <td class="empty-state" colspan="4">No history yet.</td>
           </tr>
         </tbody>
       </table>
