@@ -148,7 +148,7 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
         v-model="settingsDraft.openDashboardOnStart"
         input-id="open-dashboard-on-start"
         label="Open Dashboard on start"
-        help-text="Opens the desktop dashboard window whenever the agent starts."
+        help-text="Opens the desktop dashboard window whenever the server starts."
       />
       <ToggleField
         v-model="settingsDraft.addFileContextMenuButton"
@@ -267,7 +267,7 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
       <div class="field">
         <div class="field-label-row">
           <label for="local-api-port">Local API port</label>
-          <HelpTooltip text="Port used by the dashboard and local integrations to talk to the agent on this machine." />
+          <HelpTooltip text="Port used by the dashboard and local integrations to talk to the server on this machine." />
         </div>
         <input id="local-api-port" v-model.number="settingsDraft.localApiPort" type="number" min="1" max="65535" />
       </div>
@@ -283,7 +283,7 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
       <div class="field">
         <div class="field-label-row">
           <label for="cloudflared-path">Cloudflared path override</label>
-          <HelpTooltip text="Lets you point the agent at a specific cloudflared executable instead of relying on PATH detection." />
+          <HelpTooltip text="Lets you point the server at a specific cloudflared executable instead of relying on PATH detection." />
         </div>
         <button
           id="cloudflared-path"
@@ -352,7 +352,7 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
         v-model="settingsDraft.showLogs"
         input-id="show-logs"
         label="Show logs"
-        help-text="Shows the log views in the sidebar so you can inspect agent and cloudflared output."
+        help-text="Shows the log views in the sidebar so you can inspect server and cloudflared output."
       />
     </SettingCard>
   </section>

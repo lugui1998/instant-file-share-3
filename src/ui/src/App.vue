@@ -602,7 +602,6 @@ watch(
       <TransfersView
         v-else-if="activeView === 'transfers'"
         :transfers="transfers"
-        :allow-rich-embed="settingsDraft.sendMetadataToCrawlers"
         :items-per-page="settingsDraft.historyItemsPerPage"
       />
 

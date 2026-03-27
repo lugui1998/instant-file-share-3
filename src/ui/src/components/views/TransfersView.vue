@@ -7,7 +7,6 @@ import TablePagination from '../TablePagination.vue'
 
 const props = defineProps<{
   transfers: TransferRecord[]
-  allowRichEmbed: boolean
   itemsPerPage: number
 }>()
 
@@ -15,14 +14,12 @@ const pausedThresholdMs = 1500
 const now = ref(Date.now())
 const currentPage = ref(1)
 const filteredTransfers = computed(() =>
-  props.transfers
-    .filter((transfer) => !props.allowRichEmbed || !transfer.requesterName)
-    .map((transfer) => ({
-      ...transfer,
-      isPaused:
-        transfer.state === 'Paused' ||
-        (transfer.isActive && now.value - new Date(transfer.lastUpdatedAtUtc).getTime() >= pausedThresholdMs),
-    })),
+  props.transfers.map((transfer) => ({
+    ...transfer,
+    isPaused:
+      transfer.state === 'Paused' ||
+      (transfer.isActive && now.value - new Date(transfer.lastUpdatedAtUtc).getTime() >= pausedThresholdMs),
+  })),
 )
 const pageCount = computed(() => {
   if (props.itemsPerPage <= 0) {
