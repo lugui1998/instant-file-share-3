@@ -27,7 +27,7 @@ function goToNextPage() {
     <span class="pagination-copy">Page {{ currentPage }} of {{ pageCount }} • {{ totalItems }} items</span>
     <div v-if="pageCount > 1" class="pagination-actions">
       <button class="secondary compact-button" type="button" :disabled="currentPage <= 1" @click="goToPreviousPage">
-        Previous
+        Prev
       </button>
       <button class="secondary compact-button" type="button" :disabled="currentPage >= pageCount" @click="goToNextPage">
         Next
