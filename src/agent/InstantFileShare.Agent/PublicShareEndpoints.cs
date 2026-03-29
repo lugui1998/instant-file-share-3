@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Text;
 using InstantFileShare.Core;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace InstantFileShare.Agent;
 
@@ -40,6 +41,11 @@ internal static class PublicShareEndpoints
         PublicShareHtmlRenderer htmlRenderer,
         CancellationToken cancellationToken)
     {
+        if (HasTraversalAttempt(context))
+        {
+            return Results.NotFound();
+        }
+
         var share = await coordinator.ResolveDownloadAsync(token, cancellationToken);
         if (share is null)
         {
@@ -639,5 +645,42 @@ internal static class PublicShareEndpoints
     private static bool IsCurrentDirectoryZipRequest(HttpRequest request)
     {
         return string.Equals(request.Query["download"], "zip", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasTraversalAttempt(HttpContext context)
+    {
+        var rawTarget = context.Features.Get<IHttpRequestFeature>()?.RawTarget ?? context.Request.Path.Value ?? string.Empty;
+        var rawPath = rawTarget.Split('?', 2)[0];
+        var segments = rawPath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+        foreach (var segment in segments)
+        {
+            var decodedSegment = DecodeRepeatedly(segment);
+            if (string.Equals(decodedSegment, "..", StringComparison.Ordinal) ||
+                decodedSegment.Contains('/') ||
+                decodedSegment.Contains('\\'))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static string DecodeRepeatedly(string value)
+    {
+        var current = value;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var decoded = Uri.UnescapeDataString(current);
+            if (string.Equals(decoded, current, StringComparison.Ordinal))
+            {
+                return decoded;
+            }
+
+            current = decoded;
+        }
+
+        return current;
     }
 }

@@ -87,6 +87,30 @@ public sealed class PublicShareHelpersTests
         Assert.Equal("/public-share-assets/assets/public-share.css", shellAssets.StylesheetUrls[0]);
     }
 
+    [Theory]
+    [InlineData("../secret.txt")]
+    [InlineData("..\\secret.txt")]
+    [InlineData("docs/../../secret.txt")]
+    [InlineData("docs\\..\\..\\secret.txt")]
+    [InlineData("..%2fsecret.txt")]
+    [InlineData("..%5csecret.txt")]
+    [InlineData("....//secret.txt")]
+    [InlineData("....\\\\secret.txt")]
+    [InlineData("C:\\Windows\\notepad.exe")]
+    [InlineData("\\\\server\\share\\file.txt")]
+    public void TryResolveEntry_RejectsTraversalAndAbsolutePaths(string candidatePath)
+    {
+        using var tempDirectory = new TemporaryDirectory();
+        var rootPath = tempDirectory.CreateDirectory("share-root");
+        File.WriteAllText(Path.Combine(rootPath, "inside.txt"), "inside");
+        File.WriteAllText(Path.Combine(tempDirectory.RootPath, "secret.txt"), "secret");
+
+        var resolved = FolderSharePathResolver.TryResolveEntry(rootPath, candidatePath, out var entry);
+
+        Assert.False(resolved);
+        Assert.Null(entry);
+    }
+
     [Fact]
     public void BuildFolderBrowsePage_CreatesBreadcrumbsAndEntries()
     {

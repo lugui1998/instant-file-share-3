@@ -31,6 +31,12 @@ One-shot full build:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 ```
 
+Run the automated test suite:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
+```
+
 1. Build the backend and run solution tests:
 
    ```powershell
