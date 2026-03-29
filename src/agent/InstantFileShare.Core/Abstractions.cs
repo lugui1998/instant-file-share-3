@@ -17,6 +17,7 @@ public interface IShareStore
     Task<IReadOnlyList<TransferSnapshot>> ListTransfersAsync(CancellationToken cancellationToken);
     Task SaveTransferAsync(TransferSnapshot transfer, CancellationToken cancellationToken);
     Task PruneCompletedTransfersAsync(DateTimeOffset completedBeforeUtc, CancellationToken cancellationToken);
+    Task<bool> TryAddUsageSessionAsync(string shareId, string sessionKey, CancellationToken cancellationToken);
 }
 
 public interface IRuntimeEventStream
@@ -36,12 +37,13 @@ public interface IShareCoordinator
     Task<IReadOnlyList<PublishProfile>> GetPublishProfilesAsync(CancellationToken cancellationToken);
     Task SavePublishProfileAsync(PublishProfile profile, CancellationToken cancellationToken);
     Task<IReadOnlyList<TransferSnapshot>> GetTransfersAsync(CancellationToken cancellationToken);
-    Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, string? requesterName, CancellationToken cancellationToken);
+    Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, TransferKind transferKind, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, string? requesterName, CancellationToken cancellationToken);
     Task UpdateTransferProgressAsync(string transferId, long bytesSent, CancellationToken cancellationToken);
-    Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? error, string? requesterName, CancellationToken cancellationToken);
+    Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, TransferKind transferKind, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? usageSessionKey, string? error, string? requesterName, CancellationToken cancellationToken);
     Task<CloudflaredState> GetCloudflaredStateAsync(CancellationToken cancellationToken);
     Task<CloudflaredDetectionResult> DetectCloudflaredAsync(CancellationToken cancellationToken);
     Task<string?> EnsureTunnelBaseUrlAsync(PublishMode mode, CancellationToken cancellationToken);
+    Task<string?> EnsureInstallerFirstRunTunnelAsync(CancellationToken cancellationToken);
     Task<CloudflaredActionResult> InstallCloudflaredAsync(CancellationToken cancellationToken);
     Task<CloudflaredActionResult> UpdateCloudflaredAsync(CancellationToken cancellationToken);
     Task<CloudflaredActionResult> StartManagedTunnelLoginAsync(CancellationToken cancellationToken);
@@ -81,7 +83,7 @@ public interface IStartupRegistrationService
 
 public interface IContextMenuRegistrationService
 {
-    Task ApplyAsync(bool enabled, CancellationToken cancellationToken);
+    Task ApplyAsync(AppSettings settings, CancellationToken cancellationToken);
 }
 
 public interface IKeepAwakeService

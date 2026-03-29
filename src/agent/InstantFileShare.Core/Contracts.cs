@@ -1,12 +1,20 @@
 namespace InstantFileShare.Core;
 
-public sealed record CreateShareRequest(string FilePath, PublishMode? PublishMode = null, DateTimeOffset? ExpiresAtUtc = null, int? MaxUses = null);
+public sealed record CreateShareRequest(
+    string FilePath,
+    PublishMode? PublishMode = null,
+    DateTimeOffset? ExpiresAtUtc = null,
+    int? MaxUses = null,
+    ShareKind ShareKind = ShareKind.File,
+    FolderShareEntryPoint? PrimaryFolderEntryPoint = null);
 
 public sealed record RevokeShareRequest(string ShareId);
 
 public sealed record UpdateSettingsRequest(AppSettings Settings);
 
-public sealed record PipeCommand(string Command, string? FilePath = null);
+public sealed record PipeCommand(
+    string Command,
+    string? FilePath = null);
 
 public sealed record PipeCommandResult(bool Success, string Message, string? ShareUrl = null);
 

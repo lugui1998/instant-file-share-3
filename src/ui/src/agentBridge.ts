@@ -6,6 +6,10 @@ type AgentShareRecord = {
   slug?: string | null
   publicBaseUrl: string
   fileSize: number
+  shareKind: ShareKind
+  canBrowseFolderContents: boolean
+  canDownloadFolderAsZip: boolean
+  primaryFolderEntryPoint?: FolderShareEntryPoint | null
   createdAtUtc: string
   expiresAtUtc?: string | null
   maxUses?: number | null
@@ -24,14 +28,20 @@ type AgentRuntimeSnapshot = {
 }
 
 type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
+type ShareKind = 'File' | 'Folder'
+type FolderShareEntryPoint = 'Browse' | 'Zip'
+type FolderShareCapabilityPolicy = 'Exclusive' | 'AllowBoth'
+type FolderZipCompressionLevel = 'Optimal' | 'Fastest' | 'NoCompression' | 'SmallestSize'
 type FileChangeBehavior = 'Strict' | 'Lenient'
 type ExpiryUnit = 'Minutes' | 'Hours' | 'Days'
 type HistoryRetentionUnit = 'Minutes' | 'Hours' | 'Days' | 'Months' | 'Years'
+type TransferKind = 'FileDownload' | 'FolderZipDownload' | 'FolderFileDownload' | 'MetadataPreview'
 type TransferRecord = Record<string, unknown> & {
   id: string
   shareId: string
   token: string
   fileName?: string | null
+  transferKind?: TransferKind | null
   requesterName?: string | null
   remoteAddress?: string | null
   bytesSent: number
@@ -74,6 +84,10 @@ type AppSettings = {
   localApiPort: number
   showLogs: boolean
   addFileContextMenuButton: boolean
+  addFolderZipContextMenuButton: boolean
+  addFolderBrowseContextMenuButton: boolean
+  folderShareCapabilityPolicy: FolderShareCapabilityPolicy
+  folderZipCompressionLevel: FolderZipCompressionLevel
   historyRetentionValue: number
   historyRetentionUnit: HistoryRetentionUnit
   historyItemsPerPage: number

@@ -10,6 +10,10 @@ public sealed record ShareRecord
     public required string PublicBaseUrl { get; init; }
     public long FileSize { get; init; }
     public DateTimeOffset FileModifiedAtUtc { get; init; }
+    public ShareKind ShareKind { get; init; } = ShareKind.File;
+    public bool CanBrowseFolderContents { get; init; }
+    public bool CanDownloadFolderAsZip { get; init; }
+    public FolderShareEntryPoint? PrimaryFolderEntryPoint { get; init; }
     public DateTimeOffset CreatedAtUtc { get; init; }
     public DateTimeOffset? ExpiresAtUtc { get; init; }
     public int? MaxUses { get; init; }
@@ -57,6 +61,10 @@ public sealed record AppSettings
     public int LocalApiPort { get; init; } = Defaults.LocalApiPort;
     public bool ShowLogs { get; init; } = false;
     public bool AddFileContextMenuButton { get; init; } = true;
+    public bool AddFolderZipContextMenuButton { get; init; } = true;
+    public bool AddFolderBrowseContextMenuButton { get; init; } = true;
+    public FolderShareCapabilityPolicy FolderShareCapabilityPolicy { get; init; } = FolderShareCapabilityPolicy.Exclusive;
+    public FolderZipCompressionLevel FolderZipCompressionLevel { get; init; } = FolderZipCompressionLevel.Optimal;
     public int HistoryRetentionValue { get; init; } = 3;
     public HistoryRetentionUnit HistoryRetentionUnit { get; init; } = HistoryRetentionUnit.Months;
     public int HistoryItemsPerPage { get; init; } = 25;
@@ -80,6 +88,7 @@ public sealed record TransferSnapshot
     public required string ShareId { get; init; }
     public required string Token { get; init; }
     public required string FileName { get; init; }
+    public TransferKind TransferKind { get; init; } = TransferKind.FileDownload;
     public string? RequesterName { get; init; }
     public string? ClientSessionId { get; init; }
     public string? ClientFingerprint { get; init; }

@@ -14,15 +14,19 @@ internal sealed class PipeCommandHandler(
         var operation = command.Command?.Trim().ToLowerInvariant();
         return operation switch
         {
-            "share" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, cancellationToken),
+            "share" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, ShareKind.File, null, cancellationToken),
+            "share-folder-zip" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, ShareKind.Folder, FolderShareEntryPoint.Zip, cancellationToken),
+            "share-folder-browse" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, ShareKind.Folder, FolderShareEntryPoint.Browse, cancellationToken),
             "open-dashboard" => OpenDashboard(),
             _ => new PipeCommandResult(false, "Unsupported command."),
         };
     }
 
-    private async Task<PipeCommandResult> ShareAsync(string filePath, CancellationToken cancellationToken)
+    private async Task<PipeCommandResult> ShareAsync(string filePath, ShareKind shareKind, FolderShareEntryPoint? folderEntryPoint, CancellationToken cancellationToken)
     {
-        var (share, url) = await shareCoordinator.CreateShareAsync(new CreateShareRequest(filePath), cancellationToken);
+        var (share, url) = await shareCoordinator.CreateShareAsync(
+            new CreateShareRequest(filePath, ShareKind: shareKind, PrimaryFolderEntryPoint: folderEntryPoint),
+            cancellationToken);
         try
         {
             await clipboardService.SetTextAsync(url);

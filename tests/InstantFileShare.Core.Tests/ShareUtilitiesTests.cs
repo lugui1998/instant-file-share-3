@@ -25,6 +25,14 @@ public sealed class ShareUtilitiesTests
     }
 
     [Fact]
+    public void CreateSlug_ShouldKeepFolderDotsWhenExtensionStrippingDisabled()
+    {
+        var slug = FileNameSlug.Create("Quarterly.Report.Folder", stripExtension: false);
+
+        Assert.Equal("quarterly-report-folder", slug);
+    }
+
+    [Fact]
     public void Build_ShouldAppendSlugWhenPresent()
     {
         var url = ShareUrlBuilder.Build("https://example.com/", "abc123", "report");
@@ -46,6 +54,22 @@ public sealed class ShareUtilitiesTests
         var url = ShareUrlBuilder.Build("https://example.com/", "abc123", "quarterly-report.pdf", "Quarterly Report.pdf");
 
         Assert.Equal("https://example.com/s/abc123/quarterly-report.pdf", url);
+    }
+
+    [Fact]
+    public void BuildFolderBrowse_ShouldAppendFolderSlug()
+    {
+        var url = ShareUrlBuilder.BuildFolderBrowse("https://example.com/", "abc123", "team-photos");
+
+        Assert.Equal("https://example.com/s/abc123/team-photos", url);
+    }
+
+    [Fact]
+    public void BuildFolderZip_ShouldAppendZipExtension()
+    {
+        var url = ShareUrlBuilder.BuildFolderZip("https://example.com/", "abc123", "team-photos");
+
+        Assert.Equal("https://example.com/s/abc123/team-photos.zip", url);
     }
 
     [Theory]

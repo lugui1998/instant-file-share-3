@@ -7,12 +7,45 @@ public enum PublishMode
     Manual = 2,
 }
 
+public enum ShareKind
+{
+    File = 0,
+    Folder = 1,
+}
+
+public enum FolderShareEntryPoint
+{
+    Browse = 0,
+    Zip = 1,
+}
+
+public enum FolderShareCapabilityPolicy
+{
+    Exclusive = 0,
+    AllowBoth = 1,
+}
+
+public enum FolderZipCompressionLevel
+{
+    Optimal = 0,
+    Fastest = 1,
+    NoCompression = 2,
+    SmallestSize = 3,
+}
+
 public enum ShareState
 {
     Active = 0,
     Revoked = 1,
     Expired = 2,
     Broken = 3,
+}
+
+public enum UsageCountingMode
+{
+    Never = 0,
+    PerSuccessfulTransfer = 1,
+    PerSession = 2,
 }
 
 public enum FileChangeBehavior
@@ -64,4 +97,12 @@ public enum TransferState
     Paused = 1,
     Completed = 2,
     Failed = 3,
+}
+
+public enum TransferKind
+{
+    FileDownload = 0,
+    FolderZipDownload = 1,
+    FolderFileDownload = 2,
+    MetadataPreview = 3,
 }

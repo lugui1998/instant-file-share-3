@@ -36,6 +36,18 @@ function formatTimestamp(value: string) {
   return new Date(value).toLocaleString()
 }
 
+function getShareTypeLabel(share: AgentShareRecord) {
+  if (share.shareKind !== 'Folder') {
+    return 'File share'
+  }
+
+  if (share.canBrowseFolderContents && share.canDownloadFolderAsZip) {
+    return share.primaryFolderEntryPoint === 'Zip' ? 'Folder · ZIP primary' : 'Folder · Browse primary'
+  }
+
+  return share.canDownloadFolderAsZip ? 'Folder · ZIP only' : 'Folder · Browse only'
+}
+
 watch([activeShares, () => props.itemsPerPage], () => {
   currentPage.value = Math.min(currentPage.value, Math.max(1, pageCount.value || 1))
 }, { deep: true })
@@ -66,6 +78,9 @@ watch([activeShares, () => props.itemsPerPage], () => {
           <tr v-for="share in pagedShares" :key="share.id">
             <td>
               <strong>{{ share.fileName }}</strong>
+              <div class="status-copy">
+                <span>{{ getShareTypeLabel(share) }}</span>
+              </div>
             </td>
             <td>{{ share.useCount }}<span v-if="share.maxUses"> / {{ share.maxUses }}</span></td>
             <td>{{ formatTimestamp(share.createdAtUtc) }}</td>

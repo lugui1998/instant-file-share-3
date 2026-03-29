@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
+type ShareKind = 'File' | 'Folder'
+type FolderShareEntryPoint = 'Browse' | 'Zip'
 
 type ShareRecord = {
   id: string
@@ -10,6 +12,10 @@ type ShareRecord = {
   slug?: string | null
   publicBaseUrl: string
   fileSize: number
+  shareKind: ShareKind
+  canBrowseFolderContents: boolean
+  canDownloadFolderAsZip: boolean
+  primaryFolderEntryPoint?: FolderShareEntryPoint | null
   createdAtUtc: string
   expiresAtUtc?: string | null
   maxUses?: number | null
@@ -32,6 +38,7 @@ type TransferRecord = {
   shareId: string
   token: string
   fileName: string
+  transferKind?: 'FileDownload' | 'FolderZipDownload' | 'FolderFileDownload' | 'MetadataPreview' | null
   requesterName?: string | null
   remoteAddress?: string | null
   bytesSent: number

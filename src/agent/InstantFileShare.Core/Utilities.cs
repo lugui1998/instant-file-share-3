@@ -27,14 +27,14 @@ public static class ShareTokenGenerator
 
 public static class FileNameSlug
 {
-    public static string? Create(string fileName, int maxLength = 48)
+    public static string? Create(string fileName, int maxLength = 48, bool stripExtension = true)
     {
         if (string.IsNullOrWhiteSpace(fileName))
         {
             return null;
         }
 
-        var name = Path.GetFileNameWithoutExtension(fileName).Trim().ToLowerInvariant();
+        var name = (stripExtension ? Path.GetFileNameWithoutExtension(fileName) : fileName).Trim().ToLowerInvariant();
         var builder = new StringBuilder();
 
         foreach (var character in name)
@@ -68,6 +68,16 @@ public static class FileNameSlug
 
 public static class ShareUrlBuilder
 {
+    public static string Build(ShareRecord share)
+    {
+        return share.ShareKind switch
+        {
+            ShareKind.Folder when share.PrimaryFolderEntryPoint == FolderShareEntryPoint.Zip => BuildFolderZip(share.PublicBaseUrl, share.Token, share.Slug),
+            ShareKind.Folder => BuildFolderBrowse(share.PublicBaseUrl, share.Token, share.Slug),
+            _ => Build(share.PublicBaseUrl, share.Token, share.Slug, share.FileName),
+        };
+    }
+
     public static string Build(string baseUrl, string token, string? slug, string? fileName = null)
     {
         baseUrl = baseUrl.TrimEnd('/');
@@ -76,6 +86,36 @@ public static class ShareUrlBuilder
         return string.IsNullOrWhiteSpace(friendlySegment)
             ? $"{baseUrl}/s/{token}"
             : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(friendlySegment)}";
+    }
+
+    public static string BuildFolderBrowse(string baseUrl, string token, string? slug)
+    {
+        baseUrl = baseUrl.TrimEnd('/');
+        return string.IsNullOrWhiteSpace(slug)
+            ? $"{baseUrl}/s/{token}"
+            : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(slug)}";
+    }
+
+    public static string BuildFolderZip(string baseUrl, string token, string? slug)
+    {
+        baseUrl = baseUrl.TrimEnd('/');
+        return string.IsNullOrWhiteSpace(slug)
+            ? $"{baseUrl}/s/{token}.zip"
+            : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(slug)}.zip";
+    }
+
+    public static string BuildFolderChild(string baseUrl, string token, string? slug, string relativePath)
+    {
+        baseUrl = baseUrl.TrimEnd('/');
+        var encodedPath = string.Join(
+            "/",
+            relativePath
+                .Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(Uri.EscapeDataString));
+
+        return string.IsNullOrWhiteSpace(slug)
+            ? $"{baseUrl}/s/{token}/{encodedPath}"
+            : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(slug)}/{encodedPath}";
     }
 
     public static string? BuildFriendlySegment(string? slug, string? fileName)
