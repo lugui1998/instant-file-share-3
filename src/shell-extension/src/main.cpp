@@ -1,14 +1,25 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <filesystem>
 #include <string>
 #include <vector>
 
 namespace
 {
+    namespace fs = std::filesystem;
+
     constexpr wchar_t kPipeName[] = LR"(\\.\pipe\InstantFileShare.Agent)";
-    constexpr wchar_t kVerbKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare)";
-    constexpr wchar_t kCommandKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare\command)";
+    constexpr wchar_t kFileVerbKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare)";
+    constexpr wchar_t kFileCommandKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare\command)";
+    constexpr wchar_t kFolderZipVerbKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderZip)";
+    constexpr wchar_t kFolderZipCommandKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderZip\command)";
+    constexpr wchar_t kFolderZipBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderZip)";
+    constexpr wchar_t kFolderZipBackgroundCommandKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderZip\command)";
+    constexpr wchar_t kFolderBrowseVerbKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderBrowse)";
+    constexpr wchar_t kFolderBrowseCommandKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderBrowse\command)";
+    constexpr wchar_t kFolderBrowseBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse)";
+    constexpr wchar_t kFolderBrowseBackgroundCommandKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse\command)";
 
     std::wstring EscapeJson(const std::wstring& value)
     {
@@ -43,9 +54,9 @@ namespace
         return output;
     }
 
-    std::wstring BuildPayload(const std::wstring& filePath)
+    std::wstring BuildPayload(const std::wstring& command, const std::wstring& filePath)
     {
-        return L"{\"command\":\"share\",\"filePath\":\"" + EscapeJson(filePath) + L"\"}\n";
+        return L"{\"command\":\"" + EscapeJson(command) + L"\",\"filePath\":\"" + EscapeJson(filePath) + L"\"}\n";
     }
 
     std::string ToUtf8(const std::wstring& value)
@@ -67,6 +78,69 @@ namespace
         const auto length = GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
         buffer.resize(length);
         return buffer;
+    }
+
+    bool FileExists(const fs::path& path)
+    {
+        std::error_code errorCode;
+        return fs::is_regular_file(path, errorCode);
+    }
+
+    bool DirectoryExists(const fs::path& path)
+    {
+        std::error_code errorCode;
+        return fs::is_directory(path, errorCode);
+    }
+
+    fs::path FindRepositoryRoot(fs::path current)
+    {
+        current = current.lexically_normal();
+
+        while (!current.empty())
+        {
+            if (FileExists(current / "InstantFileShare.slnx") || DirectoryExists(current / ".git"))
+            {
+                return current;
+            }
+
+            const auto parent = current.parent_path();
+            if (parent == current)
+            {
+                break;
+            }
+
+            current = parent;
+        }
+
+        return {};
+    }
+
+    std::wstring ResolveAgentExecutablePath()
+    {
+        const auto helperPath = fs::path(GetExecutablePath());
+        const auto helperDirectory = helperPath.parent_path();
+        const auto repositoryRoot = FindRepositoryRoot(helperDirectory);
+
+        std::vector<fs::path> candidates;
+        candidates.reserve(6);
+        candidates.push_back(helperDirectory / "InstantFileShare.Agent.exe");
+        candidates.push_back(helperDirectory.parent_path() / "InstantFileShare.Agent.exe");
+
+        if (!repositoryRoot.empty())
+        {
+            candidates.push_back(repositoryRoot / "src" / "agent" / "InstantFileShare.Agent" / "bin" / "Debug" / "net8.0-windows" / "InstantFileShare.Agent.exe");
+            candidates.push_back(repositoryRoot / "src" / "agent" / "InstantFileShare.Agent" / "bin" / "Release" / "net8.0-windows" / "InstantFileShare.Agent.exe");
+        }
+
+        for (const auto& candidate : candidates)
+        {
+            if (FileExists(candidate))
+            {
+                return candidate.wstring();
+            }
+        }
+
+        return {};
     }
 
     std::wstring GetFirstArgument()
@@ -162,6 +236,90 @@ namespace
         return output;
     }
 
+    bool TryConnectToAgentPipe(DWORD timeoutMs, HANDLE& pipe)
+    {
+        pipe = INVALID_HANDLE_VALUE;
+        const auto deadline = GetTickCount64() + timeoutMs;
+
+        while (true)
+        {
+            pipe = CreateFileW(
+                kPipeName,
+                GENERIC_READ | GENERIC_WRITE,
+                0,
+                nullptr,
+                OPEN_EXISTING,
+                0,
+                nullptr);
+
+            if (pipe != INVALID_HANDLE_VALUE)
+            {
+                return true;
+            }
+
+            const auto error = GetLastError();
+            if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PIPE_BUSY)
+            {
+                return false;
+            }
+
+            const auto now = GetTickCount64();
+            if (now >= deadline)
+            {
+                SetLastError(error);
+                return false;
+            }
+
+            const auto remaining = deadline - now;
+            const auto waitSlice = static_cast<DWORD>(remaining > 250 ? 250 : remaining);
+            if (error == ERROR_PIPE_BUSY)
+            {
+                WaitNamedPipeW(kPipeName, waitSlice);
+            }
+            else
+            {
+                Sleep(waitSlice);
+            }
+        }
+    }
+
+    bool TryStartAgent()
+    {
+        const auto agentPath = ResolveAgentExecutablePath();
+        if (agentPath.empty())
+        {
+            return false;
+        }
+
+        auto commandLine = L"\"" + agentPath + L"\"";
+        auto workingDirectory = fs::path(agentPath).parent_path().wstring();
+
+        STARTUPINFOW startupInfo{};
+        startupInfo.cb = sizeof(startupInfo);
+
+        PROCESS_INFORMATION processInformation{};
+        const auto started = CreateProcessW(
+            agentPath.c_str(),
+            commandLine.data(),
+            nullptr,
+            nullptr,
+            FALSE,
+            CREATE_NEW_PROCESS_GROUP,
+            nullptr,
+            workingDirectory.c_str(),
+            &startupInfo,
+            &processInformation);
+
+        if (!started)
+        {
+            return false;
+        }
+
+        CloseHandle(processInformation.hThread);
+        CloseHandle(processInformation.hProcess);
+        return true;
+    }
+
     bool SetRegistryString(HKEY root, const wchar_t* subKey, const wchar_t* valueName, const std::wstring& value)
     {
         HKEY key = nullptr;
@@ -182,15 +340,15 @@ namespace
         return result == ERROR_SUCCESS;
     }
 
-    bool RegisterContextMenu(std::wstring& errorMessage)
+    bool RegisterContextMenu(const wchar_t* verbKeyPath, const wchar_t* commandKeyPath, const std::wstring& label, const std::wstring& commandArgument, const std::wstring& targetToken, std::wstring& errorMessage)
     {
         const auto executablePath = GetExecutablePath();
-        const auto command = L"\"" + executablePath + L"\" \"%1\"";
+        const auto command = L"\"" + executablePath + L"\" " + commandArgument + L" \"" + targetToken + L"\"";
 
-        if (!SetRegistryString(HKEY_CURRENT_USER, kVerbKeyPath, nullptr, L"Copy Share Link") ||
-            !SetRegistryString(HKEY_CURRENT_USER, kVerbKeyPath, L"MUIVerb", L"Copy Share Link") ||
-            !SetRegistryString(HKEY_CURRENT_USER, kVerbKeyPath, L"Icon", executablePath) ||
-            !SetRegistryString(HKEY_CURRENT_USER, kCommandKeyPath, nullptr, command))
+        if (!SetRegistryString(HKEY_CURRENT_USER, verbKeyPath, nullptr, label) ||
+            !SetRegistryString(HKEY_CURRENT_USER, verbKeyPath, L"MUIVerb", label) ||
+            !SetRegistryString(HKEY_CURRENT_USER, verbKeyPath, L"Icon", executablePath) ||
+            !SetRegistryString(HKEY_CURRENT_USER, commandKeyPath, nullptr, command))
         {
             errorMessage = L"Failed to register the Explorer context menu entry.";
             return false;
@@ -200,9 +358,9 @@ namespace
         return true;
     }
 
-    bool UnregisterContextMenu(std::wstring& errorMessage)
+    bool UnregisterContextMenu(const wchar_t* verbKeyPath, std::wstring& errorMessage)
     {
-        const auto result = SHDeleteKeyW(HKEY_CURRENT_USER, kVerbKeyPath);
+        const auto result = SHDeleteKeyW(HKEY_CURRENT_USER, verbKeyPath);
         if (result != ERROR_SUCCESS && result != ERROR_FILE_NOT_FOUND)
         {
             errorMessage = L"Failed to remove the Explorer context menu entry.";
@@ -213,30 +371,28 @@ namespace
         return true;
     }
 
-    bool SendCreateShareCommand(const std::wstring& filePath, std::wstring& errorMessage)
+    bool SendCreateShareCommand(const std::wstring& command, const std::wstring& filePath, std::wstring& errorMessage)
     {
-        if (!WaitNamedPipeW(kPipeName, 5000))
+        HANDLE pipe = INVALID_HANDLE_VALUE;
+        if (!TryConnectToAgentPipe(500, pipe))
         {
-            errorMessage = L"The Instant File Share agent is not running.";
-            return false;
+            const auto initialError = GetLastError();
+            if (initialError == ERROR_FILE_NOT_FOUND)
+            {
+                if (!TryStartAgent() || !TryConnectToAgentPipe(15000, pipe))
+                {
+                    errorMessage = L"The Instant File Share agent is not running.";
+                    return false;
+                }
+            }
+            else
+            {
+                errorMessage = L"Could not connect to the Instant File Share agent.";
+                return false;
+            }
         }
 
-        HANDLE pipe = CreateFileW(
-            kPipeName,
-            GENERIC_READ | GENERIC_WRITE,
-            0,
-            nullptr,
-            OPEN_EXISTING,
-            0,
-            nullptr);
-
-        if (pipe == INVALID_HANDLE_VALUE)
-        {
-            errorMessage = L"Could not connect to the Instant File Share agent.";
-            return false;
-        }
-
-        const auto payload = ToUtf8(BuildPayload(filePath));
+        const auto payload = ToUtf8(BuildPayload(command, filePath));
         DWORD bytesWritten = 0;
         if (!WriteFile(pipe, payload.data(), static_cast<DWORD>(payload.size()), &bytesWritten, nullptr))
         {
@@ -284,18 +440,18 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             LocalFree(arguments);
         }
 
-        MessageBoxW(nullptr, L"Usage:\ninstant_file_share_shell <file-path>\ninstant_file_share_shell --register-context-menu\ninstant_file_share_shell --unregister-context-menu", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(nullptr, L"Usage:\ninstant_file_share_shell --share-file <file-path>\ninstant_file_share_shell --share-folder-zip <folder-path>\ninstant_file_share_shell --share-folder-browse <folder-path>\ninstant_file_share_shell --register-file-context-menu\ninstant_file_share_shell --unregister-file-context-menu\ninstant_file_share_shell --register-folder-zip-context-menu\ninstant_file_share_shell --unregister-folder-zip-context-menu\ninstant_file_share_shell --register-folder-browse-context-menu\ninstant_file_share_shell --unregister-folder-browse-context-menu", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
         return 1;
     }
 
     const std::wstring command = arguments[1];
-    std::wstring filePath = command;
+    std::wstring filePath = argumentCount >= 3 ? arguments[2] : std::wstring{};
     LocalFree(arguments);
 
     std::wstring errorMessage;
-    if (command == L"--register-context-menu")
+    if (command == L"--register-file-context-menu")
     {
-        if (!RegisterContextMenu(errorMessage))
+        if (!RegisterContextMenu(kFileVerbKeyPath, kFileCommandKeyPath, L"Copy Share Link", L"--share-file", L"%1", errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -303,9 +459,9 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 0;
     }
 
-    if (command == L"--unregister-context-menu")
+    if (command == L"--unregister-file-context-menu")
     {
-        if (!UnregisterContextMenu(errorMessage))
+        if (!UnregisterContextMenu(kFileVerbKeyPath, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -313,11 +469,67 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 0;
     }
 
-    if (filePath.empty() || !SendCreateShareCommand(filePath, errorMessage))
+    if (command == L"--register-folder-zip-context-menu")
     {
-        MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
-        return 1;
+        if (!RegisterContextMenu(kFolderZipVerbKeyPath, kFolderZipCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%1", errorMessage) ||
+            !RegisterContextMenu(kFolderZipBackgroundVerbKeyPath, kFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%V", errorMessage))
+        {
+            MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+        return 0;
     }
 
-    return 0;
+    if (command == L"--unregister-folder-zip-context-menu")
+    {
+        if (!UnregisterContextMenu(kFolderZipVerbKeyPath, errorMessage) ||
+            !UnregisterContextMenu(kFolderZipBackgroundVerbKeyPath, errorMessage))
+        {
+            MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (command == L"--register-folder-browse-context-menu")
+    {
+        if (!RegisterContextMenu(kFolderBrowseVerbKeyPath, kFolderBrowseCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%1", errorMessage) ||
+            !RegisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, kFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%V", errorMessage))
+        {
+            MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (command == L"--unregister-folder-browse-context-menu")
+    {
+        if (!UnregisterContextMenu(kFolderBrowseVerbKeyPath, errorMessage) ||
+            !UnregisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, errorMessage))
+        {
+            MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (command == L"--share-file" || command == L"--share-folder-zip" || command == L"--share-folder-browse")
+    {
+        const auto pipeCommand = command == L"--share-folder-zip"
+            ? L"share-folder-zip"
+            : command == L"--share-folder-browse"
+                ? L"share-folder-browse"
+                : L"share";
+
+        if (filePath.empty() || !SendCreateShareCommand(pipeCommand, filePath, errorMessage))
+        {
+            MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+
+        return 0;
+    }
+
+    MessageBoxW(nullptr, L"Unsupported command.", L"Instant File Share", MB_OK | MB_ICONERROR);
+    return 1;
 }

@@ -64,6 +64,10 @@ const settingsDraft = ref<AppSettings>({
   localApiPort: 46430,
   showLogs: false,
   addFileContextMenuButton: true,
+  addFolderZipContextMenuButton: true,
+  addFolderBrowseContextMenuButton: true,
+  folderShareCapabilityPolicy: 'Exclusive',
+  folderZipCompressionLevel: 'Optimal',
   historyRetentionValue: 3,
   historyRetentionUnit: 'Months',
   historyItemsPerPage: 25,
@@ -227,6 +231,15 @@ async function revokeShare(shareId: string) {
 
 function buildShareUrl(share: AgentShareRecord) {
   const baseUrl = share.publicBaseUrl.replace(/\/$/, '')
+  if (share.shareKind === 'Folder') {
+    const folderSlug = share.slug ?? share.fileName.trim().toLowerCase().replace(/\s+/g, '-')
+    if (share.primaryFolderEntryPoint === 'Zip') {
+      return `${baseUrl}/s/${share.token}/${encodeURIComponent(folderSlug)}.zip`
+    }
+
+    return `${baseUrl}/s/${share.token}/${encodeURIComponent(folderSlug)}`
+  }
+
   const extension = share.fileName.includes('.') ? share.fileName.slice(share.fileName.lastIndexOf('.')) : ''
   const friendlySegment = share.slug
     ? share.slug.toLowerCase().endsWith(extension.toLowerCase())

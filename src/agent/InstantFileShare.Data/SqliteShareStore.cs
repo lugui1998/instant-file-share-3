@@ -23,6 +23,7 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             await command.ExecuteNonQueryAsync(cancellationToken);
         }
 
+        await EnsureSharesColumnsAsync(connection, cancellationToken);
         await EnsureTransfersColumnsAsync(connection, cancellationToken);
 
         if (await ReadSingletonJsonAsync(connection, "settings", "settings", cancellationToken) is null)
@@ -212,6 +213,22 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    public async Task<bool> TryAddUsageSessionAsync(string shareId, string sessionKey, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO share_usage_sessions (share_id, session_key) VALUES ($shareId, $sessionKey)
+            ON CONFLICT(share_id, session_key) DO NOTHING;
+            """;
+        command.Parameters.AddWithValue("$shareId", shareId);
+        command.Parameters.AddWithValue("$sessionKey", sessionKey);
+        return await command.ExecuteNonQueryAsync(cancellationToken) > 0;
+    }
+
     private async Task<ShareRecord?> GetShareByAsync(string fieldName, string fieldValue, CancellationToken cancellationToken)
     {
         await using var connection = OpenConnection();
@@ -232,10 +249,12 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             """
             INSERT INTO shares (
                 id, token, file_path, file_name, slug, public_base_url, file_size, file_modified_at_utc, created_at_utc,
-                expires_at_utc, max_uses, use_count, publish_mode, state, broken_reason, last_accessed_at_utc
+                expires_at_utc, max_uses, use_count, publish_mode, state, broken_reason, last_accessed_at_utc,
+                share_kind, can_browse_folder_contents, can_download_folder_as_zip, primary_folder_entry_point
             ) VALUES (
                 $id, $token, $filePath, $fileName, $slug, $publicBaseUrl, $fileSize, $fileModifiedAtUtc, $createdAtUtc,
-                $expiresAtUtc, $maxUses, $useCount, $publishMode, $state, $brokenReason, $lastAccessedAtUtc
+                $expiresAtUtc, $maxUses, $useCount, $publishMode, $state, $brokenReason, $lastAccessedAtUtc,
+                $shareKind, $canBrowseFolderContents, $canDownloadFolderAsZip, $primaryFolderEntryPoint
             )
             ON CONFLICT(id) DO UPDATE SET
                 token = excluded.token,
@@ -252,7 +271,11 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
                 publish_mode = excluded.publish_mode,
                 state = excluded.state,
                 broken_reason = excluded.broken_reason,
-                last_accessed_at_utc = excluded.last_accessed_at_utc;
+                last_accessed_at_utc = excluded.last_accessed_at_utc,
+                share_kind = excluded.share_kind,
+                can_browse_folder_contents = excluded.can_browse_folder_contents,
+                can_download_folder_as_zip = excluded.can_download_folder_as_zip,
+                primary_folder_entry_point = excluded.primary_folder_entry_point;
             """;
         command.Parameters.AddWithValue("$id", share.Id);
         command.Parameters.AddWithValue("$token", share.Token);
@@ -270,6 +293,10 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         command.Parameters.AddWithValue("$state", (int)share.State);
         command.Parameters.AddWithValue("$brokenReason", (object?)share.BrokenReason ?? DBNull.Value);
         command.Parameters.AddWithValue("$lastAccessedAtUtc", share.LastAccessedAtUtc?.UtcDateTime.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$shareKind", (int)share.ShareKind);
+        command.Parameters.AddWithValue("$canBrowseFolderContents", share.CanBrowseFolderContents ? 1 : 0);
+        command.Parameters.AddWithValue("$canDownloadFolderAsZip", share.CanDownloadFolderAsZip ? 1 : 0);
+        command.Parameters.AddWithValue("$primaryFolderEntryPoint", share.PrimaryFolderEntryPoint is null ? DBNull.Value : (int)share.PrimaryFolderEntryPoint.Value);
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
@@ -279,16 +306,17 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         command.CommandText =
             """
             INSERT INTO transfers (
-                id, share_id, token, file_name, requester_name, client_session_id, client_fingerprint, remote_address, bytes_sent, total_bytes,
+                id, share_id, token, file_name, transfer_kind, requester_name, client_session_id, client_fingerprint, remote_address, bytes_sent, total_bytes,
                 started_at_utc, last_updated_at_utc, completed_at_utc, state, is_active, succeeded, error
             ) VALUES (
-                $id, $shareId, $token, $fileName, $requesterName, $clientSessionId, $clientFingerprint, $remoteAddress, $bytesSent, $totalBytes,
+                $id, $shareId, $token, $fileName, $transferKind, $requesterName, $clientSessionId, $clientFingerprint, $remoteAddress, $bytesSent, $totalBytes,
                 $startedAtUtc, $lastUpdatedAtUtc, $completedAtUtc, $state, $isActive, $succeeded, $error
             )
             ON CONFLICT(id) DO UPDATE SET
                 share_id = excluded.share_id,
                 token = excluded.token,
                 file_name = excluded.file_name,
+                transfer_kind = excluded.transfer_kind,
                 requester_name = excluded.requester_name,
                 client_session_id = excluded.client_session_id,
                 client_fingerprint = excluded.client_fingerprint,
@@ -307,6 +335,7 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         command.Parameters.AddWithValue("$shareId", transfer.ShareId);
         command.Parameters.AddWithValue("$token", transfer.Token);
         command.Parameters.AddWithValue("$fileName", transfer.FileName);
+        command.Parameters.AddWithValue("$transferKind", (int)transfer.TransferKind);
         command.Parameters.AddWithValue("$requesterName", (object?)transfer.RequesterName ?? DBNull.Value);
         command.Parameters.AddWithValue("$clientSessionId", (object?)transfer.ClientSessionId ?? DBNull.Value);
         command.Parameters.AddWithValue("$clientFingerprint", (object?)transfer.ClientFingerprint ?? DBNull.Value);
@@ -359,6 +388,10 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             PublicBaseUrl = reader.GetString(reader.GetOrdinal("public_base_url")),
             FileSize = reader.GetInt64(reader.GetOrdinal("file_size")),
             FileModifiedAtUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("file_modified_at_utc"))),
+            ShareKind = (ShareKind)reader.GetInt32(reader.GetOrdinal("share_kind")),
+            CanBrowseFolderContents = reader.GetInt64(reader.GetOrdinal("can_browse_folder_contents")) != 0,
+            CanDownloadFolderAsZip = reader.GetInt64(reader.GetOrdinal("can_download_folder_as_zip")) != 0,
+            PrimaryFolderEntryPoint = reader.IsDBNull(reader.GetOrdinal("primary_folder_entry_point")) ? null : (FolderShareEntryPoint)reader.GetInt32(reader.GetOrdinal("primary_folder_entry_point")),
             CreatedAtUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("created_at_utc"))),
             ExpiresAtUtc = reader.IsDBNull(reader.GetOrdinal("expires_at_utc")) ? null : DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("expires_at_utc"))),
             MaxUses = reader.IsDBNull(reader.GetOrdinal("max_uses")) ? null : reader.GetInt32(reader.GetOrdinal("max_uses")),
@@ -378,6 +411,7 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             ShareId = reader.GetString(reader.GetOrdinal("share_id")),
             Token = reader.GetString(reader.GetOrdinal("token")),
             FileName = reader.GetString(reader.GetOrdinal("file_name")),
+            TransferKind = reader.IsDBNull(reader.GetOrdinal("transfer_kind")) ? TransferKind.FileDownload : (TransferKind)reader.GetInt32(reader.GetOrdinal("transfer_kind")),
             RequesterName = reader.IsDBNull(reader.GetOrdinal("requester_name")) ? null : reader.GetString(reader.GetOrdinal("requester_name")),
             ClientSessionId = reader.IsDBNull(reader.GetOrdinal("client_session_id")) ? null : reader.GetString(reader.GetOrdinal("client_session_id")),
             ClientFingerprint = reader.IsDBNull(reader.GetOrdinal("client_fingerprint")) ? null : reader.GetString(reader.GetOrdinal("client_fingerprint")),
@@ -416,6 +450,56 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             alterCommand.CommandText = "ALTER TABLE transfers ADD COLUMN requester_name TEXT NULL;";
             await alterCommand.ExecuteNonQueryAsync(cancellationToken);
         }
+
+        if (!columnNames.Contains("transfer_kind"))
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE transfers ADD COLUMN transfer_kind INTEGER NOT NULL DEFAULT 0;";
+            await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+    }
+
+    private static async Task EnsureSharesColumnsAsync(SqliteConnection connection, CancellationToken cancellationToken)
+    {
+        var columnNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        await using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "PRAGMA table_info(shares);";
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                columnNames.Add(reader.GetString(1));
+            }
+        }
+
+        if (!columnNames.Contains("share_kind"))
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE shares ADD COLUMN share_kind INTEGER NOT NULL DEFAULT 0;";
+            await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!columnNames.Contains("can_browse_folder_contents"))
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE shares ADD COLUMN can_browse_folder_contents INTEGER NOT NULL DEFAULT 0;";
+            await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!columnNames.Contains("can_download_folder_as_zip"))
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE shares ADD COLUMN can_download_folder_as_zip INTEGER NOT NULL DEFAULT 0;";
+            await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!columnNames.Contains("primary_folder_entry_point"))
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE shares ADD COLUMN primary_folder_entry_point INTEGER NULL;";
+            await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
     }
 
     private static readonly string[] Schema =
@@ -430,6 +514,10 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             public_base_url TEXT NOT NULL,
             file_size INTEGER NOT NULL,
             file_modified_at_utc TEXT NOT NULL,
+            share_kind INTEGER NOT NULL DEFAULT 0,
+            can_browse_folder_contents INTEGER NOT NULL DEFAULT 0,
+            can_download_folder_as_zip INTEGER NOT NULL DEFAULT 0,
+            primary_folder_entry_point INTEGER NULL,
             created_at_utc TEXT NOT NULL,
             expires_at_utc TEXT NULL,
             max_uses INTEGER NULL,
@@ -464,6 +552,7 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             share_id TEXT NOT NULL,
             token TEXT NOT NULL,
             file_name TEXT NOT NULL,
+            transfer_kind INTEGER NOT NULL DEFAULT 0,
             requester_name TEXT NULL,
             client_session_id TEXT NULL,
             client_fingerprint TEXT NULL,
@@ -477,6 +566,13 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             is_active INTEGER NOT NULL,
             succeeded INTEGER NOT NULL,
             error TEXT NULL
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS share_usage_sessions (
+            share_id TEXT NOT NULL,
+            session_key TEXT NOT NULL,
+            PRIMARY KEY (share_id, session_key)
         );
         """,
     };

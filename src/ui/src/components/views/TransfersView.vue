@@ -39,6 +39,10 @@ const displayedTransfers = computed(() => {
 
 let refreshTimer: ReturnType<typeof setInterval> | null = null
 
+function isZipStreamTransfer(transfer: TransferRecord) {
+  return transfer.transferKind === 'FolderZipDownload'
+}
+
 function clampProgress(value: number) {
   return Math.max(0, Math.min(100, value))
 }
@@ -71,6 +75,13 @@ function formatProgressLabel(transfer: TransferRecord) {
   const sent = formatBytes(transfer.bytesSent)
   const total = transfer.totalBytes > 0 ? formatBytes(transfer.totalBytes) : '?'
   return `${sent} / ${total}`
+}
+
+function getZipProgressLabel(transfer: TransferRecord) {
+  const sent = transfer.bytesSent > 0 ? formatBytes(transfer.bytesSent) : 'Preparing stream'
+  return formatSpeedLabel(transfer)
+    ? `${sent} • ${formatSpeedLabel(transfer)}`
+    : sent
 }
 
 function getTransferSpeedBytesPerSecond(transfer: TransferRecord) {
@@ -176,6 +187,13 @@ watch([filteredTransfers, () => props.itemsPerPage], () => {
                   <HelpTooltip text="Platforms send these requests to read page metadata and build the rich embed preview without downloading the shared file." />
                 </div>
                 <span>No file download</span>
+              </div>
+              <div v-else-if="isZipStreamTransfer(transfer)" class="status-copy">
+                <div class="progress-inline-label">
+                  <strong>Streaming ZIP</strong>
+                  <HelpTooltip text="ZIP archives are compressed live while they are sent, so the final total size is not known ahead of time and a progress bar cannot be shown." />
+                </div>
+                <span>{{ getZipProgressLabel(transfer) }}</span>
               </div>
               <template v-else>
                 <div class="progress-meta">

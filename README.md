@@ -84,6 +84,7 @@ Notes:
 - the script outputs staged files to `artifacts\package\stage`
 - if `iscc` is available on `PATH`, the installer is written to `artifacts\package\installer`
 - if Inno Setup is not installed, the script still prepares the staged files so the installer can be compiled later
+- the installer exposes an optional `cloudflared` component and uses `winget` to install it when `winget` is available for the current user
 
 For a fully clean local uninstall before reinstalling, use:
 

@@ -28,10 +28,32 @@ internal sealed class ShareCoordinator(
 
     public async Task<(ShareRecord Share, string Url)> CreateShareAsync(CreateShareRequest request, CancellationToken cancellationToken)
     {
-        var fileInfo = new FileInfo(request.FilePath);
-        if (!fileInfo.Exists)
+        var shareKind = request.ShareKind;
+        var fileInfo = shareKind == ShareKind.File ? new FileInfo(request.FilePath) : null;
+        var directoryInfo = shareKind == ShareKind.Folder ? new DirectoryInfo(request.FilePath) : null;
+
+        if (shareKind == ShareKind.File && fileInfo is { Exists: false })
         {
             throw new FileNotFoundException("The selected file does not exist.", request.FilePath);
+        }
+
+        if (shareKind == ShareKind.Folder && directoryInfo is { Exists: false })
+        {
+            throw new DirectoryNotFoundException("The selected folder does not exist.");
+        }
+
+        if (shareKind == ShareKind.Folder &&
+            directoryInfo is not null &&
+            directoryInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        {
+            throw new InvalidOperationException("Folders backed by junctions, symlinks, or other reparse points cannot be shared.");
+        }
+
+        if (shareKind == ShareKind.Folder &&
+            directoryInfo is not null &&
+            directoryInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        {
+            throw new InvalidOperationException("Folders that rely on symlinks, junctions, or other reparse points are not supported.");
         }
 
         var settings = await shareStore.GetSettingsAsync(cancellationToken);
@@ -39,45 +61,35 @@ internal sealed class ShareCoordinator(
         var publicBaseUrl = await EnsureTunnelBaseUrlAsync(mode, cancellationToken)
             ?? throw new InvalidOperationException(GetMissingPublishModeMessage(mode));
 
-        var existingShare = await TryGetReusableShareAsync(fileInfo, request, settings, mode, publicBaseUrl, cancellationToken);
+        var existingShare = await TryGetReusableShareAsync(fileInfo, directoryInfo, request, settings, mode, publicBaseUrl, cancellationToken);
         if (existingShare is not null)
         {
-            return (existingShare, ShareUrlBuilder.Build(existingShare.PublicBaseUrl, existingShare.Token, existingShare.Slug, existingShare.FileName));
+            return (existingShare, ShareUrlBuilder.Build(existingShare));
         }
 
         var token = await GenerateUniqueShareTokenAsync(NormalizePublicTokenLength(settings.PublicTokenLength), cancellationToken);
-        var share = new ShareRecord
+        var share = shareKind switch
         {
-            Id = Guid.NewGuid().ToString("N"),
-            Token = token,
-            FilePath = fileInfo.FullName,
-            FileName = fileInfo.Name,
-            Slug = settings.FriendlyUrlsEnabled ? FileNameSlug.Create(fileInfo.Name) : null,
-            PublicBaseUrl = publicBaseUrl,
-            FileSize = fileInfo.Length,
-            FileModifiedAtUtc = fileInfo.LastWriteTimeUtc,
-            CreatedAtUtc = DateTimeOffset.UtcNow,
-            ExpiresAtUtc = request.ExpiresAtUtc ?? ResolveDefaultExpiry(settings),
-            MaxUses = request.MaxUses ?? settings.DefaultMaxUses,
-            UseCount = 0,
-            PublishMode = mode,
-            State = ShareState.Active,
+            ShareKind.Folder when directoryInfo is not null => BuildFolderShare(directoryInfo, request, settings, mode, publicBaseUrl, token),
+            ShareKind.File when fileInfo is not null => BuildFileShare(fileInfo, request, settings, mode, publicBaseUrl, token),
+            _ => throw new InvalidOperationException("Unsupported share target."),
         };
 
         await shareStore.AddShareAsync(share, cancellationToken);
         await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareCreated, DateTimeOffset.UtcNow, share), cancellationToken);
-        return (share, ShareUrlBuilder.Build(publicBaseUrl, share.Token, share.Slug, share.FileName));
+        return (share, ShareUrlBuilder.Build(share));
     }
 
     private async Task<ShareRecord?> TryGetReusableShareAsync(
-        FileInfo fileInfo,
+        FileInfo? fileInfo,
+        DirectoryInfo? directoryInfo,
         CreateShareRequest request,
         AppSettings settings,
         PublishMode mode,
         string publicBaseUrl,
         CancellationToken cancellationToken)
     {
-        var normalizedFilePath = fileInfo.FullName;
+        var normalizedFilePath = (directoryInfo?.FullName ?? fileInfo?.FullName)!;
         var normalizedBaseUrl = NormalizeBaseUrl(publicBaseUrl);
         var shares = await shareStore.ListSharesAsync(cancellationToken);
 
@@ -128,6 +140,20 @@ internal sealed class ShareCoordinator(
             return share with { State = ShareState.Expired, BrokenReason = "Maximum number of uses reached." };
         }
 
+        if (share.ShareKind == ShareKind.Folder)
+        {
+            var directoryInfo = new DirectoryInfo(share.FilePath);
+            if (!directoryInfo.Exists || directoryInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+            {
+                share = share with { State = ShareState.Broken, BrokenReason = "The shared folder is no longer available." };
+                await shareStore.UpdateShareAsync(share, cancellationToken);
+                await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareUpdated, DateTimeOffset.UtcNow, share), cancellationToken);
+                return share;
+            }
+
+            return share with { LastAccessedAtUtc = DateTimeOffset.UtcNow };
+        }
+
         var fileInfo = new FileInfo(share.FilePath);
         if (!fileInfo.Exists)
         {
@@ -170,13 +196,14 @@ internal sealed class ShareCoordinator(
         settings = settings with
         {
             PublicTokenLength = NormalizePublicTokenLength(settings.PublicTokenLength),
+            FolderZipCompressionLevel = NormalizeFolderZipCompressionLevel(settings.FolderZipCompressionLevel),
             HistoryRetentionValue = Math.Max(0, settings.HistoryRetentionValue),
             HistoryItemsPerPage = Math.Max(0, settings.HistoryItemsPerPage),
             SharesItemsPerPage = Math.Max(0, settings.SharesItemsPerPage),
         };
         await shareStore.SaveSettingsAsync(settings, cancellationToken);
         startupRegistrationService.Apply(settings.StartOnLogin);
-        await contextMenuRegistrationService.ApplyAsync(settings.AddFileContextMenuButton, cancellationToken);
+        await contextMenuRegistrationService.ApplyAsync(settings, cancellationToken);
         await PruneTransfersAsync(cancellationToken);
         await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.SettingsUpdated, DateTimeOffset.UtcNow, settings), cancellationToken);
     }
@@ -203,7 +230,7 @@ internal sealed class ShareCoordinator(
         }
     }
 
-    public async Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, string? requesterName, CancellationToken cancellationToken)
+    public async Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, TransferKind transferKind, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, string? requesterName, CancellationToken cancellationToken)
     {
         await EnsureTransfersLoadedAsync(cancellationToken);
         TransferSnapshot transfer;
@@ -214,6 +241,8 @@ internal sealed class ShareCoordinator(
                     entry,
                     shareId,
                     token,
+                    fileName,
+                    transferKind,
                     clientSessionId,
                     clientFingerprint,
                     totalBytes,
@@ -243,6 +272,7 @@ internal sealed class ShareCoordinator(
                     ShareId = shareId,
                     Token = token,
                     FileName = fileName,
+                    TransferKind = transferKind,
                     RequesterName = requesterName,
                     ClientSessionId = clientSessionId,
                     ClientFingerprint = clientFingerprint,
@@ -305,7 +335,7 @@ internal sealed class ShareCoordinator(
             cancellationToken);
     }
 
-    public async Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? error, string? requesterName, CancellationToken cancellationToken)
+    public async Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, TransferKind transferKind, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? usageSessionKey, string? error, string? requesterName, CancellationToken cancellationToken)
     {
         await EnsureTransfersLoadedAsync(cancellationToken);
         TransferSnapshot completedTransfer;
@@ -328,6 +358,7 @@ internal sealed class ShareCoordinator(
                 ShareId = shareId,
                 Token = token,
                 FileName = fileName,
+                TransferKind = activeTransfer?.TransferKind ?? transferKind,
                 RequesterName = requesterName,
                 ClientSessionId = activeTransfer?.ClientSessionId,
                 ClientFingerprint = activeTransfer?.ClientFingerprint,
@@ -361,8 +392,15 @@ internal sealed class ShareCoordinator(
         var share = await shareStore.GetShareByIdAsync(shareId, cancellationToken);
         if (share is not null && countsTowardUsage && succeeded && bytesSent >= totalBytes)
         {
-            share = share with { UseCount = share.UseCount + 1, LastAccessedAtUtc = DateTimeOffset.UtcNow };
-            await shareStore.UpdateShareAsync(share, cancellationToken);
+            var shouldIncrementUseCount = completedTransfer.TransferKind != TransferKind.FolderFileDownload ||
+                string.IsNullOrWhiteSpace(usageSessionKey) ||
+                await shareStore.TryAddUsageSessionAsync(shareId, usageSessionKey, cancellationToken);
+
+            if (shouldIncrementUseCount)
+            {
+                share = share with { UseCount = share.UseCount + 1, LastAccessedAtUtc = DateTimeOffset.UtcNow };
+                await shareStore.UpdateShareAsync(share, cancellationToken);
+            }
         }
 
         await PruneTransfersAsync(cancellationToken);
@@ -416,6 +454,33 @@ internal sealed class ShareCoordinator(
             PublishMode.Manual => await EnsureManualUrlAsync(profile, settings, cancellationToken),
             _ => null,
         };
+    }
+
+    public async Task<string?> EnsureInstallerFirstRunTunnelAsync(CancellationToken cancellationToken)
+    {
+        var settings = await shareStore.GetSettingsAsync(cancellationToken);
+        if (settings.DefaultPublishMode == PublishMode.Manual)
+        {
+            return null;
+        }
+
+        PublishMode[] targetModes = settings.DefaultPublishMode switch
+        {
+            PublishMode.ManagedCloudflare => [PublishMode.ManagedCloudflare, PublishMode.QuickTunnel],
+            PublishMode.QuickTunnel => [PublishMode.QuickTunnel],
+            _ => [PublishMode.QuickTunnel],
+        };
+
+        foreach (var mode in targetModes)
+        {
+            var publicBaseUrl = await EnsureTunnelBaseUrlAsync(mode, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(publicBaseUrl))
+            {
+                return publicBaseUrl;
+            }
+        }
+
+        return null;
     }
 
     public async Task<CloudflaredActionResult> InstallCloudflaredAsync(CancellationToken cancellationToken)
@@ -732,6 +797,8 @@ internal sealed class ShareCoordinator(
         TransferSnapshot entry,
         string shareId,
         string token,
+        string fileName,
+        TransferKind transferKind,
         string? clientSessionId,
         string? clientFingerprint,
         long totalBytes,
@@ -742,7 +809,11 @@ internal sealed class ShareCoordinator(
             return false;
         }
 
-        if (entry.ShareId != shareId || entry.Token != token || entry.TotalBytes != totalBytes)
+        if (entry.ShareId != shareId ||
+            entry.Token != token ||
+            entry.TotalBytes != totalBytes ||
+            entry.TransferKind != transferKind ||
+            !string.Equals(entry.FileName, fileName, StringComparison.Ordinal))
         {
             return false;
         }
@@ -861,6 +932,23 @@ internal sealed class ShareCoordinator(
 
     private static bool IsShareCompatibleWithRequest(ShareRecord share, CreateShareRequest request, AppSettings settings)
     {
+        if (share.ShareKind != request.ShareKind)
+        {
+            return false;
+        }
+
+        if (share.ShareKind == ShareKind.Folder)
+        {
+            var primaryEntryPoint = request.PrimaryFolderEntryPoint ?? FolderShareEntryPoint.Browse;
+            var (canBrowse, canDownloadZip) = ResolveFolderCapabilities(request, settings);
+            if (share.CanBrowseFolderContents != canBrowse ||
+                share.CanDownloadFolderAsZip != canDownloadZip ||
+                share.PrimaryFolderEntryPoint != primaryEntryPoint)
+            {
+                return false;
+            }
+        }
+
         if (share.MaxUses != (request.MaxUses ?? settings.DefaultMaxUses))
         {
             return false;
@@ -926,6 +1014,84 @@ internal sealed class ShareCoordinator(
     private static int NormalizePublicTokenLength(int tokenLength)
     {
         return Math.Clamp(tokenLength, ShareTokenGenerator.MinLength, ShareTokenGenerator.MaxLength);
+    }
+
+    private static FolderZipCompressionLevel NormalizeFolderZipCompressionLevel(FolderZipCompressionLevel level)
+    {
+        return level is FolderZipCompressionLevel.Fastest or FolderZipCompressionLevel.NoCompression or FolderZipCompressionLevel.SmallestSize
+            ? level
+            : FolderZipCompressionLevel.Optimal;
+    }
+
+    private static ShareRecord BuildFileShare(FileInfo fileInfo, CreateShareRequest request, AppSettings settings, PublishMode mode, string publicBaseUrl, string token)
+    {
+        return new ShareRecord
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Token = token,
+            FilePath = fileInfo.FullName,
+            FileName = fileInfo.Name,
+            Slug = settings.FriendlyUrlsEnabled ? FileNameSlug.Create(fileInfo.Name) : null,
+            PublicBaseUrl = publicBaseUrl,
+            FileSize = fileInfo.Length,
+            FileModifiedAtUtc = fileInfo.LastWriteTimeUtc,
+            ShareKind = ShareKind.File,
+            CanBrowseFolderContents = false,
+            CanDownloadFolderAsZip = false,
+            PrimaryFolderEntryPoint = null,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = request.ExpiresAtUtc ?? ResolveDefaultExpiry(settings),
+            MaxUses = request.MaxUses ?? settings.DefaultMaxUses,
+            UseCount = 0,
+            PublishMode = mode,
+            State = ShareState.Active,
+        };
+    }
+
+    private static ShareRecord BuildFolderShare(DirectoryInfo directoryInfo, CreateShareRequest request, AppSettings settings, PublishMode mode, string publicBaseUrl, string token)
+    {
+        var primaryEntryPoint = request.PrimaryFolderEntryPoint ?? FolderShareEntryPoint.Browse;
+        var (canBrowse, canDownloadZip) = ResolveFolderCapabilities(request, settings);
+
+        return new ShareRecord
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Token = token,
+            FilePath = directoryInfo.FullName,
+            FileName = directoryInfo.Name,
+            Slug = FileNameSlug.Create(directoryInfo.Name, stripExtension: false) ?? "folder",
+            PublicBaseUrl = publicBaseUrl,
+            FileSize = 0,
+            FileModifiedAtUtc = directoryInfo.LastWriteTimeUtc,
+            ShareKind = ShareKind.Folder,
+            CanBrowseFolderContents = canBrowse,
+            CanDownloadFolderAsZip = canDownloadZip,
+            PrimaryFolderEntryPoint = primaryEntryPoint,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = request.ExpiresAtUtc ?? ResolveDefaultExpiry(settings),
+            MaxUses = request.MaxUses ?? settings.DefaultMaxUses,
+            UseCount = 0,
+            PublishMode = mode,
+            State = ShareState.Active,
+        };
+    }
+
+    private static (bool CanBrowse, bool CanDownloadZip) ResolveFolderCapabilities(CreateShareRequest request, AppSettings settings)
+    {
+        if (request.ShareKind != ShareKind.Folder)
+        {
+            return (false, false);
+        }
+
+        var primaryEntryPoint = request.PrimaryFolderEntryPoint ?? FolderShareEntryPoint.Browse;
+        if (settings.FolderShareCapabilityPolicy == FolderShareCapabilityPolicy.AllowBoth)
+        {
+            return (true, true);
+        }
+
+        return primaryEntryPoint == FolderShareEntryPoint.Browse
+            ? (true, false)
+            : (false, true);
     }
 
     private static DateTimeOffset? ResolveHistoryRetentionCutoff(AppSettings settings)

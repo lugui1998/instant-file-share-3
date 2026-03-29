@@ -156,6 +156,42 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
         label="Add to file context menu"
         help-text="Adds a Share with Instant File Share action to the Windows file context menu."
       />
+      <ToggleField
+        v-model="settingsDraft.addFolderZipContextMenuButton"
+        input-id="folder-zip-context-button"
+        label="Add Share Folder as ZIP"
+        help-text="Adds a folder context-menu action that creates a ZIP-style folder share."
+      />
+      <ToggleField
+        v-model="settingsDraft.addFolderBrowseContextMenuButton"
+        input-id="folder-browse-context-button"
+        label="Add Share Folder for Browsing"
+        help-text="Adds a folder context-menu action that creates a browsable folder share."
+      />
+
+      <div class="field">
+        <div class="field-label-row">
+          <label for="folder-share-capability-policy">Folder share mode</label>
+          <HelpTooltip text="Choose whether a new folder share only exposes the selected mode, or also allows the secondary ZIP/browse route." />
+        </div>
+        <select id="folder-share-capability-policy" v-model="settingsDraft.folderShareCapabilityPolicy">
+          <option value="Exclusive">Only selected mode</option>
+          <option value="AllowBoth">Allow ZIP and browsing</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <div class="field-label-row">
+          <label for="folder-zip-compression-level">Folder ZIP compression</label>
+          <HelpTooltip text="Controls the compression level used when streaming ZIP downloads for folder shares. More compression results in smaller files but uses more CPU and can slow down the transfer." />
+        </div>
+        <select id="folder-zip-compression-level" v-model="settingsDraft.folderZipCompressionLevel">
+          <option value="SmallestSize">Smallest file</option>
+          <option value="Optimal">Balanced</option>
+          <option value="Fastest">Fast</option>
+          <option value="NoCompression">No compression</option>
+        </select>
+      </div>
     </SettingCard>
 
     <SettingCard class="settings-card settings-card-file-types" eyebrow="Metadata">
