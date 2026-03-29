@@ -9,8 +9,8 @@ $shellBuildPath = Join-Path $repoRoot 'build\shell-extension'
 Write-Host 'Building .NET solution...'
 dotnet build (Join-Path $repoRoot 'InstantFileShare.slnx')
 
-Write-Host 'Running core tests...'
-dotnet test (Join-Path $repoRoot 'tests\InstantFileShare.Core.Tests\InstantFileShare.Core.Tests.csproj')
+Write-Host 'Running solution tests...'
+dotnet test (Join-Path $repoRoot 'InstantFileShare.slnx')
 
 Write-Host 'Installing UI dependencies...'
 Push-Location $uiPath

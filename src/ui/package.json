@@ -12,11 +12,12 @@
     "electron:dev": "concurrently -k \"npm:dev\" \"npm:electron:watch\" \"npm:electron:start\"",
     "electron:watch": "tsc -p tsconfig.electron.json --watch --preserveWatchOutput",
     "electron:start": "wait-on tcp:5173 file:dist-electron/electron/main.js && electron .",
-    "build": "npm run build:renderer && npm run build:electron",
+    "build": "npm run build:renderer && npm run build:public-share && npm run build:electron",
     "build:renderer": "vue-tsc --noEmit && vite build && node ./scripts/patch-dist-html.mjs",
+    "build:public-share": "vue-tsc --noEmit -p tsconfig.public-share.json && vite build --config vite.public-share.config.ts",
     "build:electron": "tsc -p tsconfig.electron.json",
     "package:win": "npm run build && electron-builder --win dir",
-    "typecheck": "vue-tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "typecheck": "vue-tsc --noEmit && vue-tsc --noEmit -p tsconfig.public-share.json && tsc -p tsconfig.electron.json --noEmit",
     "preview": "vite preview"
   },
   "dependencies": {

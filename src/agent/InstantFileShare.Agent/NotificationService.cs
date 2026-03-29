@@ -1,9 +1,10 @@
+using InstantFileShare.Core;
 using System.Drawing;
 using System.Windows.Forms;
 
 namespace InstantFileShare.Agent;
 
-internal sealed class NotificationService : IHostedService, IDisposable
+internal sealed class NotificationService : IHostedService, INotificationService, IDisposable
 {
     private NotifyIcon? _notifyIcon;
     private Icon? _appIcon;

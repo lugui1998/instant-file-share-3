@@ -9,6 +9,7 @@ $agentStage = Join-Path $stageRoot 'agent'
 $shellStage = Join-Path $stageRoot 'shell'
 $uiStage = Join-Path $stageRoot 'ui'
 $uiPath = Join-Path $repoRoot 'src\ui'
+$publicShareDist = Join-Path $uiPath 'dist-public-share'
 $shellSourcePath = Join-Path $repoRoot 'src\shell-extension'
 $shellBuildPath = Join-Path $repoRoot 'build\shell-extension'
 $installerScript = Join-Path $repoRoot 'installer\InstantFileShare.iss'
@@ -111,6 +112,14 @@ if (-not (Test-Path $uiPackageRoot)) {
 }
 
 Copy-Item (Join-Path $uiPackageRoot '*') -Destination $uiStage -Recurse -Force
+
+if (-not (Test-Path $publicShareDist)) {
+  throw "Public share bundle not found at $publicShareDist"
+}
+
+$publicShareStage = Join-Path $agentStage 'public-share'
+New-Item -ItemType Directory -Path $publicShareStage -Force | Out-Null
+Copy-Item (Join-Path $publicShareDist '*') -Destination $publicShareStage -Recurse -Force
 
 $iscc = Resolve-InnoSetupCompiler
 if ([string]::IsNullOrWhiteSpace($iscc)) {
