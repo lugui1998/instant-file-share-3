@@ -31,11 +31,11 @@ One-shot full build:
 powershell -ExecutionPolicy Bypass -File .\scripts\build-all.ps1
 ```
 
-1. Build the backend and run core tests:
+1. Build the backend and run solution tests:
 
    ```powershell
    dotnet build InstantFileShare.slnx
-   dotnet test tests/InstantFileShare.Core.Tests/InstantFileShare.Core.Tests.csproj
+   dotnet test InstantFileShare.slnx
    ```
 
 2. Install and build the UI:

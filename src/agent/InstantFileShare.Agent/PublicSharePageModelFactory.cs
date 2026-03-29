@@ -1,0 +1,177 @@
+using InstantFileShare.Core;
+
+namespace InstantFileShare.Agent;
+
+internal sealed class PublicSharePageModelFactory
+{
+    public PublicSharePageModel BuildFileMetadataPage(
+        HttpContext context,
+        ShareRecord share,
+        string responseFileName,
+        FileInfo file,
+        ShareFileResponseMetadata fileResponseMetadata)
+    {
+        var actionVerb = fileResponseMetadata.PreferInline ? "View" : "Download";
+        var description = $"{actionVerb} {responseFileName} ({FormatFileSize(file.Length)}). Shared via Instant File Share.";
+        var actionLabel = fileResponseMetadata.PreferInline
+            ? $"Open this link to view {responseFileName} in your browser or download it."
+            : $"Open this link to download {responseFileName}.";
+
+        return new PublicSharePageModel(
+            Kind: "file",
+            Title: responseFileName,
+            Description: description,
+            CanonicalUrl: BuildCurrentUrl(context),
+            SiteName: "Instant File Share",
+            PrimaryActionLabel: $"{actionVerb} file",
+            PrimaryActionUrl: BuildCurrentUrl(context),
+            File: new PublicShareFileModel(
+                responseFileName,
+                FormatFileSize(file.Length),
+                fileResponseMetadata.PreferInline,
+                actionVerb,
+                actionLabel),
+            Folder: null,
+            Zip: null);
+    }
+
+    public PublicSharePageModel BuildFolderZipMetadataPage(
+        HttpContext context,
+        ShareRecord share,
+        FolderSharePathResolver.ResolvedEntry directoryEntry)
+    {
+        var folderLabel = string.IsNullOrEmpty(directoryEntry.RelativePath)
+            ? share.FileName
+            : $"{share.FileName} / {directoryEntry.RelativePath.Replace('/', '\\')}";
+        var description = $"Download a ZIP archive of {folderLabel}. Shared via Instant File Share.";
+
+        return new PublicSharePageModel(
+            Kind: "zip",
+            Title: folderLabel,
+            Description: description,
+            CanonicalUrl: BuildCurrentUrl(context),
+            SiteName: "Instant File Share",
+            PrimaryActionLabel: "Download ZIP",
+            PrimaryActionUrl: BuildCurrentUrl(context),
+            File: null,
+            Folder: null,
+            Zip: new PublicShareZipModel(
+                directoryEntry.Name,
+                $"Download a ZIP archive of {folderLabel}."));
+    }
+
+    public PublicSharePageModel BuildFolderBrowsePage(
+        HttpContext context,
+        ShareRecord share,
+        FolderSharePathResolver.ResolvedEntry directoryEntry,
+        IReadOnlyList<FolderSharePathResolver.DirectoryEntry> entries)
+    {
+        var title = string.IsNullOrEmpty(directoryEntry.RelativePath)
+            ? share.FileName
+            : directoryEntry.Name;
+        var description = $"Browse {share.FileName}. Shared via Instant File Share.";
+        var browseRootPath = $"/s/{share.Token}/{Uri.EscapeDataString(share.Slug ?? string.Empty)}";
+        var currentRelativePath = directoryEntry.RelativePath;
+        var showDownloadAll = share.CanBrowseFolderContents && share.CanDownloadFolderAsZip;
+        var downloadAllUrl = showDownloadAll ? $"{BuildCurrentUrl(context)}?download=zip" : null;
+        var breadcrumbs = BuildBreadcrumbs(share.FileName, browseRootPath, currentRelativePath);
+        var folderEntries = BuildFolderEntries(browseRootPath, currentRelativePath, entries);
+
+        return new PublicSharePageModel(
+            Kind: "folder",
+            Title: title,
+            Description: description,
+            CanonicalUrl: BuildCurrentUrl(context),
+            SiteName: "Instant File Share",
+            PrimaryActionLabel: showDownloadAll ? "Download All" : null,
+            PrimaryActionUrl: downloadAllUrl,
+            File: null,
+            Folder: new PublicShareFolderModel(
+                share.FileName,
+                currentRelativePath,
+                showDownloadAll,
+                downloadAllUrl,
+                breadcrumbs,
+                folderEntries,
+                folderEntries.Count == 0),
+            Zip: null);
+    }
+
+    private static IReadOnlyList<PublicShareBreadcrumb> BuildBreadcrumbs(string fileName, string browseRootPath, string currentRelativePath)
+    {
+        var breadcrumbs = new List<PublicShareBreadcrumb>
+        {
+            new(fileName, browseRootPath),
+        };
+
+        if (string.IsNullOrEmpty(currentRelativePath))
+        {
+            return breadcrumbs;
+        }
+
+        var breadcrumbPath = string.Empty;
+        foreach (var segment in currentRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries))
+        {
+            breadcrumbPath = string.IsNullOrEmpty(breadcrumbPath) ? segment : $"{breadcrumbPath}/{segment}";
+            breadcrumbs.Add(new PublicShareBreadcrumb(segment, $"{browseRootPath}/{EncodeRelativePath(breadcrumbPath)}"));
+        }
+
+        return breadcrumbs;
+    }
+
+    private static IReadOnlyList<PublicShareFolderEntryModel> BuildFolderEntries(
+        string browseRootPath,
+        string currentRelativePath,
+        IReadOnlyList<FolderSharePathResolver.DirectoryEntry> entries)
+    {
+        var result = new List<PublicShareFolderEntryModel>();
+
+        if (!string.IsNullOrEmpty(currentRelativePath))
+        {
+            var parentPath = currentRelativePath.Contains('/')
+                ? currentRelativePath[..currentRelativePath.LastIndexOf('/')]
+                : string.Empty;
+            var parentHref = string.IsNullOrEmpty(parentPath) ? browseRootPath : $"{browseRootPath}/{EncodeRelativePath(parentPath)}";
+            result.Add(new PublicShareFolderEntryModel("..", parentHref, true, string.Empty, null, true));
+        }
+
+        foreach (var entry in entries)
+        {
+            var href = $"{browseRootPath}/{EncodeRelativePath(entry.RelativePath)}";
+            result.Add(new PublicShareFolderEntryModel(
+                entry.Name,
+                href,
+                entry.IsDirectory,
+                entry.LastModifiedAtUtc.ToLocalTime().ToString("g"),
+                entry.IsDirectory ? null : FormatFileSize(entry.Size),
+                false));
+        }
+
+        return result;
+    }
+
+    private static string BuildCurrentUrl(HttpContext context)
+    {
+        return $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{context.Request.Path}";
+    }
+
+    private static string EncodeRelativePath(string relativePath)
+    {
+        return string.Join('/', relativePath.Split('/', StringSplitOptions.RemoveEmptyEntries).Select(Uri.EscapeDataString));
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double size = bytes;
+        var unitIndex = 0;
+
+        while (size >= 1024 && unitIndex < units.Length - 1)
+        {
+            size /= 1024;
+            unitIndex++;
+        }
+
+        return unitIndex == 0 ? $"{size:0} {units[unitIndex]}" : $"{size:0.0} {units[unitIndex]}";
+    }
+}

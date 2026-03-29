@@ -1,16 +1,17 @@
+using InstantFileShare.Core;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
 namespace InstantFileShare.Agent;
 
-public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger) : IDisposable
+public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger) : IUiLauncher, IDisposable
 {
     private Process? _process;
     private nint _jobHandle;
     private readonly object _sync = new();
 
-    public Task OpenAsync()
+    public Task OpenDashboardAsync(CancellationToken cancellationToken)
     {
         return Launch(ResolveRepositoryRoot());
     }

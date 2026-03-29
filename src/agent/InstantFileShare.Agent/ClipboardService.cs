@@ -1,11 +1,12 @@
+using InstantFileShare.Core;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace InstantFileShare.Agent;
 
-internal sealed class ClipboardService
+internal sealed class ClipboardService : IClipboardService
 {
-    public Task SetTextAsync(string value)
+    public Task SetTextAsync(string value, CancellationToken cancellationToken)
     {
         var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var thread = new Thread(() =>

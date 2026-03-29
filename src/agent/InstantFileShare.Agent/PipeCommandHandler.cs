@@ -4,9 +4,9 @@ namespace InstantFileShare.Agent;
 
 internal sealed class PipeCommandHandler(
     IShareCoordinator shareCoordinator,
-    ClipboardService clipboardService,
-    NotificationService notificationService,
-    DashboardLauncher dashboardLauncher,
+    IClipboardService clipboardService,
+    INotificationService notificationService,
+    IUiLauncher dashboardLauncher,
     ILogger<PipeCommandHandler> logger) : IPipeCommandHandler
 {
     public async Task<PipeCommandResult> HandleAsync(PipeCommand command, CancellationToken cancellationToken)
@@ -17,7 +17,7 @@ internal sealed class PipeCommandHandler(
             "share" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, ShareKind.File, null, cancellationToken),
             "share-folder-zip" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, ShareKind.Folder, FolderShareEntryPoint.Zip, cancellationToken),
             "share-folder-browse" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, ShareKind.Folder, FolderShareEntryPoint.Browse, cancellationToken),
-            "open-dashboard" => OpenDashboard(),
+            "open-dashboard" => await OpenDashboardAsync(cancellationToken),
             _ => new PipeCommandResult(false, "Unsupported command."),
         };
     }
@@ -29,7 +29,7 @@ internal sealed class PipeCommandHandler(
             cancellationToken);
         try
         {
-            await clipboardService.SetTextAsync(url);
+            await clipboardService.SetTextAsync(url, cancellationToken);
         }
         catch (Exception exception)
         {
@@ -48,9 +48,9 @@ internal sealed class PipeCommandHandler(
         return new PipeCommandResult(true, "Share link copied to clipboard.", url);
     }
 
-    private PipeCommandResult OpenDashboard()
+    private async Task<PipeCommandResult> OpenDashboardAsync(CancellationToken cancellationToken)
     {
-        dashboardLauncher.Launch(AgentPaths.GetRepositoryRoot());
+        await dashboardLauncher.OpenDashboardAsync(cancellationToken);
         return new PipeCommandResult(true, "Dashboard launch requested.");
     }
 }
