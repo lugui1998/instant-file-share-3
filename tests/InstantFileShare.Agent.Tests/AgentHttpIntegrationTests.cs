@@ -143,6 +143,95 @@ public sealed class AgentHttpIntegrationTests
         Assert.Contains("\"kind\":\"zip\"", body);
     }
 
+    [Theory]
+    [InlineData("/s/folder-token/team-files/%2e%2e/secret.txt")]
+    [InlineData("/s/folder-token/team-files/..%5csecret.txt")]
+    [InlineData("/s/folder-token/team-files/..%2fsecret.txt")]
+    [InlineData("/s/folder-token/team-files/docs/%2e%2e%5csecret.txt")]
+    [InlineData("/s/folder-token/team-files/%252e%252e?download=zip")]
+    [InlineData("/s/folder-token/team-files/%252e%252e/secret.txt")]
+    [InlineData("/s/folder-token/team-files/docs/%252e%252e%255csecret.txt")]
+    [InlineData("/s/folder-token/team-files/....//secret.txt")]
+    [InlineData("/s/folder-token/team-files/....\\\\secret.txt")]
+    [InlineData("/s/folder-token/team-files/C:%5cWindows%5cwin.ini")]
+    [InlineData("/s/folder-token/team-files/%5c%5cserver%5cshare%5cfile.txt")]
+    [InlineData("/s/folder-token/team-files/..%5csecret.txt%00")]
+    [InlineData("/s/folder-token/team-files/guide.txt%00.pdf")]
+    public async Task TraversalRequests_AreRejected(string requestPath)
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var rootPath = Path.Combine(context.FilesDirectory, "team-files");
+            Directory.CreateDirectory(Path.Combine(rootPath, "docs"));
+            await File.WriteAllTextAsync(Path.Combine(rootPath, "docs", "guide.txt"), "guide");
+            await File.WriteAllTextAsync(Path.Combine(context.FilesDirectory, "secret.txt"), "secret");
+            await context.Store.AddShareAsync(context.CreateFolderShare("folder-token", rootPath, "team-files"), CancellationToken.None);
+        });
+
+        using var response = await host.PublicClient.GetAsync(requestPath);
+
+        Assert.Contains(response.StatusCode, new[] { HttpStatusCode.NotFound, HttpStatusCode.BadRequest });
+    }
+
+    [Fact]
+    public async Task RawEncodedParentZipTraversalRequest_ReturnsNotFound()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var rootPath = Path.Combine(context.FilesDirectory, "team-files");
+            Directory.CreateDirectory(Path.Combine(rootPath, "docs"));
+            await File.WriteAllTextAsync(Path.Combine(rootPath, "docs", "guide.txt"), "guide");
+            await File.WriteAllTextAsync(Path.Combine(context.FilesDirectory, "secret.txt"), "secret");
+            await context.Store.AddShareAsync(context.CreateFolderShare("folder-token", rootPath, "team-files"), CancellationToken.None);
+        });
+
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, host.Settings.ManualPublicPort);
+        using var stream = client.GetStream();
+
+        var request =
+            $"GET /s/folder-token/team-files/%2e%2e?download=zip HTTP/1.1\r\nHost: 127.0.0.1:{host.Settings.ManualPublicPort}\r\nConnection: close\r\n\r\n";
+        var requestBytes = System.Text.Encoding.ASCII.GetBytes(request);
+        await stream.WriteAsync(requestBytes);
+        await stream.FlushAsync();
+
+        using var reader = new StreamReader(stream, System.Text.Encoding.ASCII);
+        var responseText = await reader.ReadToEndAsync();
+
+        Assert.Contains("404", responseText, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("/s/folder-token/team-files/%2e%2e?download=zip")]
+    [InlineData("/s/folder-token/team-files/docs/%252e%252e?download=zip")]
+    [InlineData("/s/folder-token/team-files/..%2f?download=zip")]
+    public async Task RawTraversalZipRequests_ReturnNotFound(string rawTarget)
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var rootPath = Path.Combine(context.FilesDirectory, "team-files");
+            Directory.CreateDirectory(Path.Combine(rootPath, "docs"));
+            await File.WriteAllTextAsync(Path.Combine(rootPath, "docs", "guide.txt"), "guide");
+            await File.WriteAllTextAsync(Path.Combine(context.FilesDirectory, "secret.txt"), "secret");
+            await context.Store.AddShareAsync(context.CreateFolderShare("folder-token", rootPath, "team-files"), CancellationToken.None);
+        });
+
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, host.Settings.ManualPublicPort);
+        using var stream = client.GetStream();
+
+        var request =
+            $"GET {rawTarget} HTTP/1.1\r\nHost: 127.0.0.1:{host.Settings.ManualPublicPort}\r\nConnection: close\r\n\r\n";
+        var requestBytes = System.Text.Encoding.ASCII.GetBytes(request);
+        await stream.WriteAsync(requestBytes);
+        await stream.FlushAsync();
+
+        using var reader = new StreamReader(stream, System.Text.Encoding.ASCII);
+        var responseText = await reader.ReadToEndAsync();
+
+        Assert.Contains("404", responseText, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task ControlApi_IsForbiddenOnPublicListener()
     {
