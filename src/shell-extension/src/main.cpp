@@ -14,12 +14,14 @@ namespace
     constexpr wchar_t kFileCommandKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare\command)";
     constexpr wchar_t kFolderZipVerbKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderZip)";
     constexpr wchar_t kFolderZipCommandKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderZip\command)";
-    constexpr wchar_t kFolderZipBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderZip)";
-    constexpr wchar_t kFolderZipBackgroundCommandKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderZip\command)";
+    constexpr wchar_t kFolderZipBackgroundVerbKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip)";
+    constexpr wchar_t kFolderZipBackgroundCommandKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip\command)";
+    constexpr wchar_t kLegacyFolderZipBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderZip)";
     constexpr wchar_t kFolderBrowseVerbKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderBrowse)";
     constexpr wchar_t kFolderBrowseCommandKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderBrowse\command)";
-    constexpr wchar_t kFolderBrowseBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse)";
-    constexpr wchar_t kFolderBrowseBackgroundCommandKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse\command)";
+    constexpr wchar_t kFolderBrowseBackgroundVerbKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse)";
+    constexpr wchar_t kFolderBrowseBackgroundCommandKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse\command)";
+    constexpr wchar_t kLegacyFolderBrowseBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse)";
 
     std::wstring EscapeJson(const std::wstring& value)
     {
@@ -160,6 +162,34 @@ namespace
         std::wstring path = arguments[1];
         LocalFree(arguments);
         return path;
+    }
+
+    std::wstring GetDesktopDirectoryPath()
+    {
+        wchar_t buffer[MAX_PATH] = {};
+        if (FAILED(SHGetFolderPathW(nullptr, CSIDL_DESKTOPDIRECTORY, nullptr, SHGFP_TYPE_CURRENT, buffer)))
+        {
+            return {};
+        }
+
+        return buffer;
+    }
+
+    std::wstring BuildDesktopFolderExclusionAppliesTo()
+    {
+        const auto desktopDirectoryPath = GetDesktopDirectoryPath();
+        if (desktopDirectoryPath.empty())
+        {
+            return {};
+        }
+
+        return L"System.ItemPathDisplay:<>=\"" + desktopDirectoryPath + L"\"";
+    }
+
+    std::wstring ResolveDesktopBackgroundTargetToken()
+    {
+        const auto desktopDirectoryPath = GetDesktopDirectoryPath();
+        return desktopDirectoryPath.empty() ? L"%V" : desktopDirectoryPath;
     }
 
     bool ContainsSuccessFlag(const std::string& response)
@@ -340,7 +370,7 @@ namespace
         return result == ERROR_SUCCESS;
     }
 
-    bool RegisterContextMenu(const wchar_t* verbKeyPath, const wchar_t* commandKeyPath, const std::wstring& label, const std::wstring& commandArgument, const std::wstring& targetToken, std::wstring& errorMessage)
+    bool RegisterContextMenu(const wchar_t* verbKeyPath, const wchar_t* commandKeyPath, const std::wstring& label, const std::wstring& commandArgument, const std::wstring& targetToken, std::wstring& errorMessage, const std::wstring& appliesTo = {})
     {
         const auto executablePath = GetExecutablePath();
         const auto command = L"\"" + executablePath + L"\" " + commandArgument + L" \"" + targetToken + L"\"";
@@ -348,10 +378,16 @@ namespace
         if (!SetRegistryString(HKEY_CURRENT_USER, verbKeyPath, nullptr, label) ||
             !SetRegistryString(HKEY_CURRENT_USER, verbKeyPath, L"MUIVerb", label) ||
             !SetRegistryString(HKEY_CURRENT_USER, verbKeyPath, L"Icon", executablePath) ||
+            (!appliesTo.empty() && !SetRegistryString(HKEY_CURRENT_USER, verbKeyPath, L"AppliesTo", appliesTo)) ||
             !SetRegistryString(HKEY_CURRENT_USER, commandKeyPath, nullptr, command))
         {
             errorMessage = L"Failed to register the Explorer context menu entry.";
             return false;
+        }
+
+        if (appliesTo.empty())
+        {
+            SHDeleteValueW(HKEY_CURRENT_USER, verbKeyPath, L"AppliesTo");
         }
 
         SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
@@ -471,19 +507,25 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--register-folder-zip-context-menu")
     {
-        if (!RegisterContextMenu(kFolderZipVerbKeyPath, kFolderZipCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%1", errorMessage) ||
-            !RegisterContextMenu(kFolderZipBackgroundVerbKeyPath, kFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%V", errorMessage))
+        const auto desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo();
+        const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
+        if (!RegisterContextMenu(kFolderZipVerbKeyPath, kFolderZipCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%1", errorMessage, desktopFolderExclusionAppliesTo) ||
+            !RegisterContextMenu(kFolderZipBackgroundVerbKeyPath, kFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", desktopBackgroundTargetToken, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
         }
+
+        std::wstring ignoredError;
+        UnregisterContextMenu(kLegacyFolderZipBackgroundVerbKeyPath, ignoredError);
         return 0;
     }
 
     if (command == L"--unregister-folder-zip-context-menu")
     {
         if (!UnregisterContextMenu(kFolderZipVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kFolderZipBackgroundVerbKeyPath, errorMessage))
+            !UnregisterContextMenu(kFolderZipBackgroundVerbKeyPath, errorMessage) ||
+            !UnregisterContextMenu(kLegacyFolderZipBackgroundVerbKeyPath, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -493,19 +535,25 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--register-folder-browse-context-menu")
     {
-        if (!RegisterContextMenu(kFolderBrowseVerbKeyPath, kFolderBrowseCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%1", errorMessage) ||
-            !RegisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, kFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%V", errorMessage))
+        const auto desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo();
+        const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
+        if (!RegisterContextMenu(kFolderBrowseVerbKeyPath, kFolderBrowseCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%1", errorMessage, desktopFolderExclusionAppliesTo) ||
+            !RegisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, kFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", desktopBackgroundTargetToken, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
         }
+
+        std::wstring ignoredError;
+        UnregisterContextMenu(kLegacyFolderBrowseBackgroundVerbKeyPath, ignoredError);
         return 0;
     }
 
     if (command == L"--unregister-folder-browse-context-menu")
     {
         if (!UnregisterContextMenu(kFolderBrowseVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, errorMessage))
+            !UnregisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, errorMessage) ||
+            !UnregisterContextMenu(kLegacyFolderBrowseBackgroundVerbKeyPath, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
