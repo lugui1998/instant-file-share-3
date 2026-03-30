@@ -10,16 +10,20 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
     private const string FileCommandKeyPath = @"Software\Classes\*\shell\InstantFileShare\command";
     private const string FolderZipVerbKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderZip";
     private const string FolderZipCommandKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderZip\command";
-    private const string FolderZipBackgroundVerbKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderZip";
-    private const string FolderZipBackgroundCommandKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderZip\command";
+    private const string FolderZipBackgroundVerbKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip";
+    private const string FolderZipBackgroundCommandKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip\command";
+    private const string LegacyFolderZipBackgroundVerbKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderZip";
     private const string FolderBrowseVerbKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderBrowse";
     private const string FolderBrowseCommandKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderBrowse\command";
-    private const string FolderBrowseBackgroundVerbKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse";
-    private const string FolderBrowseBackgroundCommandKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse\command";
+    private const string FolderBrowseBackgroundVerbKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse";
+    private const string FolderBrowseBackgroundCommandKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse\command";
+    private const string LegacyFolderBrowseBackgroundVerbKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse";
 
     public async Task ApplyAsync(AppSettings settings, CancellationToken cancellationToken)
     {
         var helperPath = ResolveShellHelperPath();
+        var desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
+        var desktopBackgroundTargetPath = ResolveDesktopBackgroundTargetPath(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
         if (helperPath is not null)
         {
             await RunHelperRegistrationAsync(helperPath, settings.AddFileContextMenuButton, "--register-file-context-menu", "--unregister-file-context-menu", cancellationToken);
@@ -38,12 +42,14 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             {
                 Registry.CurrentUser.DeleteSubKeyTree(FolderZipVerbKeyPath, throwOnMissingSubKey: false);
                 Registry.CurrentUser.DeleteSubKeyTree(FolderZipBackgroundVerbKeyPath, throwOnMissingSubKey: false);
+                Registry.CurrentUser.DeleteSubKeyTree(LegacyFolderZipBackgroundVerbKeyPath, throwOnMissingSubKey: false);
             }
 
             if (!settings.AddFolderBrowseContextMenuButton)
             {
                 Registry.CurrentUser.DeleteSubKeyTree(FolderBrowseVerbKeyPath, throwOnMissingSubKey: false);
                 Registry.CurrentUser.DeleteSubKeyTree(FolderBrowseBackgroundVerbKeyPath, throwOnMissingSubKey: false);
+                Registry.CurrentUser.DeleteSubKeyTree(LegacyFolderBrowseBackgroundVerbKeyPath, throwOnMissingSubKey: false);
             }
 
             return;
@@ -60,25 +66,50 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             FolderZipVerbKeyPath,
             FolderZipCommandKeyPath,
             "Share Folder as ZIP",
-            $"\"{helperPath}\" --share-folder-zip \"%1\"");
+            $"\"{helperPath}\" --share-folder-zip \"%1\"",
+            desktopFolderExclusionAppliesTo);
         ApplyDirectRegistration(
             settings.AddFolderZipContextMenuButton,
             FolderZipBackgroundVerbKeyPath,
             FolderZipBackgroundCommandKeyPath,
             "Share Folder as ZIP",
-            $"\"{helperPath}\" --share-folder-zip \"%V\"");
+            $"\"{helperPath}\" --share-folder-zip \"{desktopBackgroundTargetPath}\"");
         ApplyDirectRegistration(
             settings.AddFolderBrowseContextMenuButton,
             FolderBrowseVerbKeyPath,
             FolderBrowseCommandKeyPath,
             "Share Folder for Browsing",
-            $"\"{helperPath}\" --share-folder-browse \"%1\"");
+            $"\"{helperPath}\" --share-folder-browse \"%1\"",
+            desktopFolderExclusionAppliesTo);
         ApplyDirectRegistration(
             settings.AddFolderBrowseContextMenuButton,
             FolderBrowseBackgroundVerbKeyPath,
             FolderBrowseBackgroundCommandKeyPath,
             "Share Folder for Browsing",
-            $"\"{helperPath}\" --share-folder-browse \"%V\"");
+            $"\"{helperPath}\" --share-folder-browse \"{desktopBackgroundTargetPath}\"");
+        Registry.CurrentUser.DeleteSubKeyTree(LegacyFolderZipBackgroundVerbKeyPath, throwOnMissingSubKey: false);
+        Registry.CurrentUser.DeleteSubKeyTree(LegacyFolderBrowseBackgroundVerbKeyPath, throwOnMissingSubKey: false);
+    }
+
+    internal static string? BuildDesktopFolderExclusionAppliesTo(string? desktopFolderPath)
+    {
+        if (string.IsNullOrWhiteSpace(desktopFolderPath))
+        {
+            return null;
+        }
+
+        var normalizedPath = Path.GetFullPath(Path.TrimEndingDirectorySeparator(desktopFolderPath));
+        return $"System.ItemPathDisplay:<>=\"{normalizedPath}\"";
+    }
+
+    internal static string ResolveDesktopBackgroundTargetPath(string? desktopFolderPath)
+    {
+        if (string.IsNullOrWhiteSpace(desktopFolderPath))
+        {
+            return "%V";
+        }
+
+        return Path.GetFullPath(Path.TrimEndingDirectorySeparator(desktopFolderPath));
     }
 
     private static async Task RunHelperRegistrationAsync(string helperPath, bool enabled, string registerArgument, string unregisterArgument, CancellationToken cancellationToken)
@@ -98,11 +129,11 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
         }
     }
 
-    private static void ApplyDirectRegistration(bool enabled, string verbKeyPath, string commandKeyPath, string label, string command)
+    private static void ApplyDirectRegistration(bool enabled, string verbKeyPath, string commandKeyPath, string label, string command, string? appliesTo = null)
     {
         if (enabled)
         {
-            RegisterDirectly(verbKeyPath, commandKeyPath, label, command);
+            RegisterDirectly(verbKeyPath, commandKeyPath, label, command, appliesTo);
             return;
         }
 
@@ -124,7 +155,7 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
         return candidates.FirstOrDefault(File.Exists);
     }
 
-    private static void RegisterDirectly(string verbKeyPath, string commandKeyPath, string label, string command)
+    private static void RegisterDirectly(string verbKeyPath, string commandKeyPath, string label, string command, string? appliesTo)
     {
         using var verbKey = Registry.CurrentUser.CreateSubKey(verbKeyPath);
         using var commandKey = Registry.CurrentUser.CreateSubKey(commandKeyPath);
@@ -136,6 +167,15 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
         verbKey.SetValue(string.Empty, label, RegistryValueKind.String);
         verbKey.SetValue("MUIVerb", label, RegistryValueKind.String);
         verbKey.SetValue("Icon", ResolveContextMenuIconPath() ?? string.Empty, RegistryValueKind.String);
+        if (appliesTo is not null)
+        {
+            verbKey.SetValue("AppliesTo", appliesTo, RegistryValueKind.String);
+        }
+        else
+        {
+            verbKey.DeleteValue("AppliesTo", throwOnMissingValue: false);
+        }
+
         commandKey.SetValue(string.Empty, command, RegistryValueKind.String);
     }
 
