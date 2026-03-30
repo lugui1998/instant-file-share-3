@@ -107,9 +107,7 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         await connection.OpenAsync(cancellationToken);
 
         var json = await ReadSingletonJsonAsync(connection, "settings", "settings", cancellationToken);
-        return string.IsNullOrWhiteSpace(json)
-            ? new AppSettings()
-            : JsonSerializer.Deserialize<AppSettings>(json, JsonOptions) ?? new AppSettings();
+        return DeserializeOrDefault(json, static () => new AppSettings());
     }
 
     public Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken)
@@ -162,9 +160,7 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         await connection.OpenAsync(cancellationToken);
 
         var json = await ReadSingletonJsonAsync(connection, "cloudflared_state", "cloudflared", cancellationToken);
-        return string.IsNullOrWhiteSpace(json)
-            ? new CloudflaredState()
-            : JsonSerializer.Deserialize<CloudflaredState>(json, JsonOptions) ?? new CloudflaredState();
+        return DeserializeOrDefault(json, static () => new CloudflaredState());
     }
 
     public Task SaveCloudflaredStateAsync(CloudflaredState state, CancellationToken cancellationToken)
@@ -374,6 +370,23 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         command.CommandText = $"SELECT json FROM {tableName} WHERE key = $key LIMIT 1;";
         command.Parameters.AddWithValue("$key", key);
         return (string?)await command.ExecuteScalarAsync(cancellationToken);
+    }
+
+    private static T DeserializeOrDefault<T>(string? json, Func<T> fallbackFactory)
+    {
+        if (string.IsNullOrWhiteSpace(json))
+        {
+            return fallbackFactory();
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize<T>(json, JsonOptions) ?? fallbackFactory();
+        }
+        catch (JsonException)
+        {
+            return fallbackFactory();
+        }
     }
 
     private static ShareRecord MapShare(SqliteDataReader reader)
