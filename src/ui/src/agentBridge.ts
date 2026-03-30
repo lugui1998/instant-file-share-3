@@ -135,6 +135,8 @@ type AgentBridge = {
   getRuntime(): Promise<AgentRuntimeSnapshot>
   getShares(): Promise<AgentShareRecord[]>
   getTransfers(): Promise<TransferRecord[]>
+  removeTransfer(transferId: string): Promise<void>
+  clearTransferHistory(): Promise<void>
   createShare(filePath: string, publishMode?: string): Promise<{ share: AgentShareRecord; url: string }>
   revokeShare(shareId: string): Promise<void>
   getSettings(): Promise<Record<string, unknown>>
@@ -186,6 +188,10 @@ function createBrowserBridge(): AgentBridge {
     getRuntime: () => request<AgentRuntimeSnapshot>('/api/runtime'),
     getShares: () => request<AgentShareRecord[]>('/api/shares'),
     getTransfers: () => request<TransferRecord[]>('/api/transfers'),
+    removeTransfer: (transferId: string) =>
+      request<void>(`/api/transfers/${transferId}`, { method: 'DELETE' }),
+    clearTransferHistory: () =>
+      request<void>('/api/transfers', { method: 'DELETE' }),
     createShare: (filePath: string, publishMode?: string) =>
       request<{ share: AgentShareRecord; url: string }>('/api/shares', {
         method: 'POST',

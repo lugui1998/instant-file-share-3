@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import AppSidebar from './components/AppSidebar.vue'
+import ConfirmModal from './components/ConfirmModal.vue'
 import LogsView from './components/views/LogsView.vue'
 import SettingsView from './components/views/SettingsView.vue'
 import SharesView from './components/views/SharesView.vue'
@@ -79,6 +80,9 @@ let managedAvailabilityTimer: ReturnType<typeof setTimeout> | null = null
 let settingsSaveTimer: ReturnType<typeof setTimeout> | null = null
 let transferPollingTimer: ReturnType<typeof setInterval> | null = null
 let runtimeRetryTimer: ReturnType<typeof setTimeout> | null = null
+const removingTransferId = ref<string | null>(null)
+const isClearingTransferHistory = ref(false)
+const showClearHistoryModal = ref(false)
 
 const transfers = computed(() => runtime.value?.transfers ?? [])
 const currentSettingsSignature = computed(() => JSON.stringify(buildSettingsPayload()))
@@ -275,6 +279,69 @@ function upsertTransfer(transfer: TransferRecord) {
   runtimeState.transfers = sortTransfers(runtimeState.transfers)
 }
 
+function removeTransferFromState(transferId: string) {
+  const runtimeState = ensureRuntimeState()
+  runtimeState.transfers = sortTransfers(runtimeState.transfers.filter((entry) => entry.id !== transferId))
+}
+
+function clearTransferHistoryFromState() {
+  const runtimeState = ensureRuntimeState()
+  runtimeState.transfers = sortTransfers(runtimeState.transfers.filter((entry) => entry.isActive))
+}
+
+async function removeTransfer(transferId: string) {
+  if (removingTransferId.value || isClearingTransferHistory.value) {
+    return
+  }
+
+  error.value = null
+  removingTransferId.value = transferId
+
+  try {
+    await agentBridge.removeTransfer(transferId)
+    removeTransferFromState(transferId)
+  } catch (cause) {
+    error.value = getErrorMessage(cause, 'Failed to remove history entry.')
+  } finally {
+    removingTransferId.value = null
+  }
+}
+
+async function clearTransferHistory() {
+  if (removingTransferId.value || isClearingTransferHistory.value) {
+    return
+  }
+
+  error.value = null
+  isClearingTransferHistory.value = true
+
+  try {
+    await agentBridge.clearTransferHistory()
+    clearTransferHistoryFromState()
+    showClearHistoryModal.value = false
+  } catch (cause) {
+    error.value = getErrorMessage(cause, 'Failed to clear history.')
+  } finally {
+    isClearingTransferHistory.value = false
+  }
+}
+
+function openClearHistoryModal() {
+  if (isClearingTransferHistory.value) {
+    return
+  }
+
+  showClearHistoryModal.value = true
+}
+
+function closeClearHistoryModal() {
+  if (isClearingTransferHistory.value) {
+    return
+  }
+
+  showClearHistoryModal.value = false
+}
+
 function applyRuntimeEvent(event: RuntimeEvent) {
   switch (event.type) {
     case 'TransferStarted':
@@ -290,6 +357,14 @@ function applyRuntimeEvent(event: RuntimeEvent) {
     case 'SettingsUpdated':
     case 'CloudflaredUpdated':
       void loadRuntime()
+      break
+    case 'TransferRemoved':
+      if (typeof event.payload.transferId === 'string') {
+        removeTransferFromState(event.payload.transferId)
+      }
+      break
+    case 'TransferHistoryCleared':
+      clearTransferHistoryFromState()
       break
     default:
       break
@@ -616,6 +691,9 @@ watch(
         v-else-if="activeView === 'transfers'"
         :transfers="transfers"
         :items-per-page="settingsDraft.historyItemsPerPage"
+        :removing-transfer-id="removingTransferId"
+        :clearing-history="isClearingTransferHistory"
+        @remove-transfer="removeTransfer"
       />
 
       <SettingsView
@@ -626,9 +704,11 @@ watch(
         v-model:selected-domain="selectedDomain"
         v-model:managed-subdomain="managedSubdomain"
         :cloudflared-status="cloudflaredStatus"
+        :clearing-transfer-history="isClearingTransferHistory"
         :managed-status="managedStatus"
         :managed-availability="managedAvailability"
         :save-message="settingsSaveMessage"
+        @clear-transfer-history="openClearHistoryModal"
         @create-managed-tunnel="createManagedTunnel"
         @install-cloudflared="installCloudflared"
         @pick-cloudflared-path="openCloudflaredPathPicker"
@@ -652,5 +732,16 @@ watch(
         @refresh="loadCloudflareLogs"
       />
     </main>
+
+    <ConfirmModal
+      v-if="showClearHistoryModal"
+      cancel-label="Keep history"
+      confirm-label="Clear history"
+      message="This removes completed, paused, and failed history entries. Active transfers stay visible."
+      :pending="isClearingTransferHistory"
+      title="Clear transfer history?"
+      @cancel="closeClearHistoryModal"
+      @confirm="clearTransferHistory"
+    />
   </div>
 </template>

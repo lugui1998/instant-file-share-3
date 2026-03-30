@@ -325,8 +325,21 @@ td {
 }
 
 .shares-table th:last-child,
-.shares-table td:last-child {
+.shares-table td:last-child,
+.transfers-table th:last-child,
+.transfers-table td:last-child {
   text-align: right;
+}
+
+.transfer-actions-cell {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.transfer-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
 }
 
 .compact-button {
@@ -343,6 +356,11 @@ td {
   display: inline-grid;
   place-items: center;
   font-size: 1rem;
+}
+
+.trash-icon {
+  width: 1rem;
+  height: 1rem;
 }
 
 .progress-cell {
@@ -524,6 +542,40 @@ td {
 .save-message {
   color: #8cf0d4;
   margin: 0;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 6, 8, 0.72);
+  backdrop-filter: blur(10px);
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  z-index: 20;
+}
+
+.modal-card {
+  width: min(100%, 440px);
+  border-radius: 24px;
+  padding: 1.4rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(23, 28, 34, 0.96), rgba(14, 18, 22, 0.96));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.modal-card h3 {
+  margin: 0.25rem 0 0;
+}
+
+.modal-copy {
+  margin: 0.9rem 0 0;
+  color: #c2cad4;
+}
+
+.modal-actions {
+  justify-content: flex-end;
+  margin-top: 1.25rem;
 }
 
 .path-hint {

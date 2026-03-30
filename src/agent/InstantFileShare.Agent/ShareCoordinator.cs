@@ -219,6 +219,75 @@ internal sealed class ShareCoordinator(
         return GetTransfersCoreAsync(cancellationToken);
     }
 
+    public async Task RemoveTransferAsync(string transferId, CancellationToken cancellationToken)
+    {
+        await EnsureTransfersLoadedAsync(cancellationToken);
+
+        TransferSnapshot? removedTransfer = null;
+        var activeTransfer = false;
+
+        lock (_transferLock)
+        {
+            activeTransfer = _activeTransfers.ContainsKey(transferId);
+            if (!activeTransfer)
+            {
+                var completedTransferIndex = _completedTransfers.FindIndex(entry => entry.Id == transferId);
+                if (completedTransferIndex >= 0)
+                {
+                    removedTransfer = _completedTransfers[completedTransferIndex];
+                    _completedTransfers.RemoveAt(completedTransferIndex);
+                }
+            }
+        }
+
+        if (activeTransfer)
+        {
+            throw new InvalidOperationException("Active transfers cannot be removed from history.");
+        }
+
+        if (removedTransfer is null)
+        {
+            return;
+        }
+
+        await shareStore.DeleteTransferAsync(transferId, cancellationToken);
+        await runtimeEventStream.PublishAsync(
+            new RuntimeEvent(
+                RuntimeEventType.TransferRemoved,
+                DateTimeOffset.UtcNow,
+                new { transferId }),
+            cancellationToken);
+    }
+
+    public async Task ClearTransferHistoryAsync(CancellationToken cancellationToken)
+    {
+        await EnsureTransfersLoadedAsync(cancellationToken);
+
+        var clearedAny = false;
+
+        lock (_transferLock)
+        {
+            if (_completedTransfers.Count > 0)
+            {
+                _completedTransfers.Clear();
+                clearedAny = true;
+            }
+        }
+
+        if (!clearedAny)
+        {
+            return;
+        }
+
+        await shareStore.ClearCompletedTransfersAsync(cancellationToken);
+        await runtimeEventStream.PublishAsync(
+            new RuntimeEvent(
+                RuntimeEventType.TransferHistoryCleared,
+                DateTimeOffset.UtcNow,
+                new { }),
+            cancellationToken);
+    }
+
     private async Task<IReadOnlyList<TransferSnapshot>> GetTransfersCoreAsync(CancellationToken cancellationToken)
     {
         await EnsureTransfersLoadedAsync(cancellationToken);

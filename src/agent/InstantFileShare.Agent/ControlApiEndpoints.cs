@@ -46,6 +46,26 @@ internal static class ControlApiEndpoints
         endpoints.MapGet("/api/transfers", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
             Results.Ok(await coordinator.GetTransfersAsync(cancellationToken)));
 
+        endpoints.MapDelete("/api/transfers/{transferId}", async (string transferId, IShareCoordinator coordinator, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await coordinator.RemoveTransferAsync(transferId, cancellationToken);
+            }
+            catch (InvalidOperationException exception)
+            {
+                return Results.BadRequest(exception.Message);
+            }
+
+            return Results.NoContent();
+        });
+
+        endpoints.MapDelete("/api/transfers", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
+        {
+            await coordinator.ClearTransferHistoryAsync(cancellationToken);
+            return Results.NoContent();
+        });
+
         endpoints.MapGet("/api/logs/agent", async (FileLogStore logStore, CancellationToken cancellationToken) =>
             Results.Text(await logStore.ReadAgentAsync(cancellationToken), "text/plain"));
 

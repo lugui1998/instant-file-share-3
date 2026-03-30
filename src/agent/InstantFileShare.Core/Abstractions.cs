@@ -16,6 +16,8 @@ public interface IShareStore
     Task SaveCloudflaredStateAsync(CloudflaredState state, CancellationToken cancellationToken);
     Task<IReadOnlyList<TransferSnapshot>> ListTransfersAsync(CancellationToken cancellationToken);
     Task SaveTransferAsync(TransferSnapshot transfer, CancellationToken cancellationToken);
+    Task DeleteTransferAsync(string transferId, CancellationToken cancellationToken);
+    Task ClearCompletedTransfersAsync(CancellationToken cancellationToken);
     Task PruneCompletedTransfersAsync(DateTimeOffset completedBeforeUtc, CancellationToken cancellationToken);
     Task<bool> TryAddUsageSessionAsync(string shareId, string sessionKey, CancellationToken cancellationToken);
 }
@@ -37,6 +39,8 @@ public interface IShareCoordinator
     Task<IReadOnlyList<PublishProfile>> GetPublishProfilesAsync(CancellationToken cancellationToken);
     Task SavePublishProfileAsync(PublishProfile profile, CancellationToken cancellationToken);
     Task<IReadOnlyList<TransferSnapshot>> GetTransfersAsync(CancellationToken cancellationToken);
+    Task RemoveTransferAsync(string transferId, CancellationToken cancellationToken);
+    Task ClearTransferHistoryAsync(CancellationToken cancellationToken);
     Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, TransferKind transferKind, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, string? requesterName, CancellationToken cancellationToken);
     Task UpdateTransferProgressAsync(string transferId, long bytesSent, CancellationToken cancellationToken);
     Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, TransferKind transferKind, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? usageSessionKey, string? error, string? requesterName, CancellationToken cancellationToken);

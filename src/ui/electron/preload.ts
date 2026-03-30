@@ -117,6 +117,10 @@ contextBridge.exposeInMainWorld('instantFileShare', {
   getRuntime: () => request<RuntimeSnapshot>('/api/runtime'),
   getShares: () => request<ShareRecord[]>('/api/shares'),
   getTransfers: () => request<TransferRecord[]>('/api/transfers'),
+  removeTransfer: (transferId: string) =>
+    request<void>(`/api/transfers/${transferId}`, { method: 'DELETE' }),
+  clearTransferHistory: () =>
+    request<void>('/api/transfers', { method: 'DELETE' }),
   createShare: (filePath: string, publishMode?: PublishMode) =>
     request<{ share: ShareRecord; url: string }>('/api/shares', {
       method: 'POST',
