@@ -8,6 +8,7 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/InstantFileShare.Agent.Tests/InstantFileShare.Agent.Tests.csproj" />
+    <Project Path="tests/InstantFileShare.Data.Tests/InstantFileShare.Data.Tests.csproj" />
     <Project Path="tests/InstantFileShare.Core.Tests/InstantFileShare.Core.Tests.csproj" />
   </Folder>
 </Solution>
