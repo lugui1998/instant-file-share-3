@@ -321,6 +321,61 @@ public sealed class SqliteShareStoreTests
     }
 
     [Fact]
+    public async Task DeleteTransferAsync_RemovesOnlyRequestedTransfer()
+    {
+        using var tempDirectory = new TemporaryDirectory();
+        var store = new SqliteShareStore(Path.Combine(tempDirectory.RootPath, "store.db"));
+        await store.InitializeAsync(CancellationToken.None);
+
+        var first = CreateTransfer("share-1", "token-1") with { Id = "transfer-1" };
+        var second = CreateTransfer("share-2", "token-2") with { Id = "transfer-2" };
+
+        await store.SaveTransferAsync(first, CancellationToken.None);
+        await store.SaveTransferAsync(second, CancellationToken.None);
+        await store.DeleteTransferAsync("transfer-1", CancellationToken.None);
+
+        var transfers = await store.ListTransfersAsync(CancellationToken.None);
+
+        Assert.Single(transfers);
+        Assert.Equal("transfer-2", transfers[0].Id);
+    }
+
+    [Fact]
+    public async Task ClearCompletedTransfersAsync_RemovesOnlyInactiveHistory()
+    {
+        using var tempDirectory = new TemporaryDirectory();
+        var store = new SqliteShareStore(Path.Combine(tempDirectory.RootPath, "store.db"));
+        await store.InitializeAsync(CancellationToken.None);
+
+        var completed = CreateTransfer("share-completed", "token-completed") with
+        {
+            Id = "completed-transfer",
+            CompletedAtUtc = DateTimeOffset.UtcNow,
+            LastUpdatedAtUtc = DateTimeOffset.UtcNow,
+            State = TransferState.Completed,
+            IsActive = false,
+            Succeeded = true,
+        };
+        var active = CreateTransfer("share-active", "token-active") with
+        {
+            Id = "active-transfer",
+            CompletedAtUtc = null,
+            State = TransferState.InProgress,
+            IsActive = true,
+            Succeeded = false,
+        };
+
+        await store.SaveTransferAsync(completed, CancellationToken.None);
+        await store.SaveTransferAsync(active, CancellationToken.None);
+        await store.ClearCompletedTransfersAsync(CancellationToken.None);
+
+        var transfers = await store.ListTransfersAsync(CancellationToken.None);
+
+        Assert.Single(transfers);
+        Assert.Equal("active-transfer", transfers[0].Id);
+    }
+
+    [Fact]
     public async Task TryAddUsageSessionAsync_DeduplicatesSessionsPerShare()
     {
         using var tempDirectory = new TemporaryDirectory();

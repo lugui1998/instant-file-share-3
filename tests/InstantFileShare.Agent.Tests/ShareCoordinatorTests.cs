@@ -236,6 +236,107 @@ public sealed class ShareCoordinatorTests
     }
 
     [Fact]
+    public async Task RemoveTransferAsync_RemovesCompletedTransfer_AndPublishesEvent()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+
+        var transfer = new TransferSnapshot
+        {
+            Id = "completed-transfer",
+            ShareId = "share-1",
+            Token = "token-1",
+            FileName = "report.pdf",
+            TransferKind = TransferKind.FileDownload,
+            BytesSent = 128,
+            TotalBytes = 128,
+            StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+            LastUpdatedAtUtc = DateTimeOffset.UtcNow,
+            CompletedAtUtc = DateTimeOffset.UtcNow,
+            State = TransferState.Completed,
+            IsActive = false,
+            Succeeded = true,
+        };
+
+        await context.Store.SaveTransferAsync(transfer, CancellationToken.None);
+
+        await context.Coordinator.RemoveTransferAsync(transfer.Id, CancellationToken.None);
+
+        var transfers = await context.Coordinator.GetTransfersAsync(CancellationToken.None);
+
+        Assert.Empty(transfers);
+        Assert.Contains(context.RuntimeEvents, entry => entry.Type == RuntimeEventType.TransferRemoved);
+    }
+
+    [Fact]
+    public async Task RemoveTransferAsync_RejectsActiveTransfer()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+
+        var activeTransfer = await context.Coordinator.StartTransferAsync(
+            "share-1",
+            "token-1",
+            "report.pdf",
+            TransferKind.FileDownload,
+            clientSessionId: "session-1",
+            clientFingerprint: "fingerprint-1",
+            remoteAddress: "127.0.0.1",
+            totalBytes: 128,
+            bytesSent: 64,
+            requesterName: null,
+            CancellationToken.None);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            context.Coordinator.RemoveTransferAsync(activeTransfer.Id, CancellationToken.None));
+
+        Assert.Equal("Active transfers cannot be removed from history.", exception.Message);
+    }
+
+    [Fact]
+    public async Task ClearTransferHistoryAsync_RemovesOnlyInactiveTransfers_AndPublishesEvent()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+
+        var completedTransfer = new TransferSnapshot
+        {
+            Id = "completed-transfer",
+            ShareId = "share-1",
+            Token = "token-1",
+            FileName = "report.pdf",
+            TransferKind = TransferKind.FileDownload,
+            BytesSent = 128,
+            TotalBytes = 128,
+            StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-2),
+            LastUpdatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+            CompletedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+            State = TransferState.Completed,
+            IsActive = false,
+            Succeeded = true,
+        };
+
+        await context.Store.SaveTransferAsync(completedTransfer, CancellationToken.None);
+        var activeTransfer = await context.Coordinator.StartTransferAsync(
+            "share-2",
+            "token-2",
+            "active.pdf",
+            TransferKind.FileDownload,
+            clientSessionId: "session-2",
+            clientFingerprint: "fingerprint-2",
+            remoteAddress: "127.0.0.1",
+            totalBytes: 256,
+            bytesSent: 64,
+            requesterName: null,
+            CancellationToken.None);
+
+        await context.Coordinator.ClearTransferHistoryAsync(CancellationToken.None);
+
+        var transfers = await context.Coordinator.GetTransfersAsync(CancellationToken.None);
+
+        Assert.Single(transfers);
+        Assert.Equal(activeTransfer.Id, transfers[0].Id);
+        Assert.Contains(context.RuntimeEvents, entry => entry.Type == RuntimeEventType.TransferHistoryCleared);
+    }
+
+    [Fact]
     public async Task EnsureTunnelBaseUrlAsync_ManualModePrefersConfiguredManualBaseUrl()
     {
         await using var context = await ShareCoordinatorTestContext.CreateAsync();

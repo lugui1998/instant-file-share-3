@@ -13,6 +13,7 @@ import ToggleField from '../settings/ToggleField.vue'
 
 const props = defineProps<{
   cloudflaredStatus: CloudflaredDashboardStatus | null
+  clearingTransferHistory: boolean
   managedStatus: CloudflareManagedStatus | null
   managedAvailability: CloudflareManagedAvailability | null
   saveMessage: string
@@ -25,6 +26,7 @@ const selectedDomain = defineModel<string>('selectedDomain', { required: true })
 const managedSubdomain = defineModel<string>('managedSubdomain', { required: true })
 
 const emit = defineEmits<{
+  clearTransferHistory: []
   createManagedTunnel: []
   installCloudflared: []
   pickCloudflaredPath: []
@@ -257,6 +259,21 @@ const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenL
           min="0"
           placeholder="Unlimited"
         />
+      </div>
+
+      <div class="field">
+        <span class="field-help">Clear completed, paused, and failed history entries. Active transfers stay visible.</span>
+      </div>
+
+      <div class="card-actions">
+        <button
+          class="danger compact-button"
+          type="button"
+          :disabled="props.clearingTransferHistory"
+          @click="emit('clearTransferHistory')"
+        >
+          {{ props.clearingTransferHistory ? 'Clearing...' : 'Clear history' }}
+        </button>
       </div>
     </SettingCard>
 

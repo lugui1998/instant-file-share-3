@@ -1,15 +1,21 @@
 using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Http.Json;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using InstantFileShare.Agent;
 using InstantFileShare.Core;
 using InstantFileShare.Data;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace InstantFileShare.Agent.Tests;
 
 public sealed class AgentHttpIntegrationTests
 {
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
     [Fact]
     public async Task FileShareDownload_ReturnsExpectedHeadersAndBody()
     {
@@ -240,6 +246,109 @@ public sealed class AgentHttpIntegrationTests
         using var response = await host.PublicClient.GetAsync("/api/runtime");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task ControlApi_DeleteTransfer_RemovesSpecificHistoryEntry()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            await context.Store.SaveTransferAsync(new TransferSnapshot
+            {
+                Id = "transfer-1",
+                ShareId = "share-1",
+                Token = "token-1",
+                FileName = "report.pdf",
+                TransferKind = TransferKind.FileDownload,
+                BytesSent = 128,
+                TotalBytes = 128,
+                StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-2),
+                LastUpdatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+                CompletedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+                State = TransferState.Completed,
+                IsActive = false,
+                Succeeded = true,
+            }, CancellationToken.None);
+            await context.Store.SaveTransferAsync(new TransferSnapshot
+            {
+                Id = "transfer-2",
+                ShareId = "share-2",
+                Token = "token-2",
+                FileName = "other.pdf",
+                TransferKind = TransferKind.FileDownload,
+                BytesSent = 64,
+                TotalBytes = 128,
+                StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+                LastUpdatedAtUtc = DateTimeOffset.UtcNow,
+                CompletedAtUtc = DateTimeOffset.UtcNow,
+                State = TransferState.Completed,
+                IsActive = false,
+                Succeeded = true,
+            }, CancellationToken.None);
+        });
+
+        using var deleteResponse = await host.LocalClient.DeleteAsync("/api/transfers/transfer-1");
+        using var listResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var transfers = await listResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+        Assert.NotNull(transfers);
+        Assert.Single(transfers!);
+        Assert.Equal("transfer-2", transfers[0].Id);
+    }
+
+    [Fact]
+    public async Task ControlApi_ClearTransfers_RemovesCompletedHistoryAndKeepsActiveTransfers()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            await context.Store.SaveTransferAsync(new TransferSnapshot
+            {
+                Id = "transfer-completed",
+                ShareId = "share-1",
+                Token = "token-1",
+                FileName = "report.pdf",
+                TransferKind = TransferKind.FileDownload,
+                BytesSent = 128,
+                TotalBytes = 128,
+                StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-2),
+                LastUpdatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+                CompletedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-1),
+                State = TransferState.Completed,
+                IsActive = false,
+                Succeeded = true,
+            }, CancellationToken.None);
+        });
+
+        var coordinator = host.App.Services.GetRequiredService<IShareCoordinator>();
+        var activeTransfer = await coordinator.StartTransferAsync(
+            "share-2",
+            "token-2",
+            "active.pdf",
+            TransferKind.FileDownload,
+            clientSessionId: "session-2",
+            clientFingerprint: "fingerprint-2",
+            remoteAddress: "127.0.0.1",
+            totalBytes: 128,
+            bytesSent: 64,
+            requesterName: null,
+            CancellationToken.None);
+
+        using var deleteResponse = await host.LocalClient.DeleteAsync("/api/transfers");
+        using var listResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var transfers = await listResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.NoContent, deleteResponse.StatusCode);
+        Assert.NotNull(transfers);
+        Assert.Single(transfers!);
+        Assert.Equal(activeTransfer.Id, transfers[0].Id);
+    }
+
+    private static JsonSerializerOptions CreateJsonOptions()
+    {
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        options.Converters.Add(new JsonStringEnumConverter());
+        return options;
     }
 
     private sealed class AgentTestHost : IAsyncDisposable

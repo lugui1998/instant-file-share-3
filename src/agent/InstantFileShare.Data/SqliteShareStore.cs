@@ -193,6 +193,32 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         await UpsertTransferAsync(connection, transfer, cancellationToken);
     }
 
+    public async Task DeleteTransferAsync(string transferId, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "DELETE FROM transfers WHERE id = $transferId;";
+        command.Parameters.AddWithValue("$transferId", transferId);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
+    public async Task ClearCompletedTransfersAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            DELETE FROM transfers
+            WHERE completed_at_utc IS NOT NULL
+               OR is_active = 0;
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     public async Task PruneCompletedTransfersAsync(DateTimeOffset completedBeforeUtc, CancellationToken cancellationToken)
     {
         await using var connection = OpenConnection();

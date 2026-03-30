@@ -89,6 +89,8 @@ public enum RuntimeEventType
     CloudflaredUpdated = 7,
     TransferProgress = 8,
     TransferPaused = 9,
+    TransferRemoved = 10,
+    TransferHistoryCleared = 11,
 }
 
 public enum TransferState

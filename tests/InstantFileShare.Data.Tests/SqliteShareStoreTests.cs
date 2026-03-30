@@ -111,6 +111,33 @@ public sealed class SqliteShareStoreTests
     }
 
     [Fact]
+    public async Task Transfers_CanBeDeletedIndividually_AndClearedByHistory()
+    {
+        await using var fixture = await StoreFixture.CreateAsync();
+        var completedTransfer = CreateTransfer("transfer-completed", completedAtUtc: DateTimeOffset.UtcNow);
+        var otherCompletedTransfer = CreateTransfer("transfer-other", completedAtUtc: DateTimeOffset.UtcNow.AddMinutes(-1));
+        var activeTransfer = CreateTransfer("transfer-active", completedAtUtc: null) with
+        {
+            IsActive = true,
+            State = TransferState.InProgress,
+            CompletedAtUtc = null,
+        };
+
+        await fixture.Store.SaveTransferAsync(completedTransfer, CancellationToken.None);
+        await fixture.Store.SaveTransferAsync(otherCompletedTransfer, CancellationToken.None);
+        await fixture.Store.SaveTransferAsync(activeTransfer, CancellationToken.None);
+
+        await fixture.Store.DeleteTransferAsync("transfer-completed", CancellationToken.None);
+        var listedAfterDelete = await fixture.Store.ListTransfersAsync(CancellationToken.None);
+        Assert.DoesNotContain(listedAfterDelete, transfer => transfer.Id == "transfer-completed");
+
+        await fixture.Store.ClearCompletedTransfersAsync(CancellationToken.None);
+        var listedAfterClear = await fixture.Store.ListTransfersAsync(CancellationToken.None);
+        Assert.Single(listedAfterClear);
+        Assert.Equal("transfer-active", listedAfterClear[0].Id);
+    }
+
+    [Fact]
     public async Task UsageSessions_AreDeduplicatedPerShareAndSessionKey()
     {
         await using var fixture = await StoreFixture.CreateAsync();

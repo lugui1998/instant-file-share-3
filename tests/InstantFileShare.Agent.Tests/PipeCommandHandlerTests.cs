@@ -138,6 +138,8 @@ public sealed class PipeCommandHandlerTests
         public Task<IReadOnlyList<PublishProfile>> GetPublishProfilesAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task SavePublishProfileAsync(PublishProfile profile, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<IReadOnlyList<TransferSnapshot>> GetTransfersAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task RemoveTransferAsync(string transferId, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task ClearTransferHistoryAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, TransferKind transferKind, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, string? requesterName, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task UpdateTransferProgressAsync(string transferId, long bytesSent, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, TransferKind transferKind, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? usageSessionKey, string? error, string? requesterName, CancellationToken cancellationToken) => throw new NotSupportedException();
