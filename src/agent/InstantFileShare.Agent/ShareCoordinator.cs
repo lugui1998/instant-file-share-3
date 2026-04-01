@@ -21,6 +21,7 @@ internal sealed class ShareCoordinator(
     private const long TransferResumeToleranceBytes = 1024 * 1024;
     private static readonly TimeSpan ExpiryComparisonTolerance = TimeSpan.FromSeconds(5);
     private readonly object _transferLock = new();
+    private readonly SemaphoreSlim _receiveLinkBytesGate = new(1, 1);
     private readonly SemaphoreSlim _transferLoadGate = new(1, 1);
     private readonly Dictionary<string, TransferSnapshot> _activeTransfers = [];
     private readonly List<TransferSnapshot> _completedTransfers = [];
@@ -78,6 +79,44 @@ internal sealed class ShareCoordinator(
         await shareStore.AddShareAsync(share, cancellationToken);
         await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareCreated, DateTimeOffset.UtcNow, share), cancellationToken);
         return (share, ShareUrlBuilder.Build(share));
+    }
+
+    public async Task<(ReceiveLinkRecord ReceiveLink, string Url)> CreateReceiveLinkAsync(CreateReceiveLinkRequest request, CancellationToken cancellationToken)
+    {
+        var directoryInfo = new DirectoryInfo(request.DirectoryPath);
+        if (!directoryInfo.Exists)
+        {
+            throw new DirectoryNotFoundException("The selected folder does not exist.");
+        }
+
+        if (directoryInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        {
+            throw new InvalidOperationException("Folders backed by junctions, symlinks, or other reparse points cannot be used as receive targets.");
+        }
+
+        var settings = await shareStore.GetSettingsAsync(cancellationToken);
+        var mode = request.PublishMode ?? settings.DefaultPublishMode;
+        var publicBaseUrl = await EnsureTunnelBaseUrlAsync(mode, cancellationToken)
+            ?? throw new InvalidOperationException(GetMissingPublishModeMessage(mode));
+
+        var token = await GenerateUniqueReceiveLinkTokenAsync(NormalizePublicTokenLength(settings.PublicTokenLength), cancellationToken);
+        var receiveLink = new ReceiveLinkRecord
+        {
+            Id = Guid.NewGuid().ToString("N"),
+            Token = token,
+            TargetDirectoryPath = directoryInfo.FullName,
+            TargetDisplayName = directoryInfo.Name,
+            PublicBaseUrl = publicBaseUrl,
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = request.ExpiresAtUtc ?? ResolveDefaultReceiveExpiry(settings),
+            MaxTotalBytes = NormalizeReceiveMaxTotalBytes(request.MaxTotalBytes ?? settings.DefaultReceiveMaxTotalBytes),
+            BytesReceived = 0,
+            PublishMode = mode,
+            State = ReceiveLinkState.Active,
+        };
+
+        await shareStore.AddReceiveLinkAsync(receiveLink, cancellationToken);
+        return (receiveLink, ShareUrlBuilder.BuildReceiveLink(receiveLink.PublicBaseUrl, receiveLink.Token));
     }
 
     private async Task<ShareRecord?> TryGetReusableShareAsync(
@@ -176,6 +215,95 @@ internal sealed class ShareCoordinator(
         return share with { LastAccessedAtUtc = DateTimeOffset.UtcNow };
     }
 
+    public async Task<ReceiveLinkRecord?> ResolveReceiveLinkAsync(string token, CancellationToken cancellationToken)
+    {
+        var receiveLink = await shareStore.GetReceiveLinkByTokenAsync(token, cancellationToken);
+        if (receiveLink is null)
+        {
+            return null;
+        }
+
+        if (receiveLink.State is ReceiveLinkState.Revoked or ReceiveLinkState.Broken or ReceiveLinkState.Expired or ReceiveLinkState.Exhausted)
+        {
+            return receiveLink;
+        }
+
+        if (receiveLink.ExpiresAtUtc is not null && receiveLink.ExpiresAtUtc <= DateTimeOffset.UtcNow)
+        {
+            receiveLink = receiveLink with { State = ReceiveLinkState.Expired };
+            await shareStore.UpdateReceiveLinkAsync(receiveLink, cancellationToken);
+            return receiveLink;
+        }
+
+        var directoryInfo = new DirectoryInfo(receiveLink.TargetDirectoryPath);
+        if (!directoryInfo.Exists || directoryInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
+        {
+            receiveLink = receiveLink with { State = ReceiveLinkState.Broken, BrokenReason = "The receive folder is no longer available." };
+            await shareStore.UpdateReceiveLinkAsync(receiveLink, cancellationToken);
+            return receiveLink;
+        }
+
+        if (receiveLink.MaxTotalBytes > 0 && receiveLink.BytesReceived >= receiveLink.MaxTotalBytes)
+        {
+            receiveLink = receiveLink with { State = ReceiveLinkState.Exhausted };
+            await shareStore.UpdateReceiveLinkAsync(receiveLink, cancellationToken);
+            return receiveLink;
+        }
+
+        return receiveLink;
+    }
+
+    public async Task<ReceiveLinkRecord?> AddReceivedBytesAsync(string receiveLinkId, long bytesReceived, CancellationToken cancellationToken)
+    {
+        await _receiveLinkBytesGate.WaitAsync(cancellationToken);
+        try
+        {
+            var receiveLink = await shareStore.GetReceiveLinkByIdAsync(receiveLinkId, cancellationToken);
+            if (receiveLink is null)
+            {
+                return null;
+            }
+
+            if (receiveLink.State is ReceiveLinkState.Revoked or ReceiveLinkState.Broken or ReceiveLinkState.Expired)
+            {
+                return receiveLink;
+            }
+
+            if (receiveLink.ExpiresAtUtc is not null && receiveLink.ExpiresAtUtc <= DateTimeOffset.UtcNow)
+            {
+                receiveLink = receiveLink with { State = ReceiveLinkState.Expired };
+                await shareStore.UpdateReceiveLinkAsync(receiveLink, cancellationToken);
+                return receiveLink;
+            }
+
+            var nextBytesReceived = receiveLink.BytesReceived + bytesReceived;
+            if (nextBytesReceived < 0)
+            {
+                nextBytesReceived = 0;
+            }
+
+            if (receiveLink.MaxTotalBytes > 0 && bytesReceived > 0 && nextBytesReceived > receiveLink.MaxTotalBytes)
+            {
+                return receiveLink with { State = ReceiveLinkState.Exhausted };
+            }
+
+            receiveLink = receiveLink with
+            {
+                BytesReceived = nextBytesReceived,
+                State = receiveLink.MaxTotalBytes > 0 && nextBytesReceived >= receiveLink.MaxTotalBytes
+                    ? ReceiveLinkState.Exhausted
+                    : ReceiveLinkState.Active,
+            };
+
+            await shareStore.UpdateReceiveLinkAsync(receiveLink, cancellationToken);
+            return receiveLink;
+        }
+        finally
+        {
+            _receiveLinkBytesGate.Release();
+        }
+    }
+
     public async Task RevokeShareAsync(string shareId, CancellationToken cancellationToken)
     {
         var share = await shareStore.GetShareByIdAsync(shareId, cancellationToken);
@@ -197,6 +325,8 @@ internal sealed class ShareCoordinator(
         {
             PublicTokenLength = NormalizePublicTokenLength(settings.PublicTokenLength),
             FolderZipCompressionLevel = NormalizeFolderZipCompressionLevel(settings.FolderZipCompressionLevel),
+            DefaultReceiveExpiryValue = Math.Max(0, settings.DefaultReceiveExpiryValue),
+            DefaultReceiveMaxTotalBytes = NormalizeReceiveMaxTotalBytes(settings.DefaultReceiveMaxTotalBytes),
             HistoryRetentionValue = Math.Max(0, settings.HistoryRetentionValue),
             HistoryItemsPerPage = Math.Max(0, settings.HistoryItemsPerPage),
             SharesItemsPerPage = Math.Max(0, settings.SharesItemsPerPage),
@@ -1064,6 +1194,21 @@ internal sealed class ShareCoordinator(
         };
     }
 
+    private static DateTimeOffset? ResolveDefaultReceiveExpiry(AppSettings settings)
+    {
+        if (settings.DefaultReceiveExpiryValue <= 0)
+        {
+            return null;
+        }
+
+        return settings.DefaultReceiveExpiryUnit switch
+        {
+            ExpiryUnit.Minutes => DateTimeOffset.UtcNow.AddMinutes(settings.DefaultReceiveExpiryValue),
+            ExpiryUnit.Days => DateTimeOffset.UtcNow.AddDays(settings.DefaultReceiveExpiryValue),
+            _ => DateTimeOffset.UtcNow.AddHours(settings.DefaultReceiveExpiryValue),
+        };
+    }
+
     private async Task<string> GenerateUniqueShareTokenAsync(int tokenLength, CancellationToken cancellationToken)
     {
         const int maxAttempts = 32;
@@ -1080,9 +1225,30 @@ internal sealed class ShareCoordinator(
         throw new InvalidOperationException("Failed to allocate a unique public share token.");
     }
 
+    private async Task<string> GenerateUniqueReceiveLinkTokenAsync(int tokenLength, CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 32;
+
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var token = ShareTokenGenerator.Generate(tokenLength);
+            if (await shareStore.GetReceiveLinkByTokenAsync(token, cancellationToken) is null)
+            {
+                return token;
+            }
+        }
+
+        throw new InvalidOperationException("Failed to allocate a unique receive link token.");
+    }
+
     private static int NormalizePublicTokenLength(int tokenLength)
     {
         return Math.Clamp(tokenLength, ShareTokenGenerator.MinLength, ShareTokenGenerator.MaxLength);
+    }
+
+    private static long NormalizeReceiveMaxTotalBytes(long maxTotalBytes)
+    {
+        return Math.Max(0, maxTotalBytes);
     }
 
     private static FolderZipCompressionLevel NormalizeFolderZipCompressionLevel(FolderZipCompressionLevel level)

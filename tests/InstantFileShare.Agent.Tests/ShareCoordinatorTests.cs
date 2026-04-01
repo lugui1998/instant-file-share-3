@@ -19,6 +19,8 @@ public sealed class ShareCoordinatorTests
             ManualBaseUrl = "http://127.0.0.1:46431",
             PublicTokenLength = 1,
             FolderZipCompressionLevel = (FolderZipCompressionLevel)999,
+            DefaultReceiveExpiryValue = -1,
+            DefaultReceiveMaxTotalBytes = 0,
             HistoryRetentionValue = -5,
             HistoryItemsPerPage = -2,
             SharesItemsPerPage = -7,
@@ -30,6 +32,8 @@ public sealed class ShareCoordinatorTests
 
         Assert.Equal(ShareTokenGenerator.MinLength, savedSettings.PublicTokenLength);
         Assert.Equal(FolderZipCompressionLevel.Optimal, savedSettings.FolderZipCompressionLevel);
+        Assert.Equal(0, savedSettings.DefaultReceiveExpiryValue);
+        Assert.Equal(0, savedSettings.DefaultReceiveMaxTotalBytes);
         Assert.Equal(0, savedSettings.HistoryRetentionValue);
         Assert.Equal(0, savedSettings.HistoryItemsPerPage);
         Assert.Equal(0, savedSettings.SharesItemsPerPage);
@@ -52,6 +56,52 @@ public sealed class ShareCoordinatorTests
         Assert.Equal(firstResult.Share.Id, secondResult.Share.Id);
         Assert.Equal(firstResult.Url, secondResult.Url);
         Assert.Single(context.RuntimeEvents.Where(entry => entry.Type == RuntimeEventType.ShareCreated));
+    }
+
+    [Fact]
+    public async Task CreateReceiveLinkAsync_UsesReceiveDefaults()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync(new AppSettings
+        {
+            DefaultPublishMode = PublishMode.Manual,
+            ManualBaseUrl = "http://127.0.0.1:46431",
+            DefaultReceiveExpiryValue = 2,
+            DefaultReceiveExpiryUnit = ExpiryUnit.Days,
+            DefaultReceiveMaxTotalBytes = 1024,
+            StartOnLogin = false,
+        });
+        var folderPath = Path.Combine(context.FilesDirectory, "drop");
+        Directory.CreateDirectory(folderPath);
+
+        var result = await context.Coordinator.CreateReceiveLinkAsync(new CreateReceiveLinkRequest(folderPath), CancellationToken.None);
+
+        Assert.Equal(folderPath, result.ReceiveLink.TargetDirectoryPath);
+        Assert.Equal("drop", result.ReceiveLink.TargetDisplayName);
+        Assert.Equal(1024, result.ReceiveLink.MaxTotalBytes);
+        Assert.NotNull(result.ReceiveLink.ExpiresAtUtc);
+        Assert.Equal("http://127.0.0.1:46431/r/" + result.ReceiveLink.Token, result.Url);
+    }
+
+    [Fact]
+    public async Task AddReceivedBytesAsync_UpdatesQuotaAndSupportsRollback()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var folderPath = Path.Combine(context.FilesDirectory, "drop");
+        Directory.CreateDirectory(folderPath);
+        var receiveLink = context.CreateReceiveLink("receive-token", folderPath) with
+        {
+            MaxTotalBytes = 10,
+        };
+        await context.Store.AddReceiveLinkAsync(receiveLink, CancellationToken.None);
+
+        var reserved = await context.Coordinator.AddReceivedBytesAsync(receiveLink.Id, 10, CancellationToken.None);
+        var rolledBack = await context.Coordinator.AddReceivedBytesAsync(receiveLink.Id, -4, CancellationToken.None);
+
+        Assert.NotNull(reserved);
+        Assert.Equal(ReceiveLinkState.Exhausted, reserved!.State);
+        Assert.NotNull(rolledBack);
+        Assert.Equal(6, rolledBack!.BytesReceived);
+        Assert.Equal(ReceiveLinkState.Active, rolledBack.State);
     }
 
     [Fact]
@@ -496,6 +546,25 @@ public sealed class ShareCoordinatorTests
                 CreatedAtUtc = DateTimeOffset.UtcNow,
                 PublishMode = PublishMode.Manual,
                 State = ShareState.Active,
+            };
+        }
+
+        public ReceiveLinkRecord CreateReceiveLink(string token, string folderPath)
+        {
+            var directoryInfo = new DirectoryInfo(folderPath);
+            return new ReceiveLinkRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Token = token,
+                TargetDirectoryPath = directoryInfo.FullName,
+                TargetDisplayName = directoryInfo.Name,
+                PublicBaseUrl = "http://127.0.0.1:46431",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(24),
+                MaxTotalBytes = Defaults.DefaultReceiveMaxTotalBytes,
+                BytesReceived = 0,
+                PublishMode = PublishMode.Manual,
+                State = ReceiveLinkState.Active,
             };
         }
 

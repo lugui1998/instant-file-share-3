@@ -10,6 +10,17 @@ internal static class PublicShareEndpoints
     public static IEndpointRouteBuilder MapPublicShareEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapMethods(
+            "/r/{token}",
+            ["GET", "HEAD"],
+            (string token, HttpContext context, IShareCoordinator coordinator, PublicSharePageModelFactory pageModelFactory, PublicShareHtmlRenderer htmlRenderer, CancellationToken cancellationToken) =>
+                HandleReceiveLinkPageAsync(token, context, coordinator, pageModelFactory, htmlRenderer, cancellationToken));
+
+        endpoints.MapPost(
+            "/r/{token}",
+            (string token, HttpContext context, IShareCoordinator coordinator, INotificationService notificationService, PowerManagementService powerManagementService, CancellationToken cancellationToken) =>
+                HandleReceiveUploadAsync(token, context, coordinator, notificationService, powerManagementService, cancellationToken));
+
+        endpoints.MapMethods(
             "/s/{token}/{slug}/{**path}",
             ["GET", "HEAD"],
             (string token, string slug, string path, HttpContext context, IShareCoordinator coordinator, PowerManagementService powerManagementService, PublicSharePageModelFactory pageModelFactory, PublicShareHtmlRenderer htmlRenderer, CancellationToken cancellationToken) =>
@@ -170,6 +181,239 @@ internal static class PublicShareEndpoints
                 cancellationToken);
     }
 
+    private static async Task<IResult> HandleReceiveLinkPageAsync(
+        string token,
+        HttpContext context,
+        IShareCoordinator coordinator,
+        PublicSharePageModelFactory pageModelFactory,
+        PublicShareHtmlRenderer htmlRenderer,
+        CancellationToken cancellationToken)
+    {
+        var receiveLink = await coordinator.ResolveReceiveLinkAsync(token, cancellationToken);
+        if (receiveLink is null)
+        {
+            return Results.NotFound();
+        }
+
+        var unavailableResult = ResolveUnavailableReceiveLinkResult(receiveLink);
+        if (unavailableResult is not null)
+        {
+            return unavailableResult;
+        }
+
+        var pageModel = pageModelFactory.BuildReceivePage(context, receiveLink);
+        if (!htmlRenderer.TryRender(pageModel, out var html, out var renderError))
+        {
+            return Results.Problem(renderError, statusCode: StatusCodes.Status500InternalServerError);
+        }
+
+        if (HttpMethods.IsHead(context.Request.Method))
+        {
+            context.Response.ContentType = "text/html; charset=utf-8";
+            context.Response.ContentLength = Encoding.UTF8.GetByteCount(html);
+            return Results.Empty;
+        }
+
+        return Results.Content(html, "text/html; charset=utf-8");
+    }
+
+    private static async Task<IResult> HandleReceiveUploadAsync(
+        string token,
+        HttpContext context,
+        IShareCoordinator coordinator,
+        INotificationService notificationService,
+        PowerManagementService powerManagementService,
+        CancellationToken cancellationToken)
+    {
+        var receiveLink = await coordinator.ResolveReceiveLinkAsync(token, cancellationToken);
+        if (receiveLink is null)
+        {
+            return Results.NotFound();
+        }
+
+        var unavailableResult = ResolveUnavailableReceiveLinkResult(receiveLink);
+        if (unavailableResult is not null)
+        {
+            return unavailableResult;
+        }
+
+        IFormCollection form;
+        try
+        {
+            form = await context.Request.ReadFormAsync(cancellationToken);
+        }
+        catch (InvalidDataException exception)
+        {
+            return Results.BadRequest(new { message = exception.Message });
+        }
+
+        if (form.Files.Count == 0)
+        {
+            return Results.BadRequest(new { message = "No files were uploaded." });
+        }
+
+        var candidates = BuildReceiveUploadCandidates(form);
+        var (plannedUploads, rejectedUploads) = ReceiveUploadPlanner.Plan(receiveLink.TargetDirectoryPath, candidates);
+        var results = rejectedUploads.ToList();
+        var settings = await coordinator.GetSettingsAsync(cancellationToken);
+        var remoteAddress = RequestAddressResolver.ResolveClientIpAddress(context);
+        var clientFingerprint = RequestAddressResolver.BuildClientFingerprint(remoteAddress, context.Request.Headers.UserAgent.ToString());
+        var successfulUploadCount = 0;
+
+        if (plannedUploads.Count > 0 && settings.KeepAwakeWhileTransferring)
+        {
+            powerManagementService.NotifyTransferStarted();
+        }
+
+        try
+        {
+            foreach (var plannedUpload in plannedUploads)
+            {
+                if (plannedUpload.File.Length > 0 &&
+                    receiveLink.BytesReceived + plannedUpload.File.Length > receiveLink.MaxTotalBytes)
+                {
+                    results.Add(new ReceiveUploadFileResult(plannedUpload.File.FileName, plannedUpload.ClientRelativePath, null, false, "This receive link has reached its upload limit.", 0));
+                    continue;
+                }
+
+                var reservedReceiveLink = await coordinator.AddReceivedBytesAsync(receiveLink.Id, plannedUpload.File.Length, cancellationToken);
+                if (reservedReceiveLink is null)
+                {
+                    results.Add(new ReceiveUploadFileResult(plannedUpload.File.FileName, plannedUpload.ClientRelativePath, null, false, "The receive link is unavailable.", 0));
+                    continue;
+                }
+
+                if (receiveLink.MaxTotalBytes > 0 &&
+                    plannedUpload.File.Length > 0 &&
+                    reservedReceiveLink.State == ReceiveLinkState.Exhausted &&
+                    reservedReceiveLink.BytesReceived == receiveLink.BytesReceived)
+                {
+                    results.Add(new ReceiveUploadFileResult(plannedUpload.File.FileName, plannedUpload.ClientRelativePath, null, false, "This receive link has reached its upload limit.", 0));
+                    continue;
+                }
+
+                receiveLink = reservedReceiveLink;
+
+                var parentDirectoryPath = Path.GetDirectoryName(plannedUpload.DestinationPath);
+                if (!string.IsNullOrWhiteSpace(parentDirectoryPath))
+                {
+                    Directory.CreateDirectory(parentDirectoryPath);
+                }
+
+                TransferSnapshot? transfer = null;
+                long bytesWritten = 0;
+
+                try
+                {
+                    transfer = await coordinator.StartTransferAsync(
+                        receiveLink.Id,
+                        receiveLink.Token,
+                        plannedUpload.StoredRelativePath,
+                        TransferKind.FileUpload,
+                        clientSessionId: null,
+                        clientFingerprint,
+                        remoteAddress,
+                        plannedUpload.File.Length,
+                        bytesSent: 0,
+                        requesterName: null,
+                        cancellationToken);
+
+                    await using var sourceStream = plannedUpload.File.OpenReadStream();
+                    await using var destinationStream = new FileStream(
+                        plannedUpload.DestinationPath,
+                        new FileStreamOptions
+                        {
+                            Mode = FileMode.CreateNew,
+                            Access = FileAccess.Write,
+                            Share = FileShare.None,
+                            Options = FileOptions.Asynchronous,
+                        });
+
+                    var buffer = new byte[81920];
+                    int bytesRead;
+                    while ((bytesRead = await sourceStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+                    {
+                        await destinationStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                        bytesWritten += bytesRead;
+                        await coordinator.UpdateTransferProgressAsync(transfer.Id, bytesWritten, cancellationToken);
+                    }
+
+                    if (bytesWritten != plannedUpload.File.Length)
+                    {
+                        var adjustedReceiveLink = await coordinator.AddReceivedBytesAsync(receiveLink.Id, bytesWritten - plannedUpload.File.Length, cancellationToken);
+                        if (adjustedReceiveLink is not null)
+                        {
+                            receiveLink = adjustedReceiveLink;
+                        }
+                    }
+
+                    await coordinator.MarkTransferCompletedAsync(
+                        transfer.Id,
+                        receiveLink.Id,
+                        receiveLink.Token,
+                        plannedUpload.StoredRelativePath,
+                        TransferKind.FileUpload,
+                        remoteAddress,
+                        bytesWritten,
+                        plannedUpload.File.Length,
+                        paused: false,
+                        succeeded: true,
+                        countsTowardUsage: false,
+                        usageSessionKey: null,
+                        error: null,
+                        requesterName: null,
+                        cancellationToken);
+
+                    results.Add(new ReceiveUploadFileResult(plannedUpload.File.FileName, plannedUpload.ClientRelativePath, plannedUpload.StoredRelativePath, true, null, bytesWritten));
+                    successfulUploadCount++;
+                }
+                catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+                {
+                    await RollBackFailedUploadAsync(coordinator, receiveLink.Id, plannedUpload.File.Length, plannedUpload.DestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, bytesWritten);
+                    results.Add(new ReceiveUploadFileResult(plannedUpload.File.FileName, plannedUpload.ClientRelativePath, null, false, "The upload was interrupted.", bytesWritten));
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    await RollBackFailedUploadAsync(coordinator, receiveLink.Id, plannedUpload.File.Length, plannedUpload.DestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, bytesWritten);
+                    results.Add(new ReceiveUploadFileResult(plannedUpload.File.FileName, plannedUpload.ClientRelativePath, null, false, exception.Message, bytesWritten));
+                }
+            }
+        }
+        finally
+        {
+            if (plannedUploads.Count > 0 && settings.KeepAwakeWhileTransferring)
+            {
+                powerManagementService.NotifyTransferEnded();
+            }
+        }
+
+        receiveLink = await coordinator.ResolveReceiveLinkAsync(token, cancellationToken) ?? receiveLink;
+        var remainingQuotaBytes = receiveLink.MaxTotalBytes > 0
+            ? Math.Max(0, receiveLink.MaxTotalBytes - receiveLink.BytesReceived)
+            : 0;
+
+        if (successfulUploadCount > 0 && settings.ReceiveNotificationsEnabled)
+        {
+            try
+            {
+                var summary = successfulUploadCount == 1
+                    ? $"1 file received in {receiveLink.TargetDisplayName}"
+                    : $"{successfulUploadCount} files received in {receiveLink.TargetDisplayName}";
+                notificationService.ShowInfo("Files received", summary);
+            }
+            catch
+            {
+            }
+        }
+
+        return Results.Ok(new ReceiveUploadBatchResult(
+            successfulUploadCount,
+            results.Count - successfulUploadCount,
+            remainingQuotaBytes,
+            results));
+    }
+
     private static IResult? ResolveUnavailableShareResult(ShareRecord share)
     {
         if (share.State == ShareState.Revoked || share.State == ShareState.Expired)
@@ -183,6 +427,16 @@ internal static class PublicShareEndpoints
         }
 
         return null;
+    }
+
+    private static IResult? ResolveUnavailableReceiveLinkResult(ReceiveLinkRecord receiveLink)
+    {
+        return receiveLink.State switch
+        {
+            ReceiveLinkState.Revoked or ReceiveLinkState.Expired or ReceiveLinkState.Exhausted => Results.StatusCode(StatusCodes.Status410Gone),
+            ReceiveLinkState.Broken => Results.Problem(receiveLink.BrokenReason ?? "The receive link is unavailable.", statusCode: StatusCodes.Status410Gone),
+            _ => null,
+        };
     }
 
     private static async Task<IResult> HandlePhysicalFileDownloadAsync(
@@ -645,6 +899,80 @@ internal static class PublicShareEndpoints
     private static bool IsCurrentDirectoryZipRequest(HttpRequest request)
     {
         return string.Equals(request.Query["download"], "zip", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IReadOnlyList<ReceiveUploadCandidate> BuildReceiveUploadCandidates(IFormCollection form)
+    {
+        var relativePaths = form["relativePaths"];
+        var candidates = new List<ReceiveUploadCandidate>(form.Files.Count);
+
+        for (var index = 0; index < form.Files.Count; index++)
+        {
+            var file = form.Files[index];
+            var relativePath = index < relativePaths.Count ? relativePaths[index] ?? string.Empty : string.Empty;
+            candidates.Add(new ReceiveUploadCandidate(file, relativePath));
+        }
+
+        return candidates;
+    }
+
+    private static async Task RollBackFailedUploadAsync(
+        IShareCoordinator coordinator,
+        string receiveLinkId,
+        long reservedBytes,
+        string destinationPath,
+        TransferSnapshot? transfer,
+        string token,
+        string storedRelativePath,
+        string? remoteAddress,
+        long bytesWritten)
+    {
+        try
+        {
+            if (File.Exists(destinationPath))
+            {
+                File.Delete(destinationPath);
+            }
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            await coordinator.AddReceivedBytesAsync(receiveLinkId, -reservedBytes, CancellationToken.None);
+        }
+        catch
+        {
+        }
+
+        if (transfer is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await coordinator.MarkTransferCompletedAsync(
+                transfer.Id,
+                receiveLinkId,
+                token,
+                storedRelativePath,
+                TransferKind.FileUpload,
+                remoteAddress,
+                bytesWritten,
+                reservedBytes,
+                paused: false,
+                succeeded: false,
+                countsTowardUsage: false,
+                usageSessionKey: null,
+                error: "The upload did not complete.",
+                requesterName: null,
+                CancellationToken.None);
+        }
+        catch
+        {
+        }
     }
 
     private static bool HasTraversalAttempt(HttpContext context)

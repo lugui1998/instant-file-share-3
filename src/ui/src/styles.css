@@ -412,13 +412,24 @@ td {
   background: linear-gradient(90deg, #a7b0bb, #d4d0ca);
 }
 
-.settings-grid,
+.settings-section-grid,
 .diagnostics-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
   gap: 1rem;
   min-width: 0;
   align-items: start;
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.5rem;
+}
+
+.settings-section {
+  display: grid;
+  gap: 1rem;
 }
 
 .setting-card {
@@ -435,28 +446,25 @@ td {
   height: 100%;
 }
 
-.settings-card-sharing {
-  grid-area: sharing;
+.settings-section-label {
+  display: grid;
+  gap: 0.2rem;
 }
 
-.settings-card-file-types {
-  grid-area: filetypes;
+.settings-section-label h2 {
+  margin: 0;
 }
 
-.settings-card-history {
-  grid-area: history;
-}
-
-.settings-card-server {
-  grid-area: server;
-}
-
-.settings-card-cloudflare {
-  grid-area: cloudflare;
-}
-
-.settings-card-debug {
-  grid-area: debug;
+.unit-chip {
+  min-width: 3rem;
+  padding: 0.9rem 1rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #d4d0ca;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .field-label-row {
@@ -621,35 +629,16 @@ pre {
 }
 
 @media (min-width: 1100px) {
-  .settings-grid {
-    grid-template-columns: minmax(320px, 1.08fr) minmax(260px, 0.88fr) minmax(320px, 1fr);
-    grid-template-areas:
-      "sharing filetypes server"
-      "sharing history server"
-      "sharing cloudflare debug";
+  .settings-section-grid--sharing {
+    grid-template-columns: minmax(320px, 1.05fr) minmax(260px, 0.9fr) minmax(320px, 1fr);
   }
-}
 
-@media (min-width: 1100px) and (max-width: 1399px) {
-  .settings-grid {
-    grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
-    grid-template-areas:
-      "sharing server"
-      "filetypes history"
-      "cloudflare debug";
+  .settings-section-grid--sending {
+    grid-template-columns: minmax(360px, 1.2fr) minmax(300px, 0.8fr);
   }
-}
 
-@media (max-width: 1099px) {
-  .settings-grid {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "sharing"
-      "filetypes"
-      "history"
-      "server"
-      "cloudflare"
-      "debug";
+  .settings-section-grid--receiving {
+    grid-template-columns: minmax(360px, 1fr);
   }
 }
 

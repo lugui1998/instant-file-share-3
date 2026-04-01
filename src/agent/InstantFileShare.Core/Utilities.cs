@@ -118,6 +118,12 @@ public static class ShareUrlBuilder
             : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(slug)}/{encodedPath}";
     }
 
+    public static string BuildReceiveLink(string baseUrl, string token)
+    {
+        baseUrl = baseUrl.TrimEnd('/');
+        return $"{baseUrl}/r/{token}";
+    }
+
     public static string? BuildFriendlySegment(string? slug, string? fileName)
     {
         if (string.IsNullOrWhiteSpace(slug))

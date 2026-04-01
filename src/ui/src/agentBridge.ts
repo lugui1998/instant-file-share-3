@@ -35,7 +35,7 @@ type FolderZipCompressionLevel = 'Optimal' | 'Fastest' | 'NoCompression' | 'Smal
 type FileChangeBehavior = 'Strict' | 'Lenient'
 type ExpiryUnit = 'Minutes' | 'Hours' | 'Days'
 type HistoryRetentionUnit = 'Minutes' | 'Hours' | 'Days' | 'Months' | 'Years'
-type TransferKind = 'FileDownload' | 'FolderZipDownload' | 'FolderFileDownload' | 'MetadataPreview'
+type TransferKind = 'FileDownload' | 'FolderZipDownload' | 'FolderFileDownload' | 'MetadataPreview' | 'FileUpload'
 type TransferRecord = Record<string, unknown> & {
   id: string
   shareId: string
@@ -67,6 +67,9 @@ type AppSettings = {
   defaultExpiryValue: number
   defaultExpiryUnit: ExpiryUnit
   defaultMaxUses?: number | null
+  defaultReceiveExpiryValue: number
+  defaultReceiveExpiryUnit: ExpiryUnit
+  defaultReceiveMaxTotalBytes: number
   friendlyUrlsEnabled: boolean
   sendMetadataToCrawlers: boolean
   openImagesInBrowser: boolean
@@ -86,6 +89,8 @@ type AppSettings = {
   addFileContextMenuButton: boolean
   addFolderZipContextMenuButton: boolean
   addFolderBrowseContextMenuButton: boolean
+  addFolderReceiveContextMenuButton: boolean
+  receiveNotificationsEnabled: boolean
   folderShareCapabilityPolicy: FolderShareCapabilityPolicy
   folderZipCompressionLevel: FolderZipCompressionLevel
   historyRetentionValue: number

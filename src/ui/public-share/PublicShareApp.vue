@@ -2,6 +2,7 @@
 import PublicShareShell from './components/PublicShareShell.vue'
 import FileSharePage from './components/pages/FileSharePage.vue'
 import FolderSharePage from './components/pages/FolderSharePage.vue'
+import ReceiveSharePage from './components/pages/ReceiveSharePage.vue'
 import ZipSharePage from './components/pages/ZipSharePage.vue'
 import type { PublicShareBootstrapPayload } from './types'
 
@@ -26,6 +27,12 @@ const props = defineProps<PublicShareBootstrapPayload>()
       v-else-if="props.page.kind === 'zip' && props.page.zip"
       :page="props.page"
       :zip="props.page.zip"
+    />
+
+    <ReceiveSharePage
+      v-else-if="props.page.kind === 'receive' && props.page.receive"
+      :page="props.page"
+      :receive="props.page.receive"
     />
 
     <section v-else class="empty-state">

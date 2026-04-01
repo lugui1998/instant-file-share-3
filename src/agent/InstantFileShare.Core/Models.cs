@@ -44,6 +44,9 @@ public sealed record AppSettings
     public int DefaultExpiryValue { get; init; } = 24;
     public ExpiryUnit DefaultExpiryUnit { get; init; } = ExpiryUnit.Hours;
     public int? DefaultMaxUses { get; init; } = null;
+    public int DefaultReceiveExpiryValue { get; init; } = 24;
+    public ExpiryUnit DefaultReceiveExpiryUnit { get; init; } = ExpiryUnit.Hours;
+    public long DefaultReceiveMaxTotalBytes { get; init; } = Defaults.DefaultReceiveMaxTotalBytes;
     public bool FriendlyUrlsEnabled { get; init; } = true;
     public bool SendMetadataToCrawlers { get; init; } = true;
     public bool OpenImagesInBrowser { get; init; } = true;
@@ -63,12 +66,30 @@ public sealed record AppSettings
     public bool AddFileContextMenuButton { get; init; } = true;
     public bool AddFolderZipContextMenuButton { get; init; } = true;
     public bool AddFolderBrowseContextMenuButton { get; init; } = true;
+    public bool AddFolderReceiveContextMenuButton { get; init; } = true;
+    public bool ReceiveNotificationsEnabled { get; init; } = true;
     public FolderShareCapabilityPolicy FolderShareCapabilityPolicy { get; init; } = FolderShareCapabilityPolicy.Exclusive;
     public FolderZipCompressionLevel FolderZipCompressionLevel { get; init; } = FolderZipCompressionLevel.Optimal;
     public int HistoryRetentionValue { get; init; } = 3;
     public HistoryRetentionUnit HistoryRetentionUnit { get; init; } = HistoryRetentionUnit.Months;
     public int HistoryItemsPerPage { get; init; } = 25;
     public int SharesItemsPerPage { get; init; } = 25;
+}
+
+public sealed record ReceiveLinkRecord
+{
+    public required string Id { get; init; }
+    public required string Token { get; init; }
+    public required string TargetDirectoryPath { get; init; }
+    public required string TargetDisplayName { get; init; }
+    public required string PublicBaseUrl { get; init; }
+    public DateTimeOffset CreatedAtUtc { get; init; }
+    public DateTimeOffset? ExpiresAtUtc { get; init; }
+    public long MaxTotalBytes { get; init; }
+    public long BytesReceived { get; init; }
+    public PublishMode PublishMode { get; init; }
+    public ReceiveLinkState State { get; init; } = ReceiveLinkState.Active;
+    public string? BrokenReason { get; init; }
 }
 
 public sealed record CloudflaredState
@@ -120,4 +141,5 @@ public static class Defaults
     public const int PublicPort = 46431;
     public const string PublicBindAddress = "127.0.0.1";
     public const string NamedPipeName = "InstantFileShare.Agent";
+    public const long DefaultReceiveMaxTotalBytes = 10L * 1024 * 1024 * 1024;
 }

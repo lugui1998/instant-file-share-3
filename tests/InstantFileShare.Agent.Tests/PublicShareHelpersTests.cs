@@ -225,6 +225,81 @@ public sealed class PublicShareHelpersTests
         Assert.NotNull(zipPage.Zip);
     }
 
+    [Fact]
+    public void BuildReceivePage_CreatesExpectedModel()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("share.example.test");
+        context.Request.Path = "/r/receive-token";
+
+        var receiveLink = new ReceiveLinkRecord
+        {
+            Id = "receive-1",
+            Token = "receive-token",
+            TargetDirectoryPath = @"C:\Uploads\drop",
+            TargetDisplayName = "drop",
+            PublicBaseUrl = "https://share.example.test",
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(6),
+            MaxTotalBytes = 1024,
+            BytesReceived = 256,
+            PublishMode = PublishMode.Manual,
+            State = ReceiveLinkState.Active,
+        };
+
+        var page = new PublicSharePageModelFactory().BuildReceivePage(context, receiveLink);
+
+        Assert.Equal("receive", page.Kind);
+        Assert.NotNull(page.Receive);
+        Assert.Equal("drop", page.Receive!.TargetName);
+        Assert.Equal("https://share.example.test/r/receive-token", page.Receive.UploadUrl);
+        Assert.Equal(768, page.Receive.RemainingQuotaBytes);
+    }
+
+    [Fact]
+    public void ReceiveUploadPlanner_RenamesConflictingRootDirectoryOnce()
+    {
+        using var tempDirectory = new TemporaryDirectory();
+        var targetPath = tempDirectory.CreateDirectory("drop");
+        Directory.CreateDirectory(Path.Combine(targetPath, "Photos"));
+
+        var first = CreateFormFile("a.txt", 1);
+        var second = CreateFormFile("b.txt", 1);
+        var (planned, rejected) = ReceiveUploadPlanner.Plan(
+            targetPath,
+            [
+                new ReceiveUploadCandidate(first, "Photos/2026/a.txt"),
+                new ReceiveUploadCandidate(second, "Photos/2026/b.txt"),
+            ]);
+
+        Assert.Empty(rejected);
+        Assert.Equal(2, planned.Count);
+        Assert.All(planned, entry => Assert.StartsWith("Photos (1)/2026/", entry.StoredRelativePath, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void ReceiveUploadPlanner_RejectsTraversalPath()
+    {
+        using var tempDirectory = new TemporaryDirectory();
+        var targetPath = tempDirectory.CreateDirectory("drop");
+        var formFile = CreateFormFile("evil.txt", 1);
+
+        var (_, rejected) = ReceiveUploadPlanner.Plan(
+            targetPath,
+            [new ReceiveUploadCandidate(formFile, "../evil.txt")]);
+
+        Assert.Single(rejected);
+        Assert.False(rejected[0].Success);
+    }
+
+    private static IFormFile CreateFormFile(string fileName, int byteCount)
+    {
+        var content = new byte[byteCount];
+        var stream = new MemoryStream(content);
+        return new FormFile(stream, 0, byteCount, "files", fileName);
+    }
+
     private sealed class TemporaryDirectory : IDisposable
     {
         public TemporaryDirectory()

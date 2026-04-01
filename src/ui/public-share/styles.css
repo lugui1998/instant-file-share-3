@@ -211,6 +211,120 @@ a {
   color: var(--muted);
 }
 
+.compact-stack {
+  gap: 8px;
+  justify-items: end;
+}
+
+.receive-meta {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.upload-dropzone,
+.upload-panel,
+.upload-item {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  border-radius: 22px;
+}
+
+.upload-dropzone,
+.upload-panel {
+  padding: 18px;
+}
+
+.upload-dropzone {
+  display: grid;
+  gap: 16px;
+  border-style: dashed;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.upload-dropzone--active {
+  border-color: rgba(255, 181, 125, 0.8);
+  background: rgba(255, 181, 125, 0.09);
+}
+
+.upload-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.upload-picker {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.upload-picker input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.upload-list {
+  display: grid;
+  gap: 12px;
+}
+
+.upload-item {
+  padding: 14px;
+}
+
+.upload-item__row,
+.progress-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.upload-item__row p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.progress-summary {
+  margin-bottom: 10px;
+}
+
+.progress-track {
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.compact-track {
+  margin-top: 10px;
+  height: 9px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(135deg, rgba(255, 138, 84, 0.9), rgba(255, 186, 69, 0.82));
+}
+
+.small-badge {
+  min-height: 30px;
+  font-size: 0.86rem;
+}
+
+.badge--success {
+  color: #8cf0d4;
+  background: rgba(140, 240, 212, 0.12);
+}
+
+.badge--error {
+  color: #ffb57d;
+  background: rgba(255, 181, 125, 0.12);
+}
+
 @media (max-width: 720px) {
   .public-shell {
     padding: 16px;
@@ -222,7 +336,10 @@ a {
   }
 
   .public-shell__header,
-  .hero-panel {
+  .hero-panel,
+  .upload-actions,
+  .upload-item__row,
+  .progress-summary {
     flex-direction: column;
     align-items: stretch;
   }
