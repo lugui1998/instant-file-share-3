@@ -49,6 +49,10 @@ function isZipStreamTransfer(transfer: TransferRecord) {
   return transfer.transferKind === 'FolderZipDownload'
 }
 
+function isUploadTransfer(transfer: TransferRecord) {
+  return transfer.transferKind === 'FileUpload'
+}
+
 function clampProgress(value: number) {
   return Math.max(0, Math.min(100, value))
 }
@@ -149,13 +153,17 @@ function getStatusLabel(transfer: TransferRecord) {
   }
 
   if (transfer.state === 'Completed' || transfer.succeeded) {
-    return 'Completed'
+    return isUploadTransfer(transfer) ? 'Uploaded' : 'Completed'
   }
 
   return 'Failed / partial'
 }
 
 function getRemotePrimaryLabel(transfer: TransferRecord) {
+  if (isUploadTransfer(transfer)) {
+    return transfer.remoteAddress ?? 'Uploader'
+  }
+
   return transfer.requesterName ?? transfer.remoteAddress ?? 'n/a'
 }
 

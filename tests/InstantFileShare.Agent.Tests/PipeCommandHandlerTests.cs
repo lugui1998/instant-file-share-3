@@ -50,6 +50,23 @@ public sealed class PipeCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_ReceiveHere_CreatesReceiveLinkAndCopiesUrl()
+    {
+        var coordinator = new RecordingShareCoordinator();
+        var clipboard = new RecordingClipboardService();
+        var notifications = new RecordingNotificationService();
+        var handler = new PipeCommandHandler(coordinator, clipboard, notifications, new RecordingUiLauncher(), NullLogger<PipeCommandHandler>.Instance);
+
+        var result = await handler.HandleAsync(new PipeCommand("receive-here", @"C:\temp\drop"), CancellationToken.None);
+
+        Assert.True(result.Success);
+        Assert.Equal("https://example.test/r/receive123", result.ShareUrl);
+        Assert.Single(coordinator.ReceiveRequests);
+        Assert.Equal(@"C:\temp\drop", coordinator.ReceiveRequests[0].DirectoryPath);
+        Assert.Contains(clipboard.CopiedTexts, entry => entry == "https://example.test/r/receive123");
+    }
+
+    [Fact]
     public async Task HandleAsync_OpenDashboard_DelegatesToLauncher()
     {
         var launcher = new RecordingUiLauncher();
@@ -103,6 +120,7 @@ public sealed class PipeCommandHandlerTests
     private sealed class RecordingShareCoordinator : IShareCoordinator
     {
         public List<CreateShareRequest> CreateRequests { get; } = [];
+        public List<CreateReceiveLinkRequest> ReceiveRequests { get; } = [];
 
         public Task<(ShareRecord Share, string Url)> CreateShareAsync(CreateShareRequest request, CancellationToken cancellationToken)
         {
@@ -130,8 +148,30 @@ public sealed class PipeCommandHandlerTests
                 "https://example.test/s/token123"));
         }
 
+        public Task<(ReceiveLinkRecord ReceiveLink, string Url)> CreateReceiveLinkAsync(CreateReceiveLinkRequest request, CancellationToken cancellationToken)
+        {
+            ReceiveRequests.Add(request);
+            return Task.FromResult((
+                new ReceiveLinkRecord
+                {
+                    Id = "receive-1",
+                    Token = "receive123",
+                    TargetDirectoryPath = request.DirectoryPath,
+                    TargetDisplayName = Path.GetFileName(request.DirectoryPath),
+                    PublicBaseUrl = "https://example.test",
+                    CreatedAtUtc = DateTimeOffset.UtcNow,
+                    ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(24),
+                    MaxTotalBytes = Defaults.DefaultReceiveMaxTotalBytes,
+                    BytesReceived = 0,
+                    PublishMode = PublishMode.Manual,
+                },
+                "https://example.test/r/receive123"));
+        }
+
         public Task<IReadOnlyList<ShareRecord>> ListSharesAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<ShareRecord?> ResolveDownloadAsync(string token, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<ReceiveLinkRecord?> ResolveReceiveLinkAsync(string token, CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task<ReceiveLinkRecord?> AddReceivedBytesAsync(string receiveLinkId, long bytesReceived, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task RevokeShareAsync(string shareId, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken) => throw new NotSupportedException();

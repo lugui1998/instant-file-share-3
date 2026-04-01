@@ -32,7 +32,8 @@ internal sealed class PublicSharePageModelFactory
                 actionVerb,
                 actionLabel),
             Folder: null,
-            Zip: null);
+            Zip: null,
+            Receive: null);
     }
 
     public PublicSharePageModel BuildFolderZipMetadataPage(
@@ -57,7 +58,8 @@ internal sealed class PublicSharePageModelFactory
             Folder: null,
             Zip: new PublicShareZipModel(
                 directoryEntry.Name,
-                $"Download a ZIP archive of {folderLabel}."));
+                $"Download a ZIP archive of {folderLabel}."),
+            Receive: null);
     }
 
     public PublicSharePageModel BuildFolderBrowsePage(
@@ -94,7 +96,32 @@ internal sealed class PublicSharePageModelFactory
                 breadcrumbs,
                 folderEntries,
                 folderEntries.Count == 0),
-            Zip: null);
+            Zip: null,
+            Receive: null);
+    }
+
+    public PublicSharePageModel BuildReceivePage(HttpContext context, ReceiveLinkRecord receiveLink)
+    {
+        var remainingBytes = receiveLink.MaxTotalBytes > 0
+            ? Math.Max(0, receiveLink.MaxTotalBytes - receiveLink.BytesReceived)
+            : 0;
+        return new PublicSharePageModel(
+            Kind: "receive",
+            Title: $"Upload to {receiveLink.TargetDisplayName}",
+            Description: $"Upload files to {receiveLink.TargetDisplayName}. Shared via Instant File Share.",
+            CanonicalUrl: BuildCurrentUrl(context),
+            SiteName: "Instant File Share",
+            PrimaryActionLabel: null,
+            PrimaryActionUrl: null,
+            File: null,
+            Folder: null,
+            Zip: null,
+            Receive: new PublicShareReceiveModel(
+                receiveLink.TargetDisplayName,
+                BuildCurrentUrl(context),
+                remainingBytes,
+                receiveLink.MaxTotalBytes > 0 ? FormatFileSize(remainingBytes) : "Unlimited",
+                receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
     }
 
     private static IReadOnlyList<PublicShareBreadcrumb> BuildBreadcrumbs(string fileName, string browseRootPath, string currentRelativePath)

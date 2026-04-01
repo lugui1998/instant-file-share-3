@@ -8,6 +8,10 @@ public interface IShareStore
     Task<ShareRecord?> GetShareByIdAsync(string shareId, CancellationToken cancellationToken);
     Task<ShareRecord?> GetShareByTokenAsync(string token, CancellationToken cancellationToken);
     Task UpdateShareAsync(ShareRecord share, CancellationToken cancellationToken);
+    Task<ReceiveLinkRecord> AddReceiveLinkAsync(ReceiveLinkRecord receiveLink, CancellationToken cancellationToken);
+    Task<ReceiveLinkRecord?> GetReceiveLinkByIdAsync(string receiveLinkId, CancellationToken cancellationToken);
+    Task<ReceiveLinkRecord?> GetReceiveLinkByTokenAsync(string token, CancellationToken cancellationToken);
+    Task UpdateReceiveLinkAsync(ReceiveLinkRecord receiveLink, CancellationToken cancellationToken);
     Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken);
     Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken);
     Task<IReadOnlyList<PublishProfile>> GetPublishProfilesAsync(CancellationToken cancellationToken);
@@ -31,8 +35,11 @@ public interface IRuntimeEventStream
 public interface IShareCoordinator
 {
     Task<(ShareRecord Share, string Url)> CreateShareAsync(CreateShareRequest request, CancellationToken cancellationToken);
+    Task<(ReceiveLinkRecord ReceiveLink, string Url)> CreateReceiveLinkAsync(CreateReceiveLinkRequest request, CancellationToken cancellationToken);
     Task<IReadOnlyList<ShareRecord>> ListSharesAsync(CancellationToken cancellationToken);
     Task<ShareRecord?> ResolveDownloadAsync(string token, CancellationToken cancellationToken);
+    Task<ReceiveLinkRecord?> ResolveReceiveLinkAsync(string token, CancellationToken cancellationToken);
+    Task<ReceiveLinkRecord?> AddReceivedBytesAsync(string receiveLinkId, long bytesReceived, CancellationToken cancellationToken);
     Task RevokeShareAsync(string shareId, CancellationToken cancellationToken);
     Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken);
     Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken);

@@ -41,6 +41,15 @@ public enum ShareState
     Broken = 3,
 }
 
+public enum ReceiveLinkState
+{
+    Active = 0,
+    Revoked = 1,
+    Expired = 2,
+    Exhausted = 3,
+    Broken = 4,
+}
+
 public enum UsageCountingMode
 {
     Never = 0,
@@ -107,4 +116,5 @@ public enum TransferKind
     FolderZipDownload = 1,
     FolderFileDownload = 2,
     MetadataPreview = 3,
+    FileUpload = 4,
 }

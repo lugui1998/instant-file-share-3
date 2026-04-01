@@ -17,6 +17,7 @@ internal sealed class PipeCommandHandler(
             "share" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, ShareKind.File, null, cancellationToken),
             "share-folder-zip" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, ShareKind.Folder, FolderShareEntryPoint.Zip, cancellationToken),
             "share-folder-browse" when !string.IsNullOrWhiteSpace(command.FilePath) => await ShareAsync(command.FilePath, ShareKind.Folder, FolderShareEntryPoint.Browse, cancellationToken),
+            "receive-here" when !string.IsNullOrWhiteSpace(command.FilePath) => await CreateReceiveLinkAsync(command.FilePath, cancellationToken),
             "open-dashboard" => await OpenDashboardAsync(cancellationToken),
             _ => new PipeCommandResult(false, "Unsupported command."),
         };
@@ -46,6 +47,30 @@ internal sealed class PipeCommandHandler(
         }
 
         return new PipeCommandResult(true, "Share link copied to clipboard.", url);
+    }
+
+    private async Task<PipeCommandResult> CreateReceiveLinkAsync(string directoryPath, CancellationToken cancellationToken)
+    {
+        var (receiveLink, url) = await shareCoordinator.CreateReceiveLinkAsync(new CreateReceiveLinkRequest(directoryPath), cancellationToken);
+        try
+        {
+            await clipboardService.SetTextAsync(url, cancellationToken);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Receive link {ReceiveLinkId} was created but copying the URL to the clipboard failed.", receiveLink.Id);
+        }
+
+        try
+        {
+            notificationService.ShowInfo("Receive link copied", receiveLink.TargetDisplayName);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Receive link {ReceiveLinkId} was created but the success notification failed.", receiveLink.Id);
+        }
+
+        return new PipeCommandResult(true, "Receive link copied to clipboard.", url);
     }
 
     private async Task<PipeCommandResult> OpenDashboardAsync(CancellationToken cancellationToken)

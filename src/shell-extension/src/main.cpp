@@ -14,14 +14,22 @@ namespace
     constexpr wchar_t kFileCommandKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare\command)";
     constexpr wchar_t kFolderZipVerbKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderZip)";
     constexpr wchar_t kFolderZipCommandKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderZip\command)";
-    constexpr wchar_t kFolderZipBackgroundVerbKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip)";
-    constexpr wchar_t kFolderZipBackgroundCommandKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip\command)";
-    constexpr wchar_t kLegacyFolderZipBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderZip)";
+    constexpr wchar_t kFolderZipBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderZip)";
+    constexpr wchar_t kFolderZipBackgroundCommandKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderZip\command)";
+    constexpr wchar_t kDesktopFolderZipBackgroundVerbKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip)";
+    constexpr wchar_t kDesktopFolderZipBackgroundCommandKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip\command)";
     constexpr wchar_t kFolderBrowseVerbKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderBrowse)";
     constexpr wchar_t kFolderBrowseCommandKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderBrowse\command)";
-    constexpr wchar_t kFolderBrowseBackgroundVerbKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse)";
-    constexpr wchar_t kFolderBrowseBackgroundCommandKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse\command)";
-    constexpr wchar_t kLegacyFolderBrowseBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse)";
+    constexpr wchar_t kFolderBrowseBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse)";
+    constexpr wchar_t kFolderBrowseBackgroundCommandKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse\command)";
+    constexpr wchar_t kDesktopFolderBrowseBackgroundVerbKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse)";
+    constexpr wchar_t kDesktopFolderBrowseBackgroundCommandKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse\command)";
+    constexpr wchar_t kFolderReceiveVerbKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderReceive)";
+    constexpr wchar_t kFolderReceiveCommandKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderReceive\command)";
+    constexpr wchar_t kFolderReceiveBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderReceive)";
+    constexpr wchar_t kFolderReceiveBackgroundCommandKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderReceive\command)";
+    constexpr wchar_t kDesktopFolderReceiveBackgroundVerbKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderReceive)";
+    constexpr wchar_t kDesktopFolderReceiveBackgroundCommandKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShareFolderReceive\command)";
 
     std::wstring EscapeJson(const std::wstring& value)
     {
@@ -476,7 +484,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             LocalFree(arguments);
         }
 
-        MessageBoxW(nullptr, L"Usage:\ninstant_file_share_shell --share-file <file-path>\ninstant_file_share_shell --share-folder-zip <folder-path>\ninstant_file_share_shell --share-folder-browse <folder-path>\ninstant_file_share_shell --register-file-context-menu\ninstant_file_share_shell --unregister-file-context-menu\ninstant_file_share_shell --register-folder-zip-context-menu\ninstant_file_share_shell --unregister-folder-zip-context-menu\ninstant_file_share_shell --register-folder-browse-context-menu\ninstant_file_share_shell --unregister-folder-browse-context-menu", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
+        MessageBoxW(nullptr, L"Usage:\ninstant_file_share_shell --share-file <file-path>\ninstant_file_share_shell --share-folder-zip <folder-path>\ninstant_file_share_shell --share-folder-browse <folder-path>\ninstant_file_share_shell --receive-here <folder-path>\ninstant_file_share_shell --register-file-context-menu\ninstant_file_share_shell --unregister-file-context-menu\ninstant_file_share_shell --register-folder-zip-context-menu\ninstant_file_share_shell --unregister-folder-zip-context-menu\ninstant_file_share_shell --register-folder-browse-context-menu\ninstant_file_share_shell --unregister-folder-browse-context-menu\ninstant_file_share_shell --register-folder-receive-context-menu\ninstant_file_share_shell --unregister-folder-receive-context-menu", L"Instant File Share", MB_OK | MB_ICONINFORMATION);
         return 1;
     }
 
@@ -510,14 +518,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         const auto desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo();
         const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
         if (!RegisterContextMenu(kFolderZipVerbKeyPath, kFolderZipCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%1", errorMessage, desktopFolderExclusionAppliesTo) ||
-            !RegisterContextMenu(kFolderZipBackgroundVerbKeyPath, kFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", desktopBackgroundTargetToken, errorMessage))
+            !RegisterContextMenu(kFolderZipBackgroundVerbKeyPath, kFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%V", errorMessage) ||
+            !RegisterContextMenu(kDesktopFolderZipBackgroundVerbKeyPath, kDesktopFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", desktopBackgroundTargetToken, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
         }
-
-        std::wstring ignoredError;
-        UnregisterContextMenu(kLegacyFolderZipBackgroundVerbKeyPath, ignoredError);
         return 0;
     }
 
@@ -525,7 +531,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     {
         if (!UnregisterContextMenu(kFolderZipVerbKeyPath, errorMessage) ||
             !UnregisterContextMenu(kFolderZipBackgroundVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kLegacyFolderZipBackgroundVerbKeyPath, errorMessage))
+            !UnregisterContextMenu(kDesktopFolderZipBackgroundVerbKeyPath, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -538,14 +544,12 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         const auto desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo();
         const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
         if (!RegisterContextMenu(kFolderBrowseVerbKeyPath, kFolderBrowseCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%1", errorMessage, desktopFolderExclusionAppliesTo) ||
-            !RegisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, kFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", desktopBackgroundTargetToken, errorMessage))
+            !RegisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, kFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%V", errorMessage) ||
+            !RegisterContextMenu(kDesktopFolderBrowseBackgroundVerbKeyPath, kDesktopFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", desktopBackgroundTargetToken, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
         }
-
-        std::wstring ignoredError;
-        UnregisterContextMenu(kLegacyFolderBrowseBackgroundVerbKeyPath, ignoredError);
         return 0;
     }
 
@@ -553,7 +557,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
     {
         if (!UnregisterContextMenu(kFolderBrowseVerbKeyPath, errorMessage) ||
             !UnregisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kLegacyFolderBrowseBackgroundVerbKeyPath, errorMessage))
+            !UnregisterContextMenu(kDesktopFolderBrowseBackgroundVerbKeyPath, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -561,12 +565,40 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         return 0;
     }
 
-    if (command == L"--share-file" || command == L"--share-folder-zip" || command == L"--share-folder-browse")
+    if (command == L"--register-folder-receive-context-menu")
+    {
+        const auto desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo();
+        const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
+        if (!RegisterContextMenu(kFolderReceiveVerbKeyPath, kFolderReceiveCommandKeyPath, L"Receive files here", L"--receive-here", L"%1", errorMessage, desktopFolderExclusionAppliesTo) ||
+            !RegisterContextMenu(kFolderReceiveBackgroundVerbKeyPath, kFolderReceiveBackgroundCommandKeyPath, L"Receive files here", L"--receive-here", L"%V", errorMessage) ||
+            !RegisterContextMenu(kDesktopFolderReceiveBackgroundVerbKeyPath, kDesktopFolderReceiveBackgroundCommandKeyPath, L"Receive files here", L"--receive-here", desktopBackgroundTargetToken, errorMessage))
+        {
+            MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (command == L"--unregister-folder-receive-context-menu")
+    {
+        if (!UnregisterContextMenu(kFolderReceiveVerbKeyPath, errorMessage) ||
+            !UnregisterContextMenu(kFolderReceiveBackgroundVerbKeyPath, errorMessage) ||
+            !UnregisterContextMenu(kDesktopFolderReceiveBackgroundVerbKeyPath, errorMessage))
+        {
+            MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
+            return 1;
+        }
+        return 0;
+    }
+
+    if (command == L"--share-file" || command == L"--share-folder-zip" || command == L"--share-folder-browse" || command == L"--receive-here")
     {
         const auto pipeCommand = command == L"--share-folder-zip"
             ? L"share-folder-zip"
             : command == L"--share-folder-browse"
                 ? L"share-folder-browse"
+                : command == L"--receive-here"
+                    ? L"receive-here"
                 : L"share";
 
         if (filePath.empty() || !SendCreateShareCommand(pipeCommand, filePath, errorMessage))
