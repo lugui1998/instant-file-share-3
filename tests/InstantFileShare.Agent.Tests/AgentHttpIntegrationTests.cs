@@ -249,6 +249,98 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
+    public async Task ReceiveLinkPage_ReturnsShellWithSerializedPageModel()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var response = await host.PublicClient.GetAsync("/r/receive-token");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/html; charset=utf-8", response.Content.Headers.ContentType?.ToString());
+        Assert.Contains("\"kind\":\"receive\"", body);
+        Assert.Contains("window.__IFS_PUBLIC_SHARE__", body);
+    }
+
+    [Fact]
+    public async Task ReceiveUpload_SavesMixedFiles_AndRenamesConflictingRootFolder()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            Directory.CreateDirectory(Path.Combine(dropPath, "Photos"));
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var form = new MultipartFormDataContent();
+        form.Add(CreateFileContent("hello"), "files", "hello.txt");
+        form.Add(new StringContent("hello.txt"), "relativePaths");
+        form.Add(CreateFileContent("image"), "files", "cover.jpg");
+        form.Add(new StringContent("Photos/cover.jpg"), "relativePaths");
+        form.Add(CreateFileContent("guide"), "files", "guide.txt");
+        form.Add(new StringContent("Photos/docs/guide.txt"), "relativePaths");
+
+        using var response = await host.PublicClient.PostAsync("/r/receive-token", form);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("hello", await File.ReadAllTextAsync(Path.Combine(host.FilesDirectory, "drop", "hello.txt")));
+        Assert.Equal("image", await File.ReadAllTextAsync(Path.Combine(host.FilesDirectory, "drop", "Photos (1)", "cover.jpg")));
+        Assert.Equal("guide", await File.ReadAllTextAsync(Path.Combine(host.FilesDirectory, "drop", "Photos (1)", "docs", "guide.txt")));
+        Assert.Contains("\"uploadedCount\":3", body);
+    }
+
+    [Fact]
+    public async Task ReceiveUpload_RejectsTraversalRelativePaths()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var form = new MultipartFormDataContent();
+        form.Add(CreateFileContent("bad"), "files", "bad.txt");
+        form.Add(new StringContent("../outside.txt"), "relativePaths");
+
+        using var response = await host.PublicClient.PostAsync("/r/receive-token", form);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.DoesNotContain("outside.txt", Directory.GetFiles(host.FilesDirectory, "*", SearchOption.AllDirectories).Select(Path.GetFileName));
+        Assert.Contains("\"failedCount\":1", body);
+    }
+
+    [Fact]
+    public async Task ReceiveUpload_RejectsFilesThatExceedQuota()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLinkWithQuota("receive-token", dropPath, 3), CancellationToken.None);
+        });
+
+        using var form = new MultipartFormDataContent();
+        form.Add(CreateFileContent("hello"), "files", "hello.txt");
+        form.Add(new StringContent("hello.txt"), "relativePaths");
+
+        using var response = await host.PublicClient.PostAsync("/r/receive-token", form);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.False(File.Exists(Path.Combine(host.FilesDirectory, "drop", "hello.txt")));
+        Assert.Contains("\"uploadedCount\":0", body);
+    }
+
+    [Fact]
     public async Task ControlApi_DeleteTransfer_RemovesSpecificHistoryEntry()
     {
         await using var host = await AgentTestHost.StartAsync(async context =>
@@ -349,6 +441,11 @@ public sealed class AgentHttpIntegrationTests
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         options.Converters.Add(new JsonStringEnumConverter());
         return options;
+    }
+
+    private static ByteArrayContent CreateFileContent(string value)
+    {
+        return new ByteArrayContent(System.Text.Encoding.UTF8.GetBytes(value));
     }
 
     private sealed class AgentTestHost : IAsyncDisposable
@@ -508,6 +605,28 @@ public sealed class AgentHttpIntegrationTests
 
     private sealed record SeedContext(SqliteShareStore Store, string FilesDirectory, AppSettings Settings)
     {
+        public ReceiveLinkRecord CreateReceiveLink(string token, string folderPath)
+            => CreateReceiveLinkWithQuota(token, folderPath, Defaults.DefaultReceiveMaxTotalBytes);
+
+        public ReceiveLinkRecord CreateReceiveLinkWithQuota(string token, string folderPath, long maxTotalBytes)
+        {
+            var directoryInfo = new DirectoryInfo(folderPath);
+            return new ReceiveLinkRecord
+            {
+                Id = Guid.NewGuid().ToString("N"),
+                Token = token,
+                TargetDirectoryPath = directoryInfo.FullName,
+                TargetDisplayName = directoryInfo.Name,
+                PublicBaseUrl = Settings.ManualBaseUrl ?? $"http://127.0.0.1:{Settings.ManualPublicPort}",
+                CreatedAtUtc = DateTimeOffset.UtcNow,
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddDays(1),
+                MaxTotalBytes = maxTotalBytes,
+                BytesReceived = 0,
+                PublishMode = PublishMode.Manual,
+                State = ReceiveLinkState.Active,
+            };
+        }
+
         public ShareRecord CreateFileShare(string token, string filePath)
         {
             var fileInfo = new FileInfo(filePath);

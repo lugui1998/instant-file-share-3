@@ -178,6 +178,42 @@ public sealed class SqliteShareStoreTests
     }
 
     [Fact]
+    public async Task ReceiveLinkRoundTrip_PreservesFields()
+    {
+        using var tempDirectory = new TemporaryDirectory();
+        var store = new SqliteShareStore(Path.Combine(tempDirectory.RootPath, "store.db"));
+        await store.InitializeAsync(CancellationToken.None);
+
+        var folderPath = Path.Combine(tempDirectory.RootPath, "drop");
+        Directory.CreateDirectory(folderPath);
+        var receiveLink = new ReceiveLinkRecord
+        {
+            Id = "receive-1",
+            Token = "receive-token",
+            TargetDirectoryPath = folderPath,
+            TargetDisplayName = "drop",
+            PublicBaseUrl = "http://127.0.0.1:46431",
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(12),
+            MaxTotalBytes = 2048,
+            BytesReceived = 512,
+            PublishMode = PublishMode.Manual,
+            State = ReceiveLinkState.Active,
+        };
+
+        await store.AddReceiveLinkAsync(receiveLink, CancellationToken.None);
+
+        var byId = await store.GetReceiveLinkByIdAsync(receiveLink.Id, CancellationToken.None);
+        var byToken = await store.GetReceiveLinkByTokenAsync(receiveLink.Token, CancellationToken.None);
+
+        Assert.NotNull(byId);
+        Assert.NotNull(byToken);
+        Assert.Equal(receiveLink.TargetDirectoryPath, byToken!.TargetDirectoryPath);
+        Assert.Equal(receiveLink.MaxTotalBytes, byToken.MaxTotalBytes);
+        Assert.Equal(receiveLink.BytesReceived, byToken.BytesReceived);
+    }
+
+    [Fact]
     public async Task ListSharesAsync_ReturnsNewestFirst_AndPreservesNullOptionals()
     {
         using var tempDirectory = new TemporaryDirectory();

@@ -21,6 +21,7 @@ const payload: PublicShareBootstrapPayload = window.__IFS_PUBLIC_SHARE__ ?? {
     },
     folder: null,
     zip: null,
+    receive: null,
   },
 }
 

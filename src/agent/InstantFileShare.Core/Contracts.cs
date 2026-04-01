@@ -8,6 +8,12 @@ public sealed record CreateShareRequest(
     ShareKind ShareKind = ShareKind.File,
     FolderShareEntryPoint? PrimaryFolderEntryPoint = null);
 
+public sealed record CreateReceiveLinkRequest(
+    string DirectoryPath,
+    PublishMode? PublishMode = null,
+    DateTimeOffset? ExpiresAtUtc = null,
+    long? MaxTotalBytes = null);
+
 public sealed record RevokeShareRequest(string ShareId);
 
 public sealed record UpdateSettingsRequest(AppSettings Settings);

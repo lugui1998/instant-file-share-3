@@ -10,25 +10,35 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
     private const string FileCommandKeyPath = @"Software\Classes\*\shell\InstantFileShare\command";
     private const string FolderZipVerbKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderZip";
     private const string FolderZipCommandKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderZip\command";
-    private const string FolderZipBackgroundVerbKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip";
-    private const string FolderZipBackgroundCommandKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip\command";
-    private const string LegacyFolderZipBackgroundVerbKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderZip";
+    private const string FolderZipBackgroundVerbKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderZip";
+    private const string FolderZipBackgroundCommandKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderZip\command";
+    private const string DesktopFolderZipBackgroundVerbKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip";
+    private const string DesktopFolderZipBackgroundCommandKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip\command";
     private const string FolderBrowseVerbKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderBrowse";
     private const string FolderBrowseCommandKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderBrowse\command";
-    private const string FolderBrowseBackgroundVerbKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse";
-    private const string FolderBrowseBackgroundCommandKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse\command";
-    private const string LegacyFolderBrowseBackgroundVerbKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse";
+    private const string FolderBrowseBackgroundVerbKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse";
+    private const string FolderBrowseBackgroundCommandKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse\command";
+    private const string DesktopFolderBrowseBackgroundVerbKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse";
+    private const string DesktopFolderBrowseBackgroundCommandKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse\command";
+    private const string FolderReceiveVerbKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderReceive";
+    private const string FolderReceiveCommandKeyPath = @"Software\Classes\Directory\shell\InstantFileShareFolderReceive\command";
+    private const string FolderReceiveBackgroundVerbKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderReceive";
+    private const string FolderReceiveBackgroundCommandKeyPath = @"Software\Classes\Directory\Background\shell\InstantFileShareFolderReceive\command";
+    private const string DesktopFolderReceiveBackgroundVerbKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderReceive";
+    private const string DesktopFolderReceiveBackgroundCommandKeyPath = @"Software\Classes\DesktopBackground\Shell\InstantFileShareFolderReceive\command";
 
     public async Task ApplyAsync(AppSettings settings, CancellationToken cancellationToken)
     {
         var helperPath = ResolveShellHelperPath();
         var desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
+        var folderBackgroundTargetPath = ResolveFolderBackgroundTargetPath();
         var desktopBackgroundTargetPath = ResolveDesktopBackgroundTargetPath(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
         if (helperPath is not null)
         {
             await RunHelperRegistrationAsync(helperPath, settings.AddFileContextMenuButton, "--register-file-context-menu", "--unregister-file-context-menu", cancellationToken);
             await RunHelperRegistrationAsync(helperPath, settings.AddFolderZipContextMenuButton, "--register-folder-zip-context-menu", "--unregister-folder-zip-context-menu", cancellationToken);
             await RunHelperRegistrationAsync(helperPath, settings.AddFolderBrowseContextMenuButton, "--register-folder-browse-context-menu", "--unregister-folder-browse-context-menu", cancellationToken);
+            await RunHelperRegistrationAsync(helperPath, settings.AddFolderReceiveContextMenuButton, "--register-folder-receive-context-menu", "--unregister-folder-receive-context-menu", cancellationToken);
         }
 
         if (helperPath is null)
@@ -42,14 +52,21 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             {
                 Registry.CurrentUser.DeleteSubKeyTree(FolderZipVerbKeyPath, throwOnMissingSubKey: false);
                 Registry.CurrentUser.DeleteSubKeyTree(FolderZipBackgroundVerbKeyPath, throwOnMissingSubKey: false);
-                Registry.CurrentUser.DeleteSubKeyTree(LegacyFolderZipBackgroundVerbKeyPath, throwOnMissingSubKey: false);
+                Registry.CurrentUser.DeleteSubKeyTree(DesktopFolderZipBackgroundVerbKeyPath, throwOnMissingSubKey: false);
             }
 
             if (!settings.AddFolderBrowseContextMenuButton)
             {
                 Registry.CurrentUser.DeleteSubKeyTree(FolderBrowseVerbKeyPath, throwOnMissingSubKey: false);
                 Registry.CurrentUser.DeleteSubKeyTree(FolderBrowseBackgroundVerbKeyPath, throwOnMissingSubKey: false);
-                Registry.CurrentUser.DeleteSubKeyTree(LegacyFolderBrowseBackgroundVerbKeyPath, throwOnMissingSubKey: false);
+                Registry.CurrentUser.DeleteSubKeyTree(DesktopFolderBrowseBackgroundVerbKeyPath, throwOnMissingSubKey: false);
+            }
+
+            if (!settings.AddFolderReceiveContextMenuButton)
+            {
+                Registry.CurrentUser.DeleteSubKeyTree(FolderReceiveVerbKeyPath, throwOnMissingSubKey: false);
+                Registry.CurrentUser.DeleteSubKeyTree(FolderReceiveBackgroundVerbKeyPath, throwOnMissingSubKey: false);
+                Registry.CurrentUser.DeleteSubKeyTree(DesktopFolderReceiveBackgroundVerbKeyPath, throwOnMissingSubKey: false);
             }
 
             return;
@@ -73,6 +90,12 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             FolderZipBackgroundVerbKeyPath,
             FolderZipBackgroundCommandKeyPath,
             "Share Folder as ZIP",
+            $"\"{helperPath}\" --share-folder-zip \"{folderBackgroundTargetPath}\"");
+        ApplyDirectRegistration(
+            settings.AddFolderZipContextMenuButton,
+            DesktopFolderZipBackgroundVerbKeyPath,
+            DesktopFolderZipBackgroundCommandKeyPath,
+            "Share Folder as ZIP",
             $"\"{helperPath}\" --share-folder-zip \"{desktopBackgroundTargetPath}\"");
         ApplyDirectRegistration(
             settings.AddFolderBrowseContextMenuButton,
@@ -86,9 +109,32 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             FolderBrowseBackgroundVerbKeyPath,
             FolderBrowseBackgroundCommandKeyPath,
             "Share Folder for Browsing",
+            $"\"{helperPath}\" --share-folder-browse \"{folderBackgroundTargetPath}\"");
+        ApplyDirectRegistration(
+            settings.AddFolderBrowseContextMenuButton,
+            DesktopFolderBrowseBackgroundVerbKeyPath,
+            DesktopFolderBrowseBackgroundCommandKeyPath,
+            "Share Folder for Browsing",
             $"\"{helperPath}\" --share-folder-browse \"{desktopBackgroundTargetPath}\"");
-        Registry.CurrentUser.DeleteSubKeyTree(LegacyFolderZipBackgroundVerbKeyPath, throwOnMissingSubKey: false);
-        Registry.CurrentUser.DeleteSubKeyTree(LegacyFolderBrowseBackgroundVerbKeyPath, throwOnMissingSubKey: false);
+        ApplyDirectRegistration(
+            settings.AddFolderReceiveContextMenuButton,
+            FolderReceiveVerbKeyPath,
+            FolderReceiveCommandKeyPath,
+            "Receive files here",
+            $"\"{helperPath}\" --receive-here \"%1\"",
+            desktopFolderExclusionAppliesTo);
+        ApplyDirectRegistration(
+            settings.AddFolderReceiveContextMenuButton,
+            FolderReceiveBackgroundVerbKeyPath,
+            FolderReceiveBackgroundCommandKeyPath,
+            "Receive files here",
+            $"\"{helperPath}\" --receive-here \"{folderBackgroundTargetPath}\"");
+        ApplyDirectRegistration(
+            settings.AddFolderReceiveContextMenuButton,
+            DesktopFolderReceiveBackgroundVerbKeyPath,
+            DesktopFolderReceiveBackgroundCommandKeyPath,
+            "Receive files here",
+            $"\"{helperPath}\" --receive-here \"{desktopBackgroundTargetPath}\"");
     }
 
     internal static string? BuildDesktopFolderExclusionAppliesTo(string? desktopFolderPath)
@@ -111,6 +157,8 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
 
         return Path.GetFullPath(Path.TrimEndingDirectorySeparator(desktopFolderPath));
     }
+
+    internal static string ResolveFolderBackgroundTargetPath() => "%V";
 
     private static async Task RunHelperRegistrationAsync(string helperPath, bool enabled, string registerArgument, string unregisterArgument, CancellationToken cancellationToken)
     {

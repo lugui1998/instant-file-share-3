@@ -10,7 +10,8 @@ internal sealed record PublicSharePageModel(
     string? PrimaryActionUrl,
     PublicShareFileModel? File,
     PublicShareFolderModel? Folder,
-    PublicShareZipModel? Zip);
+    PublicShareZipModel? Zip,
+    PublicShareReceiveModel? Receive);
 
 internal sealed record PublicShareFileModel(
     string FileName,
@@ -31,6 +32,13 @@ internal sealed record PublicShareFolderModel(
 internal sealed record PublicShareZipModel(
     string FileName,
     string ActionLabel);
+
+internal sealed record PublicShareReceiveModel(
+    string TargetName,
+    string UploadUrl,
+    long RemainingQuotaBytes,
+    string RemainingQuotaLabel,
+    string? ExpiresAtLabel);
 
 internal sealed record PublicShareBreadcrumb(string Label, string Href);
 

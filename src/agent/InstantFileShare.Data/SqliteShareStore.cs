@@ -101,6 +101,31 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         await UpsertShareAsync(connection, share, cancellationToken);
     }
 
+    public async Task<ReceiveLinkRecord> AddReceiveLinkAsync(ReceiveLinkRecord receiveLink, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+        await UpsertReceiveLinkAsync(connection, receiveLink, cancellationToken);
+        return receiveLink;
+    }
+
+    public Task<ReceiveLinkRecord?> GetReceiveLinkByIdAsync(string receiveLinkId, CancellationToken cancellationToken)
+    {
+        return GetReceiveLinkByAsync("id", receiveLinkId, cancellationToken);
+    }
+
+    public Task<ReceiveLinkRecord?> GetReceiveLinkByTokenAsync(string token, CancellationToken cancellationToken)
+    {
+        return GetReceiveLinkByAsync("token", token, cancellationToken);
+    }
+
+    public async Task UpdateReceiveLinkAsync(ReceiveLinkRecord receiveLink, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+        await UpsertReceiveLinkAsync(connection, receiveLink, cancellationToken);
+    }
+
     public async Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken)
     {
         await using var connection = OpenConnection();
@@ -264,6 +289,19 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         return await reader.ReadAsync(cancellationToken) ? MapShare(reader) : null;
     }
 
+    private async Task<ReceiveLinkRecord?> GetReceiveLinkByAsync(string fieldName, string fieldValue, CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT * FROM receive_links WHERE {fieldName} = $value LIMIT 1;";
+        command.Parameters.AddWithValue("$value", fieldValue);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        return await reader.ReadAsync(cancellationToken) ? MapReceiveLink(reader) : null;
+    }
+
     private async Task UpsertShareAsync(SqliteConnection connection, ShareRecord share, CancellationToken cancellationToken)
     {
         await using var command = connection.CreateCommand();
@@ -374,6 +412,46 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
+    private async Task UpsertReceiveLinkAsync(SqliteConnection connection, ReceiveLinkRecord receiveLink, CancellationToken cancellationToken)
+    {
+        await using var command = connection.CreateCommand();
+        command.CommandText =
+            """
+            INSERT INTO receive_links (
+                id, token, target_directory_path, target_display_name, public_base_url, created_at_utc,
+                expires_at_utc, max_total_bytes, bytes_received, publish_mode, state, broken_reason
+            ) VALUES (
+                $id, $token, $targetDirectoryPath, $targetDisplayName, $publicBaseUrl, $createdAtUtc,
+                $expiresAtUtc, $maxTotalBytes, $bytesReceived, $publishMode, $state, $brokenReason
+            )
+            ON CONFLICT(id) DO UPDATE SET
+                token = excluded.token,
+                target_directory_path = excluded.target_directory_path,
+                target_display_name = excluded.target_display_name,
+                public_base_url = excluded.public_base_url,
+                created_at_utc = excluded.created_at_utc,
+                expires_at_utc = excluded.expires_at_utc,
+                max_total_bytes = excluded.max_total_bytes,
+                bytes_received = excluded.bytes_received,
+                publish_mode = excluded.publish_mode,
+                state = excluded.state,
+                broken_reason = excluded.broken_reason;
+            """;
+        command.Parameters.AddWithValue("$id", receiveLink.Id);
+        command.Parameters.AddWithValue("$token", receiveLink.Token);
+        command.Parameters.AddWithValue("$targetDirectoryPath", receiveLink.TargetDirectoryPath);
+        command.Parameters.AddWithValue("$targetDisplayName", receiveLink.TargetDisplayName);
+        command.Parameters.AddWithValue("$publicBaseUrl", receiveLink.PublicBaseUrl);
+        command.Parameters.AddWithValue("$createdAtUtc", receiveLink.CreatedAtUtc.UtcDateTime.ToString("O"));
+        command.Parameters.AddWithValue("$expiresAtUtc", receiveLink.ExpiresAtUtc?.UtcDateTime.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$maxTotalBytes", receiveLink.MaxTotalBytes);
+        command.Parameters.AddWithValue("$bytesReceived", receiveLink.BytesReceived);
+        command.Parameters.AddWithValue("$publishMode", (int)receiveLink.PublishMode);
+        command.Parameters.AddWithValue("$state", (int)receiveLink.State);
+        command.Parameters.AddWithValue("$brokenReason", (object?)receiveLink.BrokenReason ?? DBNull.Value);
+        await command.ExecuteNonQueryAsync(cancellationToken);
+    }
+
     private async Task SaveSingletonJsonAsync(string tableName, string key, string json, CancellationToken cancellationToken)
     {
         await using var connection = OpenConnection();
@@ -464,6 +542,25 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             IsActive = reader.GetInt64(reader.GetOrdinal("is_active")) != 0,
             Succeeded = reader.GetInt64(reader.GetOrdinal("succeeded")) != 0,
             Error = reader.IsDBNull(reader.GetOrdinal("error")) ? null : reader.GetString(reader.GetOrdinal("error")),
+        };
+    }
+
+    private static ReceiveLinkRecord MapReceiveLink(SqliteDataReader reader)
+    {
+        return new ReceiveLinkRecord
+        {
+            Id = reader.GetString(reader.GetOrdinal("id")),
+            Token = reader.GetString(reader.GetOrdinal("token")),
+            TargetDirectoryPath = reader.GetString(reader.GetOrdinal("target_directory_path")),
+            TargetDisplayName = reader.GetString(reader.GetOrdinal("target_display_name")),
+            PublicBaseUrl = reader.GetString(reader.GetOrdinal("public_base_url")),
+            CreatedAtUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("created_at_utc"))),
+            ExpiresAtUtc = reader.IsDBNull(reader.GetOrdinal("expires_at_utc")) ? null : DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("expires_at_utc"))),
+            MaxTotalBytes = reader.GetInt64(reader.GetOrdinal("max_total_bytes")),
+            BytesReceived = reader.GetInt64(reader.GetOrdinal("bytes_received")),
+            PublishMode = (PublishMode)reader.GetInt32(reader.GetOrdinal("publish_mode")),
+            State = (ReceiveLinkState)reader.GetInt32(reader.GetOrdinal("state")),
+            BrokenReason = reader.IsDBNull(reader.GetOrdinal("broken_reason")) ? null : reader.GetString(reader.GetOrdinal("broken_reason")),
         };
     }
 
@@ -612,6 +709,22 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             share_id TEXT NOT NULL,
             session_key TEXT NOT NULL,
             PRIMARY KEY (share_id, session_key)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS receive_links (
+            id TEXT PRIMARY KEY,
+            token TEXT NOT NULL UNIQUE,
+            target_directory_path TEXT NOT NULL,
+            target_display_name TEXT NOT NULL,
+            public_base_url TEXT NOT NULL,
+            created_at_utc TEXT NOT NULL,
+            expires_at_utc TEXT NULL,
+            max_total_bytes INTEGER NOT NULL,
+            bytes_received INTEGER NOT NULL,
+            publish_mode INTEGER NOT NULL,
+            state INTEGER NOT NULL,
+            broken_reason TEXT NULL
         );
         """,
     };

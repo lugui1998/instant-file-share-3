@@ -41,4 +41,12 @@ public sealed class ContextMenuRegistrationServiceTests
 
         Assert.Equal("%V", targetPath);
     }
+
+    [Fact]
+    public void ResolveFolderBackgroundTargetPath_ReturnsShellToken()
+    {
+        var targetPath = ContextMenuRegistrationService.ResolveFolderBackgroundTargetPath();
+
+        Assert.Equal("%V", targetPath);
+    }
 }
