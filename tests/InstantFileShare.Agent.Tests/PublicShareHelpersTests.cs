@@ -2,6 +2,7 @@ using System.Net;
 using InstantFileShare.Agent;
 using InstantFileShare.Core;
 using Microsoft.AspNetCore.Http;
+using Xunit.Sdk;
 
 namespace InstantFileShare.Agent.Tests;
 
@@ -125,7 +126,7 @@ public sealed class PublicShareHelpersTests
     {
         if (!OperatingSystem.IsWindows())
         {
-            return;
+            throw new SkipException("Windows-specific normalization behavior.");
         }
 
         using var tempDirectory = new TemporaryDirectory();
