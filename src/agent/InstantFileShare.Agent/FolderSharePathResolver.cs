@@ -146,7 +146,27 @@ internal static class FolderSharePathResolver
             return null;
         }
 
-        return normalized;
+        var segments = normalized.Split(Path.DirectorySeparatorChar, StringSplitOptions.RemoveEmptyEntries);
+        if (segments.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        foreach (var segment in segments)
+        {
+            if (segment is "." or "..")
+            {
+                return null;
+            }
+
+            if (OperatingSystem.IsWindows() &&
+                (segment.EndsWith(' ') || segment.EndsWith('.')))
+            {
+                return null;
+            }
+        }
+
+        return string.Join(Path.DirectorySeparatorChar, segments);
     }
 
     private static bool IsUnderRoot(string rootPath, string candidatePath)

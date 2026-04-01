@@ -2,6 +2,7 @@ using System.Net;
 using InstantFileShare.Agent;
 using InstantFileShare.Core;
 using Microsoft.AspNetCore.Http;
+using Xunit.Sdk;
 
 namespace InstantFileShare.Agent.Tests;
 
@@ -94,8 +95,14 @@ public sealed class PublicShareHelpersTests
     [InlineData("docs\\..\\..\\secret.txt")]
     [InlineData("..%2fsecret.txt")]
     [InlineData("..%5csecret.txt")]
+    [InlineData("./inside.txt")]
+    [InlineData(".\\inside.txt")]
+    [InlineData("docs/./guide.txt")]
+    [InlineData("docs\\.\\guide.txt")]
     [InlineData("....//secret.txt")]
     [InlineData("....\\\\secret.txt")]
+    [InlineData(".. /.. /Windows/System32/config/SAM")]
+    [InlineData(".. .\\.. .\\Windows\\System32\\config\\SAM")]
     [InlineData("C:\\Windows\\notepad.exe")]
     [InlineData("\\\\server\\share\\file.txt")]
     public void TryResolveEntry_RejectsTraversalAndAbsolutePaths(string candidatePath)
@@ -104,6 +111,27 @@ public sealed class PublicShareHelpersTests
         var rootPath = tempDirectory.CreateDirectory("share-root");
         File.WriteAllText(Path.Combine(rootPath, "inside.txt"), "inside");
         File.WriteAllText(Path.Combine(tempDirectory.RootPath, "secret.txt"), "secret");
+
+        var resolved = FolderSharePathResolver.TryResolveEntry(rootPath, candidatePath, out var entry);
+
+        Assert.False(resolved);
+        Assert.Null(entry);
+    }
+
+    [Theory]
+    [InlineData(".. /inside.txt")]
+    [InlineData("folder./inside.txt")]
+    [InlineData("folder /inside.txt")]
+    public void TryResolveEntry_OnWindows_RejectsSegmentsWithTrailingDotOrSpace(string candidatePath)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            throw new SkipException("Windows-specific normalization behavior.");
+        }
+
+        using var tempDirectory = new TemporaryDirectory();
+        var rootPath = tempDirectory.CreateDirectory("share-root");
+        File.WriteAllText(Path.Combine(rootPath, "inside.txt"), "inside");
 
         var resolved = FolderSharePathResolver.TryResolveEntry(rootPath, candidatePath, out var entry);
 
