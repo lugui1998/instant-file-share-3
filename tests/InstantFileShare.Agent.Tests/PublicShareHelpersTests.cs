@@ -2,7 +2,6 @@ using System.Net;
 using InstantFileShare.Agent;
 using InstantFileShare.Core;
 using Microsoft.AspNetCore.Http;
-using Xunit.Sdk;
 
 namespace InstantFileShare.Agent.Tests;
 
@@ -124,11 +123,6 @@ public sealed class PublicShareHelpersTests
     [InlineData("folder /inside.txt")]
     public void TryResolveEntry_OnWindows_RejectsSegmentsWithTrailingDotOrSpace(string candidatePath)
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            throw new SkipException("Windows-specific normalization behavior.");
-        }
-
         using var tempDirectory = new TemporaryDirectory();
         var rootPath = tempDirectory.CreateDirectory("share-root");
         File.WriteAllText(Path.Combine(rootPath, "inside.txt"), "inside");
