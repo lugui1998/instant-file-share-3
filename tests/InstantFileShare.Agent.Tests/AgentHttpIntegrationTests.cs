@@ -211,6 +211,8 @@ public sealed class AgentHttpIntegrationTests
     [InlineData("/s/folder-token/team-files/%2e%2e?download=zip")]
     [InlineData("/s/folder-token/team-files/docs/%252e%252e?download=zip")]
     [InlineData("/s/folder-token/team-files/..%2f?download=zip")]
+    [InlineData("/s/folder-token/team-files/%ZZ")]
+    [InlineData("/s/folder-token/team-files/%")]
     public async Task RawTraversalZipRequests_ReturnNotFound(string rawTarget)
     {
         await using var host = await AgentTestHost.StartAsync(async context =>
