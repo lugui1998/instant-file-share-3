@@ -1,3 +1,5 @@
+import packageMetadata from '../package.json'
+
 type AgentShareRecord = {
   id: string
   token: string
@@ -137,6 +139,7 @@ type CloudflaredDashboardStatus = {
 }
 
 type AgentBridge = {
+  getAppVersion(): Promise<string>
   getRuntime(): Promise<AgentRuntimeSnapshot>
   getShares(): Promise<AgentShareRecord[]>
   getTransfers(): Promise<TransferRecord[]>
@@ -190,6 +193,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 function createBrowserBridge(): AgentBridge {
   return {
+    getAppVersion: async () => packageMetadata.version,
     getRuntime: () => request<AgentRuntimeSnapshot>('/api/runtime'),
     getShares: () => request<AgentShareRecord[]>('/api/shares'),
     getTransfers: () => request<TransferRecord[]>('/api/transfers'),

@@ -114,6 +114,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 contextBridge.exposeInMainWorld('instantFileShare', {
+  getAppVersion: () => ipcRenderer.invoke('app:getVersion') as Promise<string>,
   getRuntime: () => request<RuntimeSnapshot>('/api/runtime'),
   getShares: () => request<ShareRecord[]>('/api/shares'),
   getTransfers: () => request<TransferRecord[]>('/api/transfers'),
