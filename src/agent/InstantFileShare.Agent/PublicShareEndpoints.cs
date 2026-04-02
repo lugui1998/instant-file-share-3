@@ -983,7 +983,11 @@ internal static class PublicShareEndpoints
 
         foreach (var segment in segments)
         {
-            var decodedSegment = DecodeRepeatedly(segment);
+            if (!TryDecodeRepeatedly(segment, out var decodedSegment))
+            {
+                return true;
+            }
+
             if (string.Equals(decodedSegment, "..", StringComparison.Ordinal) ||
                 decodedSegment.Contains('/') ||
                 decodedSegment.Contains('\\'))
@@ -995,20 +999,32 @@ internal static class PublicShareEndpoints
         return false;
     }
 
-    private static string DecodeRepeatedly(string value)
+    private static bool TryDecodeRepeatedly(string value, out string decodedValue)
     {
         var current = value;
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            var decoded = Uri.UnescapeDataString(current);
+            string decoded;
+            try
+            {
+                decoded = Uri.UnescapeDataString(current);
+            }
+            catch (ArgumentException)
+            {
+                decodedValue = value;
+                return false;
+            }
+
             if (string.Equals(decoded, current, StringComparison.Ordinal))
             {
-                return decoded;
+                decodedValue = decoded;
+                return true;
             }
 
             current = decoded;
         }
 
-        return current;
+        decodedValue = current;
+        return true;
     }
 }
