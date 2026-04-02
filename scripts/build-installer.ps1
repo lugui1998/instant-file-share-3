@@ -9,11 +9,32 @@ $agentStage = Join-Path $stageRoot 'agent'
 $shellStage = Join-Path $stageRoot 'shell'
 $uiStage = Join-Path $stageRoot 'ui'
 $uiPath = Join-Path $repoRoot 'src\ui'
+$uiPackageJsonPath = Join-Path $uiPath 'package.json'
 $publicShareDist = Join-Path $uiPath 'dist-public-share'
 $shellSourcePath = Join-Path $repoRoot 'src\shell-extension'
 $shellBuildPath = Join-Path $repoRoot 'build\shell-extension'
 $installerScript = Join-Path $repoRoot 'installer\InstantFileShare.iss'
 $installerOutput = Join-Path $packageRoot 'installer'
+
+function Get-UiPackageVersion {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$PackageJsonPath
+  )
+
+  if (-not (Test-Path $PackageJsonPath)) {
+    throw "UI package.json not found at $PackageJsonPath"
+  }
+
+  $packageJson = Get-Content $PackageJsonPath -Raw | ConvertFrom-Json
+  $version = $packageJson.version
+
+  if ([string]::IsNullOrWhiteSpace($version)) {
+    throw "UI package.json at $PackageJsonPath does not declare a version."
+  }
+
+  return $version
+}
 
 function Resolve-InnoSetupCompiler {
   $command = Get-Command 'iscc' -ErrorAction SilentlyContinue
@@ -65,6 +86,8 @@ function Resolve-InnoSetupCompiler {
 Write-Host 'Cleaning staged package output...'
 Remove-Item $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $installerOutput -Recurse -Force -ErrorAction SilentlyContinue
+
+$appVersion = Get-UiPackageVersion -PackageJsonPath $uiPackageJsonPath
 
 foreach ($directory in @($stageRoot, $agentStage, $shellStage, $uiStage, $installerOutput)) {
   New-Item -ItemType Directory -Path $directory -Force | Out-Null
@@ -128,6 +151,6 @@ if ([string]::IsNullOrWhiteSpace($iscc)) {
 }
 
 Write-Host 'Building installer with Inno Setup...'
-& $iscc "/DStageDir=$stageRoot" "/DOutputDir=$installerOutput" $installerScript
+& $iscc "/DStageDir=$stageRoot" "/DOutputDir=$installerOutput" "/DAppVersion=$appVersion" $installerScript
 
 Write-Host 'Installer build completed successfully.'
