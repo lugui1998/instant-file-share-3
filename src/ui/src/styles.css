@@ -84,21 +84,9 @@ button.danger {
 }
 
 .brand {
-  display: flex;
-  gap: 1rem;
-  align-items: center;
-  margin-bottom: 2rem;
-}
-
-.brand-mark {
-  width: 52px;
-  height: 52px;
-  border-radius: 18px;
   display: grid;
-  place-items: center;
-  background: linear-gradient(135deg, #ff8f3f, #ffc53d);
-  color: #111;
-  font-weight: 800;
+  gap: 0.2rem;
+  margin-bottom: 2rem;
 }
 
 .eyebrow {
@@ -107,6 +95,13 @@ button.danger {
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 0.72rem;
+}
+
+.version-label {
+  margin: 0;
+  color: #8f98a4;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
 }
 
 .nav {

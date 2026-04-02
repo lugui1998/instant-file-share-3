@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
+import { agentBridge } from '../agentBridge'
 import type { ViewKey } from '../types/ui'
 
 const props = defineProps<{
@@ -27,15 +28,27 @@ const navigationItems = computed(() => {
 
   return items
 })
+
+const appVersion = ref('')
+
+async function loadAppVersion() {
+  try {
+    appVersion.value = await agentBridge.getAppVersion()
+  } catch {
+    appVersion.value = ''
+  }
+}
+
+onMounted(() => {
+  void loadAppVersion()
+})
 </script>
 
 <template>
   <aside class="rail">
     <div class="brand">
-      <div class="brand-mark">IFS</div>
-      <div>
-        <p class="eyebrow">Instant File Share</p>
-      </div>
+      <p class="eyebrow">Instant File Share</p>
+      <p v-if="appVersion" class="version-label">v{{ appVersion }}</p>
     </div>
 
     <nav class="nav">

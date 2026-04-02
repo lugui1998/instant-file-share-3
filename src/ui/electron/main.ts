@@ -95,6 +95,8 @@ app.whenReady().then(() => {
 
   Menu.setApplicationMenu(null)
 
+  ipcMain.handle('app:getVersion', () => app.getVersion())
+
   ipcMain.handle('cloudflared:pickExecutable', async () => {
     const targetWindow = BrowserWindow.getFocusedWindow() ?? mainWindow
     const options: OpenDialogOptions = {
