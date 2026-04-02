@@ -1,9 +1,12 @@
 #define AppName "Instant File Share"
-#define AppVersion "0.1.0"
 #define AppPublisher "Instant File Share"
 #define AgentExe "InstantFileShare.Agent.exe"
 #define DashboardExe "Instant File Share.exe"
 #define CloudflaredWingetArgs "install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements --disable-interactivity"
+
+#ifndef AppVersion
+  #define AppVersion "1.0.0"
+#endif
 
 #ifndef StageDir
   #error StageDir must be provided to the compiler.
@@ -22,7 +25,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir={#OutputDir}
-OutputBaseFilename=InstantFileShare-Setup
+OutputBaseFilename=InstantFileShare-Setup-{#AppVersion}
 Compression=lzma
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
