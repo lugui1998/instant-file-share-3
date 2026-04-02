@@ -122,6 +122,13 @@ internal static class ReceiveUploadPlanner
             currentPath = Path.Combine(currentPath, segment);
             var normalizedCurrentPath = NormalizePath(currentPath);
 
+            if (Directory.Exists(currentPath) &&
+                (File.GetAttributes(currentPath) & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
+            {
+                error = "The uploaded path traverses a linked folder, which is not allowed.";
+                return false;
+            }
+
             if (File.Exists(currentPath) || reservedFiles.Contains(normalizedCurrentPath))
             {
                 error = "A file already exists where an uploaded folder needs to be created.";

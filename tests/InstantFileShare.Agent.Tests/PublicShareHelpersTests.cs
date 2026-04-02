@@ -293,11 +293,55 @@ public sealed class PublicShareHelpersTests
         Assert.False(rejected[0].Success);
     }
 
+    [Fact]
+    public void ReceiveUploadPlanner_RejectsPathsThroughSymlinkedDirectory()
+    {
+        using var tempDirectory = new TemporaryDirectory();
+        var targetPath = tempDirectory.CreateDirectory("drop");
+        var outsidePath = tempDirectory.CreateDirectory("outside");
+        var linkedDirectoryPath = Path.Combine(targetPath, "linked");
+
+        if (!TryCreateDirectorySymbolicLink(linkedDirectoryPath, outsidePath))
+        {
+            return;
+        }
+
+        var formFile = CreateFormFile("safe.txt", 1);
+        var (_, rejected) = ReceiveUploadPlanner.Plan(
+            targetPath,
+            [new ReceiveUploadCandidate(formFile, "linked/safe.txt")]);
+
+        Assert.Single(rejected);
+        Assert.False(rejected[0].Success);
+        Assert.Equal("The uploaded path traverses a linked folder, which is not allowed.", rejected[0].Message);
+    }
+
     private static IFormFile CreateFormFile(string fileName, int byteCount)
     {
         var content = new byte[byteCount];
         var stream = new MemoryStream(content);
         return new FormFile(stream, 0, byteCount, "files", fileName);
+    }
+
+    private static bool TryCreateDirectorySymbolicLink(string linkPath, string targetPath)
+    {
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return false;
+        }
     }
 
     private sealed class TemporaryDirectory : IDisposable
