@@ -37,12 +37,15 @@ internal static class AgentServiceCollectionExtensions
         services.AddSingleton(startupOptions);
         services.AddSingleton(initialSettings);
         services.AddSingleton(fileLogStore);
+        services.AddSingleton<IBootstrapSettingsSnapshotStore>(_ => new BootstrapSettingsSnapshotStore(applicationOptions.BootstrapSettingsPath));
         services.AddSingleton<IShareStore>(store);
         services.AddSingleton<IRuntimeEventStream, ChannelRuntimeEventStream>();
+        services.AddSingleton<IAgentLifecycleManager, AgentLifecycleManager>();
         services.AddSingleton<CloudflaredSupervisor>();
         services.AddHttpClient<ExternalAddressResolver>();
         services.AddSingleton<DashboardLauncher>();
         services.AddSingleton<IUiLauncher>(provider => provider.GetRequiredService<DashboardLauncher>());
+        services.AddSingleton<IExplorerLauncher, ExplorerLauncher>();
         services.AddSingleton<ClipboardService>();
         services.AddSingleton<IClipboardService>(provider => provider.GetRequiredService<ClipboardService>());
         services.AddSingleton<NotificationService>();

@@ -15,6 +15,11 @@ $shellSourcePath = Join-Path $repoRoot 'src\shell-extension'
 $shellBuildPath = Join-Path $repoRoot 'build\shell-extension'
 $installerScript = Join-Path $repoRoot 'installer\InstantFileShare.iss'
 $installerOutput = Join-Path $packageRoot 'installer'
+$runningOnWindows = $env:OS -eq 'Windows_NT'
+if (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) {
+  $runningOnWindows = [bool]$IsWindows
+}
+$npmCommand = if ($runningOnWindows) { 'npm.cmd' } else { 'npm' }
 
 function Get-UiPackageVersion {
   param(
@@ -123,8 +128,15 @@ Copy-Item $shellExe -Destination $shellStage
 Write-Host 'Packaging Electron dashboard...'
 Push-Location $uiPath
 try {
-  npm install
-  npm run package:win
+  & $npmCommand install
+  if ($LASTEXITCODE -ne 0) {
+    throw "UI dependency install failed with exit code $LASTEXITCODE."
+  }
+
+  & $npmCommand run package:win
+  if ($LASTEXITCODE -ne 0) {
+    throw "UI packaging failed with exit code $LASTEXITCODE."
+  }
 } finally {
   Pop-Location
 }

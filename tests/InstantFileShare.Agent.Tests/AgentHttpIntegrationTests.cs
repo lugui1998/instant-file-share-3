@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -248,6 +249,76 @@ public sealed class AgentHttpIntegrationTests
         using var response = await host.PublicClient.GetAsync("/api/runtime");
 
         Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+    }
+
+    [Fact]
+    public async Task RangeDownload_CountsAsAUse_AndExpiresMaxUseShare()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "range-max-uses.txt");
+            await File.WriteAllTextAsync(filePath, "hello world");
+            await context.Store.AddShareAsync(context.CreateFileShare("range-max-token", filePath) with
+            {
+                MaxUses = 1,
+            }, CancellationToken.None);
+        });
+
+        using var rangeRequest = new HttpRequestMessage(HttpMethod.Get, "/s/range-max-token");
+        rangeRequest.Headers.Range = new RangeHeaderValue(0, 3);
+
+        using var firstResponse = await host.PublicClient.SendAsync(rangeRequest);
+        _ = await firstResponse.Content.ReadAsByteArrayAsync();
+        using var secondResponse = await host.PublicClient.GetAsync("/s/range-max-token");
+        _ = await secondResponse.Content.ReadAsByteArrayAsync();
+
+        var share = await host.Store.GetShareByTokenAsync("range-max-token", CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.PartialContent, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.Gone, secondResponse.StatusCode);
+        Assert.NotNull(share);
+        Assert.Equal(1, share!.UseCount);
+    }
+
+    [Fact]
+    public async Task FolderFileRangeDownload_UsesSessionDeduplication()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var rootPath = Path.Combine(context.FilesDirectory, "range-folder");
+            Directory.CreateDirectory(rootPath);
+            await File.WriteAllTextAsync(Path.Combine(rootPath, "guide.txt"), "hello world");
+            await context.Store.AddShareAsync(context.CreateFolderShare("range-folder-token", rootPath, "range-folder") with
+            {
+                MaxUses = 5,
+            }, CancellationToken.None);
+        });
+
+        using var handler = new HttpClientHandler
+        {
+            CookieContainer = new CookieContainer(),
+            UseCookies = true,
+        };
+        using var client = new HttpClient(handler)
+        {
+            BaseAddress = new Uri($"http://127.0.0.1:{host.Settings.ManualPublicPort}"),
+        };
+
+        using var firstRequest = new HttpRequestMessage(HttpMethod.Get, "/s/range-folder-token/range-folder/guide.txt");
+        firstRequest.Headers.Range = new RangeHeaderValue(0, 3);
+        using var secondRequest = new HttpRequestMessage(HttpMethod.Get, "/s/range-folder-token/range-folder/guide.txt");
+        secondRequest.Headers.Range = new RangeHeaderValue(4, 7);
+
+        using var firstResponse = await client.SendAsync(firstRequest);
+        using var secondResponse = await client.SendAsync(secondRequest);
+        _ = await firstResponse.Content.ReadAsByteArrayAsync();
+        _ = await secondResponse.Content.ReadAsByteArrayAsync();
+        var share = await host.Store.GetShareByTokenAsync("range-folder-token", CancellationToken.None);
+
+        Assert.Equal(HttpStatusCode.PartialContent, firstResponse.StatusCode);
+        Assert.Equal(HttpStatusCode.PartialContent, secondResponse.StatusCode);
+        Assert.NotNull(share);
+        Assert.Equal(1, share!.UseCount);
     }
 
     [Fact]
@@ -535,6 +606,7 @@ public sealed class AgentHttpIntegrationTests
                     LogsDirectory = logsDirectory,
                     RepositoryRoot = Directory.GetCurrentDirectory(),
                     PublicShareAssetsDirectory = assetsDirectory,
+                    BootstrapSettingsPath = Path.Combine(rootPath, "bootstrap-settings.json"),
                     RunStartupTasks = false,
                     EnableTrayIcon = false,
                     EnablePipeCommandServer = false,

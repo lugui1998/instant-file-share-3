@@ -1,4 +1,5 @@
 import packageMetadata from '../package.json'
+import { createAgentEndpointState } from '../shared/agentEndpoint'
 
 type AgentShareRecord = {
   id: string
@@ -147,6 +148,7 @@ type AgentBridge = {
   clearTransferHistory(): Promise<void>
   createShare(filePath: string, publishMode?: string): Promise<{ share: AgentShareRecord; url: string }>
   revokeShare(shareId: string): Promise<void>
+  showShareInExplorer(shareId: string): Promise<void>
   getSettings(): Promise<Record<string, unknown>>
   saveSettings(settings: Record<string, unknown>): Promise<void>
   saveSettings(settings: AppSettings): Promise<void>
@@ -167,31 +169,43 @@ type AgentBridge = {
   connectRuntime(onMessage: (event: RuntimeEvent) => void): () => void
 }
 
-const agentBaseUrl = import.meta.env.VITE_AGENT_BASE_URL ?? 'http://127.0.0.1:46430'
-const runtimeSocketUrl = `${agentBaseUrl.replace(/^http/, 'ws')}/ws/runtime`
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${agentBaseUrl}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(init?.headers ?? {}),
-    },
-    ...init,
-  })
-
-  if (!response.ok) {
-    const message = await response.text()
-    throw new Error(message || `Request failed with status ${response.status}`)
+const envLocalApiPort = (() => {
+  const configuredBaseUrl = import.meta.env.VITE_AGENT_BASE_URL
+  if (!configuredBaseUrl) {
+    return undefined
   }
 
-  if (response.status === 204) {
-    return undefined as T
+  try {
+    return Number.parseInt(new URL(configuredBaseUrl).port, 10)
+  } catch {
+    return undefined
   }
-
-  return response.json() as Promise<T>
-}
+})()
 
 function createBrowserBridge(): AgentBridge {
+  const agentEndpoint = createAgentEndpointState(envLocalApiPort)
+
+  async function request<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await fetch(`${agentEndpoint.getAgentBaseUrl()}${path}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(init?.headers ?? {}),
+      },
+      ...init,
+    })
+
+    if (!response.ok) {
+      const message = await response.text()
+      throw new Error(message || `Request failed with status ${response.status}`)
+    }
+
+    if (response.status === 204) {
+      return undefined as T
+    }
+
+    return response.json() as Promise<T>
+  }
+
   return {
     getAppVersion: async () => packageMetadata.version,
     getRuntime: () => request<AgentRuntimeSnapshot>('/api/runtime'),
@@ -208,12 +222,19 @@ function createBrowserBridge(): AgentBridge {
       }),
     revokeShare: (shareId: string) =>
       request<void>(`/api/shares/${shareId}`, { method: 'DELETE' }),
+    showShareInExplorer: (shareId: string) =>
+      request<void>(`/api/shares/${shareId}/show-in-explorer`, { method: 'POST' }),
     getSettings: () => request<Record<string, unknown>>('/api/settings'),
-    saveSettings: (settings: Record<string, unknown>) =>
-      request<void>('/api/settings', {
+    saveSettings: async (settings: Record<string, unknown>) => {
+      await request<void>('/api/settings', {
         method: 'PUT',
         body: JSON.stringify({ settings }),
-      }),
+      })
+
+      if (typeof settings.localApiPort === 'number') {
+        agentEndpoint.setLocalApiPort(settings.localApiPort)
+      }
+    },
     getPublishProfiles: () => request<Array<Record<string, unknown>>>('/api/publish-profiles'),
     savePublishProfile: (mode: string, profile: Record<string, unknown>) =>
       request<void>(`/api/publish-profiles/${mode}`, {
@@ -239,11 +260,11 @@ function createBrowserBridge(): AgentBridge {
         body: JSON.stringify({ domain, subdomain }),
       }),
     getAgentLogs: async () => {
-      const response = await fetch(`${agentBaseUrl}/api/logs/agent`)
+      const response = await fetch(`${agentEndpoint.getAgentBaseUrl()}/api/logs/agent`)
       return response.text()
     },
     getCloudflareLogs: async () => {
-      const response = await fetch(`${agentBaseUrl}/api/logs/cloudflare`)
+      const response = await fetch(`${agentEndpoint.getAgentBaseUrl()}/api/logs/cloudflare`)
       return response.text()
     },
     connectRuntime: (onMessage: (event: RuntimeEvent) => void) => {
@@ -256,7 +277,7 @@ function createBrowserBridge(): AgentBridge {
           return
         }
 
-        socket = new WebSocket(runtimeSocketUrl)
+        socket = new WebSocket(agentEndpoint.getRuntimeSocketUrl())
         socket.addEventListener('message', (event) => {
           onMessage(JSON.parse(event.data as string) as RuntimeEvent)
         })
@@ -308,3 +329,5 @@ export type {
   RuntimeEvent,
   TransferRecord,
 }
+
+export { createBrowserBridge }

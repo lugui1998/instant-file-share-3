@@ -7,6 +7,7 @@ namespace InstantFileShare.Infrastructure;
 
 public sealed partial class CloudflaredSupervisor(FileLogStore logStore)
 {
+    private const string CloudflaredExecutableName = "cloudflared.exe";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly Regex QuickTunnelRegex = QuickTunnelRegexFactory();
     private readonly FileLogStore _logStore = logStore;
@@ -19,20 +20,14 @@ public sealed partial class CloudflaredSupervisor(FileLogStore logStore)
 
     public async Task<CloudflaredDetectionResult> DetectAsync(string? configuredPath, CancellationToken cancellationToken)
     {
-        var candidate = configuredPath;
-        var ownership = CloudflaredOwnership.External;
-
-        if (string.IsNullOrWhiteSpace(candidate) || !File.Exists(candidate))
-        {
-            candidate = await ResolveFromPathAsync(cancellationToken);
-            ownership = CloudflaredOwnership.External;
-        }
-
-        if (string.IsNullOrWhiteSpace(candidate) || !File.Exists(candidate))
-        {
-            candidate = ResolveFromWingetPackage();
-            ownership = CloudflaredOwnership.Winget;
-        }
+        var candidate = ResolveExecutableCandidate(
+            configuredPath,
+            Environment.GetEnvironmentVariable("PATH"),
+            Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.User),
+            Environment.GetEnvironmentVariable("PATH", EnvironmentVariableTarget.Machine),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+            Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86));
 
         if (string.IsNullOrWhiteSpace(candidate) || !File.Exists(candidate))
         {
@@ -40,10 +35,9 @@ public sealed partial class CloudflaredSupervisor(FileLogStore logStore)
         }
 
         var version = await ReadVersionAsync(candidate, cancellationToken);
-        if (!string.IsNullOrWhiteSpace(candidate) && candidate.Contains("WindowsApps", StringComparison.OrdinalIgnoreCase))
-        {
-            ownership = CloudflaredOwnership.Winget;
-        }
+        var ownership = LooksWingetManagedPath(candidate)
+            ? CloudflaredOwnership.Winget
+            : CloudflaredOwnership.External;
 
         return new CloudflaredDetectionResult(true, candidate, version, ownership, "cloudflared detected.");
     }
@@ -232,37 +226,28 @@ public sealed partial class CloudflaredSupervisor(FileLogStore logStore)
         }
     }
 
-    private static string? ResolveFromWingetPackage()
+    internal static string? ResolveExecutableCandidate(
+        string? configuredPath,
+        string? processPath,
+        string? userPath,
+        string? machinePath,
+        string? localAppDataPath,
+        string? programFilesPath,
+        string? programFilesX86Path)
     {
-        try
+        if (!string.IsNullOrWhiteSpace(configuredPath) && File.Exists(configuredPath))
         {
-            var packagesRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Microsoft",
-                "WinGet",
-                "Packages");
-
-            if (!Directory.Exists(packagesRoot))
-            {
-                return null;
-            }
-
-            var packageDirectory = Directory.EnumerateDirectories(packagesRoot, "Cloudflare.cloudflared_*")
-                .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault();
-
-            if (packageDirectory is null)
-            {
-                return null;
-            }
-
-            var executablePath = Path.Combine(packageDirectory, "cloudflared.exe");
-            return File.Exists(executablePath) ? executablePath : null;
+            return configuredPath;
         }
-        catch
+
+        var candidate = ResolveFromPathValues(processPath, userPath, machinePath);
+        if (!string.IsNullOrWhiteSpace(candidate))
         {
-            return null;
+            return candidate;
         }
+
+        candidate = ResolveFromKnownWingetLocations(localAppDataPath, programFilesPath, programFilesX86Path);
+        return string.IsNullOrWhiteSpace(candidate) ? null : candidate;
     }
 
     private async Task StartManagedProcessAsync(string executablePath, string arguments, CancellationToken cancellationToken)
@@ -284,12 +269,138 @@ public sealed partial class CloudflaredSupervisor(FileLogStore logStore)
         return output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
     }
 
-    private async Task<string?> ResolveFromPathAsync(CancellationToken cancellationToken)
+    internal static string? ResolveFromPathValues(params string?[] pathValues)
     {
-        var process = StartProcess("where.exe", "cloudflared", redirectOutput: true);
-        await process.WaitForExitAsync(cancellationToken);
-        var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-        return output.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        foreach (var pathValue in pathValues)
+        {
+            foreach (var directory in EnumeratePathEntries(pathValue))
+            {
+                try
+                {
+                    var candidate = Path.Combine(directory, CloudflaredExecutableName);
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private static IEnumerable<string> EnumeratePathEntries(string? pathValue)
+    {
+        if (string.IsNullOrWhiteSpace(pathValue))
+        {
+            yield break;
+        }
+
+        foreach (var rawEntry in pathValue.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var trimmedEntry = rawEntry.Trim().Trim('"');
+            if (string.IsNullOrWhiteSpace(trimmedEntry))
+            {
+                continue;
+            }
+
+            string expandedEntry;
+            try
+            {
+                expandedEntry = Environment.ExpandEnvironmentVariables(trimmedEntry);
+            }
+            catch
+            {
+                continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(expandedEntry))
+            {
+                yield return expandedEntry;
+            }
+        }
+    }
+
+    private static string? ResolveFromKnownWingetLocations(
+        string? localAppDataPath,
+        string? programFilesPath,
+        string? programFilesX86Path)
+    {
+        foreach (var rootPath in new[] { localAppDataPath, programFilesPath, programFilesX86Path }.Where(path => !string.IsNullOrWhiteSpace(path)))
+        {
+            var wingetLinksCandidate = TryCombineExistingPath(rootPath!, "Microsoft", "WinGet", "Links", CloudflaredExecutableName)
+                ?? TryCombineExistingPath(rootPath!, "WinGet", "Links", CloudflaredExecutableName);
+            if (!string.IsNullOrWhiteSpace(wingetLinksCandidate))
+            {
+                return wingetLinksCandidate;
+            }
+
+            var wingetPackageCandidate = ResolveFromWingetPackageRoot(Path.Combine(rootPath!, "Microsoft", "WinGet", "Packages"))
+                ?? ResolveFromWingetPackageRoot(Path.Combine(rootPath!, "WinGet", "Packages"));
+            if (!string.IsNullOrWhiteSpace(wingetPackageCandidate))
+            {
+                return wingetPackageCandidate;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? ResolveFromWingetPackageRoot(string packagesRoot)
+    {
+        try
+        {
+            if (!Directory.Exists(packagesRoot))
+            {
+                return null;
+            }
+
+            var packageDirectory = Directory.EnumerateDirectories(packagesRoot, "Cloudflare.cloudflared_*")
+                .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+
+            if (packageDirectory is null)
+            {
+                return null;
+            }
+
+            var directExecutablePath = Path.Combine(packageDirectory, CloudflaredExecutableName);
+            if (File.Exists(directExecutablePath))
+            {
+                return directExecutablePath;
+            }
+
+            return Directory.EnumerateFiles(packageDirectory, CloudflaredExecutableName, SearchOption.AllDirectories)
+                .OrderBy(path => path.Count(character => character == Path.DirectorySeparatorChar || character == Path.AltDirectorySeparatorChar))
+                .FirstOrDefault();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? TryCombineExistingPath(string rootPath, params string[] segments)
+    {
+        try
+        {
+            var candidate = Path.Combine([rootPath, .. segments]);
+            return File.Exists(candidate) ? candidate : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool LooksWingetManagedPath(string path)
+    {
+        return path.Contains($"{Path.DirectorySeparatorChar}WinGet{Path.DirectorySeparatorChar}Links{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
+               path.Contains($"{Path.DirectorySeparatorChar}WinGet{Path.DirectorySeparatorChar}Packages{Path.DirectorySeparatorChar}", StringComparison.OrdinalIgnoreCase) ||
+               path.Contains("WindowsApps", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void StopProcess(Process? process)

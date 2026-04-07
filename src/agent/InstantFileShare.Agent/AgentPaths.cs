@@ -12,6 +12,8 @@ internal static class AgentPaths
 
     public static string GetLogsDirectory() => Path.Combine(GetAppDataDirectory(), "logs");
 
+    public static string GetBootstrapSettingsPath() => Path.Combine(GetAppDataDirectory(), "bootstrap-settings.json");
+
     public static string GetRepositoryRoot()
     {
         var current = new DirectoryInfo(AppContext.BaseDirectory);

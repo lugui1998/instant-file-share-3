@@ -6,6 +6,7 @@ internal sealed class AgentStartupHostedService(
     AgentApplicationOptions applicationOptions,
     AgentStartupOptions startupOptions,
     InitialAppSettingsSnapshot initialSettings,
+    IBootstrapSettingsSnapshotStore bootstrapSettingsSnapshotStore,
     IStartupRegistrationService startupRegistrationService,
     IContextMenuRegistrationService contextMenuRegistrationService,
     NotificationService notificationService,
@@ -15,6 +16,8 @@ internal sealed class AgentStartupHostedService(
 {
     public async Task StartAsync(CancellationToken cancellationToken)
     {
+        await bootstrapSettingsSnapshotStore.WriteAsync(initialSettings.Settings, cancellationToken);
+
         if (!applicationOptions.RunStartupTasks)
         {
             return;

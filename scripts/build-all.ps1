@@ -7,6 +7,11 @@ $shellSourcePath = Join-Path $repoRoot 'src\shell-extension'
 $shellBuildPath = Join-Path $repoRoot 'build\shell-extension'
 $dotnetBuildOutputRoot = Join-Path $repoRoot 'artifacts\tmp-build-out'
 $dotnetTestOutputRoot = Join-Path $repoRoot 'artifacts\tmp-test-out'
+$runningOnWindows = $env:OS -eq 'Windows_NT'
+if (Get-Variable -Name IsWindows -ErrorAction SilentlyContinue) {
+  $runningOnWindows = [bool]$IsWindows
+}
+$npmCommand = if ($runningOnWindows) { 'npm.cmd' } else { 'npm' }
 
 function Invoke-ExternalCommand {
   param(
@@ -55,10 +60,10 @@ Invoke-ExternalCommand `
 Write-Host 'Installing UI dependencies...'
 Push-Location $uiPath
 try {
-  Invoke-ExternalCommand -Description 'UI dependency install' -FilePath 'npm' -Arguments @('install')
+  Invoke-ExternalCommand -Description 'UI dependency install' -FilePath $npmCommand -Arguments @('install')
 
   Write-Host 'Building UI...'
-  Invoke-ExternalCommand -Description 'UI build' -FilePath 'npm' -Arguments @('run', 'build')
+  Invoke-ExternalCommand -Description 'UI build' -FilePath $npmCommand -Arguments @('run', 'build')
 } finally {
   Pop-Location
 }
