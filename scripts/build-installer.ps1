@@ -11,6 +11,7 @@ $uiStage = Join-Path $stageRoot 'ui'
 $uiPath = Join-Path $repoRoot 'src\ui'
 $uiPackageJsonPath = Join-Path $uiPath 'package.json'
 $publicShareDist = Join-Path $uiPath 'dist-public-share'
+$electronBuilderCommand = Join-Path $uiPath 'node_modules\.bin\electron-builder.cmd'
 $shellSourcePath = Join-Path $repoRoot 'src\shell-extension'
 $shellBuildPath = Join-Path $repoRoot 'build\shell-extension'
 $installerScript = Join-Path $repoRoot 'installer\InstantFileShare.iss'
@@ -133,7 +134,16 @@ try {
     throw "UI dependency install failed with exit code $LASTEXITCODE."
   }
 
-  & $npmCommand run package:win
+  & $npmCommand run build
+  if ($LASTEXITCODE -ne 0) {
+    throw "UI build failed with exit code $LASTEXITCODE."
+  }
+
+  if (-not (Test-Path $electronBuilderCommand)) {
+    throw "electron-builder executable not found at $electronBuilderCommand"
+  }
+
+  & $electronBuilderCommand '--win' 'dir' '--config.win.signAndEditExecutable=false'
   if ($LASTEXITCODE -ne 0) {
     throw "UI packaging failed with exit code $LASTEXITCODE."
   }
