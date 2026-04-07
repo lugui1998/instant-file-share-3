@@ -41,6 +41,7 @@ public interface IShareCoordinator
     Task<ReceiveLinkRecord?> ResolveReceiveLinkAsync(string token, CancellationToken cancellationToken);
     Task<ReceiveLinkRecord?> AddReceivedBytesAsync(string receiveLinkId, long bytesReceived, CancellationToken cancellationToken);
     Task RevokeShareAsync(string shareId, CancellationToken cancellationToken);
+    Task ShowShareInExplorerAsync(string shareId, CancellationToken cancellationToken);
     Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken);
     Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken);
     Task<IReadOnlyList<PublishProfile>> GetPublishProfilesAsync(CancellationToken cancellationToken);
@@ -85,6 +86,11 @@ public interface INotificationService
 public interface IUiLauncher
 {
     Task OpenDashboardAsync(CancellationToken cancellationToken);
+}
+
+public interface IExplorerLauncher
+{
+    Task OpenDirectoryAsync(string directoryPath, CancellationToken cancellationToken);
 }
 
 public interface IStartupRegistrationService

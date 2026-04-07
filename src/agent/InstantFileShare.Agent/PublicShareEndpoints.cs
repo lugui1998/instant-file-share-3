@@ -2,6 +2,7 @@ using System.IO.Compression;
 using System.Text;
 using InstantFileShare.Core;
 using Microsoft.AspNetCore.Http.Features;
+using RangeItemHeaderValue = Microsoft.Net.Http.Headers.RangeItemHeaderValue;
 
 namespace InstantFileShare.Agent;
 
@@ -525,8 +526,9 @@ internal static class PublicShareEndpoints
         var (clientSessionId, setCookie) = DownloadSessionManager.ResolveDownloadSession(context, share.Token);
         var clientFingerprint = RequestAddressResolver.BuildClientFingerprint(remoteAddress, userAgent);
         var requestedRange = allowRangeRequests ? context.Request.GetTypedHeaders().Range?.Ranges.FirstOrDefault() : null;
-        var initialBytesSent = requestedRange?.From ?? 0;
-        var countsTowardUsage = !context.Request.Headers.ContainsKey("Range");
+        var initialBytesSent = ResolveRangeStartOffset(file.Length, requestedRange);
+        var expectedTransferBytes = ResolveExpectedTransferBytes(file.Length, requestedRange);
+        var countsTowardUsage = true;
         usageSessionKey ??= transferKind == TransferKind.FolderFileDownload ? clientSessionId : null;
 
         var transfer = await coordinator.StartTransferAsync(
@@ -566,10 +568,10 @@ internal static class PublicShareEndpoints
                 }
 
                 var bytesSent = initialBytesSent + meteredStream.BytesRead;
-                var reachedEnd = bytesSent >= file.Length;
+                var completedRequestedBytes = meteredStream.BytesRead >= expectedTransferBytes;
                 var requestAborted = context.RequestAborted.IsCancellationRequested;
-                var paused = requestAborted && bytesSent > initialBytesSent && bytesSent < file.Length;
-                var succeeded = reachedEnd && !requestAborted;
+                var paused = requestAborted && meteredStream.BytesRead > 0 && !completedRequestedBytes;
+                var succeeded = completedRequestedBytes && !requestAborted;
                 var error = paused || succeeded
                     ? null
                     : "Connection closed before the transfer completed.";
@@ -899,6 +901,55 @@ internal static class PublicShareEndpoints
     private static bool IsCurrentDirectoryZipRequest(HttpRequest request)
     {
         return string.Equals(request.Query["download"], "zip", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static long ResolveRangeStartOffset(long fileLength, RangeItemHeaderValue? requestedRange)
+    {
+        if (requestedRange is null || fileLength <= 0)
+        {
+            return 0;
+        }
+
+        if (requestedRange.From is long rangeStart)
+        {
+            return Math.Clamp(rangeStart, 0, Math.Max(0, fileLength - 1));
+        }
+
+        if (requestedRange.To is long suffixLength)
+        {
+            return Math.Max(0, fileLength - Math.Min(fileLength, suffixLength));
+        }
+
+        return 0;
+    }
+
+    private static long ResolveExpectedTransferBytes(long fileLength, RangeItemHeaderValue? requestedRange)
+    {
+        if (fileLength <= 0)
+        {
+            return 0;
+        }
+
+        if (requestedRange is null)
+        {
+            return fileLength;
+        }
+
+        if (requestedRange.From is long rangeStart)
+        {
+            var normalizedStart = Math.Clamp(rangeStart, 0, Math.Max(0, fileLength - 1));
+            var normalizedEnd = requestedRange.To is long rangeEnd
+                ? Math.Clamp(rangeEnd, normalizedStart, Math.Max(0, fileLength - 1))
+                : fileLength - 1;
+            return normalizedEnd - normalizedStart + 1;
+        }
+
+        if (requestedRange.To is long suffixLength)
+        {
+            return Math.Min(fileLength, suffixLength);
+        }
+
+        return fileLength;
     }
 
     private static IReadOnlyList<ReceiveUploadCandidate> BuildReceiveUploadCandidates(IFormCollection form)

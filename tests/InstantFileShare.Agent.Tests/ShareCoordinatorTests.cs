@@ -39,7 +39,26 @@ public sealed class ShareCoordinatorTests
         Assert.Equal(0, savedSettings.SharesItemsPerPage);
         Assert.False(context.StartupRegistration.AppliedValue);
         Assert.NotNull(context.ContextMenuRegistration.AppliedSettings);
+        Assert.NotNull(context.BootstrapSettingsSnapshot.LastWrittenSettings);
+        Assert.Equal(savedSettings.LocalApiPort, context.BootstrapSettingsSnapshot.LastWrittenSettings!.LocalApiPort);
+        Assert.False(context.AgentLifecycleManager.RestartScheduled);
         Assert.Contains(context.RuntimeEvents, entry => entry.Type == RuntimeEventType.SettingsUpdated);
+    }
+
+    [Fact]
+    public async Task SaveSettingsAsync_SchedulesRestart_WhenListenerBindingsChange()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var currentSettings = await context.Store.GetSettingsAsync(CancellationToken.None);
+
+        await context.Coordinator.SaveSettingsAsync(currentSettings with
+        {
+            LocalApiPort = currentSettings.LocalApiPort + 1,
+        }, CancellationToken.None);
+
+        Assert.True(context.AgentLifecycleManager.RestartScheduled);
+        Assert.NotNull(context.BootstrapSettingsSnapshot.LastWrittenSettings);
+        Assert.Equal(currentSettings.LocalApiPort + 1, context.BootstrapSettingsSnapshot.LastWrittenSettings!.LocalApiPort);
     }
 
     [Fact]
@@ -167,6 +186,36 @@ public sealed class ShareCoordinatorTests
     }
 
     [Fact]
+    public async Task ShowShareInExplorerAsync_OpensContainingDirectory_ForFileShare()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var folderPath = Path.Combine(context.FilesDirectory, "docs");
+        Directory.CreateDirectory(folderPath);
+        var filePath = Path.Combine(folderPath, "guide.txt");
+        await File.WriteAllTextAsync(filePath, "guide");
+        var share = context.CreateFileShare("file-token", filePath);
+        await context.Store.AddShareAsync(share, CancellationToken.None);
+
+        await context.Coordinator.ShowShareInExplorerAsync(share.Id, CancellationToken.None);
+
+        Assert.Equal(folderPath, context.ExplorerLauncher.LastOpenedDirectoryPath);
+    }
+
+    [Fact]
+    public async Task ShowShareInExplorerAsync_OpensSharedFolder_ForFolderShare()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var folderPath = Path.Combine(context.FilesDirectory, "team-files");
+        Directory.CreateDirectory(folderPath);
+        var share = context.CreateFolderShare("folder-token", folderPath, "team-files");
+        await context.Store.AddShareAsync(share, CancellationToken.None);
+
+        await context.Coordinator.ShowShareInExplorerAsync(share.Id, CancellationToken.None);
+
+        Assert.Equal(folderPath, context.ExplorerLauncher.LastOpenedDirectoryPath);
+    }
+
+    [Fact]
     public async Task MarkTransferCompletedAsync_ForFolderFileDownloads_OnlyCountsUniqueUsageSession()
     {
         await using var context = await ShareCoordinatorTestContext.CreateAsync();
@@ -276,6 +325,94 @@ public sealed class ShareCoordinatorTests
             countsTowardUsage: false,
             usageSessionKey: null,
             error: null,
+            requesterName: null,
+            CancellationToken.None);
+
+        var persistedShare = await context.Store.GetShareByIdAsync(created.Share.Id, CancellationToken.None);
+
+        Assert.NotNull(persistedShare);
+        Assert.Equal(0, persistedShare!.UseCount);
+    }
+
+    [Fact]
+    public async Task MarkTransferCompletedAsync_IncrementsUseCount_ForSuccessfulPartialRangeDownload()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var filePath = Path.Combine(context.FilesDirectory, "range.txt");
+        await File.WriteAllTextAsync(filePath, "hello world");
+        var created = await context.Coordinator.CreateShareAsync(new CreateShareRequest(filePath, PublishMode.Manual), CancellationToken.None);
+
+        var transfer = await context.Coordinator.StartTransferAsync(
+            created.Share.Id,
+            created.Share.Token,
+            created.Share.FileName,
+            TransferKind.FileDownload,
+            clientSessionId: "session-1",
+            clientFingerprint: "fp",
+            remoteAddress: "127.0.0.1",
+            totalBytes: 11,
+            bytesSent: 0,
+            requesterName: null,
+            CancellationToken.None);
+
+        await context.Coordinator.MarkTransferCompletedAsync(
+            transfer.Id,
+            created.Share.Id,
+            created.Share.Token,
+            created.Share.FileName,
+            TransferKind.FileDownload,
+            remoteAddress: "127.0.0.1",
+            bytesSent: 4,
+            totalBytes: 11,
+            paused: false,
+            succeeded: true,
+            countsTowardUsage: true,
+            usageSessionKey: null,
+            error: null,
+            requesterName: null,
+            CancellationToken.None);
+
+        var persistedShare = await context.Store.GetShareByIdAsync(created.Share.Id, CancellationToken.None);
+
+        Assert.NotNull(persistedShare);
+        Assert.Equal(1, persistedShare!.UseCount);
+    }
+
+    [Fact]
+    public async Task MarkTransferCompletedAsync_DoesNotIncrementUseCount_ForFailedPartialRangeDownload()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var filePath = Path.Combine(context.FilesDirectory, "range-failed.txt");
+        await File.WriteAllTextAsync(filePath, "hello world");
+        var created = await context.Coordinator.CreateShareAsync(new CreateShareRequest(filePath, PublishMode.Manual), CancellationToken.None);
+
+        var transfer = await context.Coordinator.StartTransferAsync(
+            created.Share.Id,
+            created.Share.Token,
+            created.Share.FileName,
+            TransferKind.FileDownload,
+            clientSessionId: "session-1",
+            clientFingerprint: "fp",
+            remoteAddress: "127.0.0.1",
+            totalBytes: 11,
+            bytesSent: 0,
+            requesterName: null,
+            CancellationToken.None);
+
+        await context.Coordinator.MarkTransferCompletedAsync(
+            transfer.Id,
+            created.Share.Id,
+            created.Share.Token,
+            created.Share.FileName,
+            TransferKind.FileDownload,
+            remoteAddress: "127.0.0.1",
+            bytesSent: 4,
+            totalBytes: 11,
+            paused: false,
+            succeeded: false,
+            countsTowardUsage: true,
+            usageSessionKey: null,
+            error: "Connection closed before the transfer completed.",
             requesterName: null,
             CancellationToken.None);
 
@@ -431,6 +568,9 @@ public sealed class ShareCoordinatorTests
             SqliteShareStore store,
             ShareCoordinator coordinator,
             TestRuntimeEventStream runtimeEventStream,
+            TestBootstrapSettingsSnapshotStore bootstrapSettingsSnapshot,
+            TestAgentLifecycleManager agentLifecycleManager,
+            TestExplorerLauncher explorerLauncher,
             TestStartupRegistrationService startupRegistration,
             TestContextMenuRegistrationService contextMenuRegistration)
         {
@@ -439,6 +579,9 @@ public sealed class ShareCoordinatorTests
             Store = store;
             Coordinator = coordinator;
             RuntimeEventStream = runtimeEventStream;
+            BootstrapSettingsSnapshot = bootstrapSettingsSnapshot;
+            AgentLifecycleManager = agentLifecycleManager;
+            ExplorerLauncher = explorerLauncher;
             StartupRegistration = startupRegistration;
             ContextMenuRegistration = contextMenuRegistration;
         }
@@ -448,6 +591,9 @@ public sealed class ShareCoordinatorTests
         public SqliteShareStore Store { get; }
         public ShareCoordinator Coordinator { get; }
         public TestRuntimeEventStream RuntimeEventStream { get; }
+        public TestBootstrapSettingsSnapshotStore BootstrapSettingsSnapshot { get; }
+        public TestAgentLifecycleManager AgentLifecycleManager { get; }
+        public TestExplorerLauncher ExplorerLauncher { get; }
         public TestStartupRegistrationService StartupRegistration { get; }
         public TestContextMenuRegistrationService ContextMenuRegistration { get; }
         public IReadOnlyList<RuntimeEvent> RuntimeEvents => RuntimeEventStream.Events;
@@ -485,11 +631,17 @@ public sealed class ShareCoordinatorTests
             }, CancellationToken.None);
 
             var runtimeEventStream = new TestRuntimeEventStream();
+            var bootstrapSettingsSnapshot = new TestBootstrapSettingsSnapshotStore();
+            var agentLifecycleManager = new TestAgentLifecycleManager();
+            var explorerLauncher = new TestExplorerLauncher();
             var startupRegistration = new TestStartupRegistrationService();
             var contextMenuRegistration = new TestContextMenuRegistrationService();
             var coordinator = new ShareCoordinator(
                 store,
                 runtimeEventStream,
+                bootstrapSettingsSnapshot,
+                agentLifecycleManager,
+                explorerLauncher,
                 new CloudflaredSupervisor(new FileLogStore(logsDirectory)),
                 new ExternalAddressResolver(new HttpClient(new StubHttpMessageHandler())),
                 startupRegistration,
@@ -502,6 +654,9 @@ public sealed class ShareCoordinatorTests
                 store,
                 coordinator,
                 runtimeEventStream,
+                bootstrapSettingsSnapshot,
+                agentLifecycleManager,
+                explorerLauncher,
                 startupRegistration,
                 contextMenuRegistration);
         }
@@ -601,6 +756,38 @@ public sealed class ShareCoordinatorTests
         {
             await Task.CompletedTask;
             yield break;
+        }
+    }
+
+    private sealed class TestBootstrapSettingsSnapshotStore : IBootstrapSettingsSnapshotStore
+    {
+        public AppSettings? LastWrittenSettings { get; private set; }
+
+        public Task WriteAsync(AppSettings settings, CancellationToken cancellationToken)
+        {
+            LastWrittenSettings = settings;
+            return Task.CompletedTask;
+        }
+    }
+
+    private sealed class TestAgentLifecycleManager : IAgentLifecycleManager
+    {
+        public bool RestartScheduled { get; private set; }
+
+        public void ScheduleRestart()
+        {
+            RestartScheduled = true;
+        }
+    }
+
+    private sealed class TestExplorerLauncher : IExplorerLauncher
+    {
+        public string? LastOpenedDirectoryPath { get; private set; }
+
+        public Task OpenDirectoryAsync(string directoryPath, CancellationToken cancellationToken)
+        {
+            LastOpenedDirectoryPath = directoryPath;
+            return Task.CompletedTask;
         }
     }
 

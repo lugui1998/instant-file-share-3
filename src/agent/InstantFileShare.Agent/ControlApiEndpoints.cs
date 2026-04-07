@@ -25,6 +25,23 @@ internal static class ControlApiEndpoints
             return Results.NoContent();
         });
 
+        endpoints.MapPost("/api/shares/{shareId}/show-in-explorer", async (string shareId, IShareCoordinator coordinator, CancellationToken cancellationToken) =>
+        {
+            try
+            {
+                await coordinator.ShowShareInExplorerAsync(shareId, cancellationToken);
+                return Results.NoContent();
+            }
+            catch (KeyNotFoundException exception)
+            {
+                return Results.NotFound(exception.Message);
+            }
+            catch (DirectoryNotFoundException exception)
+            {
+                return Results.BadRequest(exception.Message);
+            }
+        });
+
         endpoints.MapGet("/api/settings", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
             Results.Ok(await coordinator.GetSettingsAsync(cancellationToken)));
 

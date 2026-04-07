@@ -19,10 +19,12 @@
     ]
   },
   "include": [
+    "shared/**/*.ts",
     "src/**/*.ts",
     "src/**/*.vue"
   ],
   "exclude": [
+    "shared/**/*.spec.ts",
     "src/**/*.spec.ts"
   ]
 }

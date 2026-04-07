@@ -169,6 +169,7 @@ public sealed class PipeCommandHandlerTests
         }
 
         public Task<IReadOnlyList<ShareRecord>> ListSharesAsync(CancellationToken cancellationToken) => throw new NotSupportedException();
+        public Task ShowShareInExplorerAsync(string shareId, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<ShareRecord?> ResolveDownloadAsync(string token, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<ReceiveLinkRecord?> ResolveReceiveLinkAsync(string token, CancellationToken cancellationToken) => throw new NotSupportedException();
         public Task<ReceiveLinkRecord?> AddReceivedBytesAsync(string receiveLinkId, long bytesReceived, CancellationToken cancellationToken) => throw new NotSupportedException();

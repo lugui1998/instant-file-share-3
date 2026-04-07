@@ -8,18 +8,36 @@ $appName = 'Instant File Share'
 $agentExe = 'InstantFileShare.Agent.exe'
 $dashboardExe = 'Instant File Share.exe'
 $runKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
-$contextMenuKeyPath = 'HKCU:\Software\Classes\*\shell\InstantFileShare'
+$contextMenuKeyPaths = @(
+  'HKCU:\Software\Classes\*\shell\InstantFileShare',
+  'HKCU:\Software\Classes\Directory\shell\InstantFileShareFolderZip',
+  'HKCU:\Software\Classes\Directory\Background\shell\InstantFileShareFolderZip',
+  'HKCU:\Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip',
+  'HKCU:\Software\Classes\Directory\shell\InstantFileShareFolderBrowse',
+  'HKCU:\Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse',
+  'HKCU:\Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse',
+  'HKCU:\Software\Classes\Directory\shell\InstantFileShareFolderReceive',
+  'HKCU:\Software\Classes\Directory\Background\shell\InstantFileShareFolderReceive',
+  'HKCU:\Software\Classes\DesktopBackground\Shell\InstantFileShareFolderReceive'
+)
 $appDataPath = Join-Path $env:LOCALAPPDATA 'InstantFileShare'
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) "$appName.lnk"
 $programShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) "$appName\Dashboard.lnk"
 
 function Stop-AppProcess {
-  param([Parameter(Mandatory = $true)][string]$Name)
+  param(
+    [Parameter(Mandatory = $true)][string]$Name,
+    [switch]$ProcessTree
+  )
 
   $processes = Get-Process -Name ([System.IO.Path]::GetFileNameWithoutExtension($Name)) -ErrorAction SilentlyContinue
   foreach ($process in $processes) {
     if ($PSCmdlet.ShouldProcess($process.ProcessName, 'Stop process')) {
-      Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      if ($ProcessTree) {
+        & $env:ComSpec /c "taskkill /PID $($process.Id) /T /F" *> $null
+      } else {
+        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+      }
     }
   }
 }
@@ -94,7 +112,7 @@ function Get-InstallLocation {
   return Split-Path -Path $uninstallerPath -Parent
 }
 
-Stop-AppProcess -Name $agentExe
+Stop-AppProcess -Name $agentExe -ProcessTree
 Stop-AppProcess -Name $dashboardExe
 
 $uninstallEntry = Get-UninstallEntry
@@ -119,9 +137,11 @@ if (Test-Path $runKeyPath) {
   }
 }
 
-if (Test-Path $contextMenuKeyPath) {
-  if ($PSCmdlet.ShouldProcess($contextMenuKeyPath, 'Remove file context menu registration')) {
-    Remove-Item $contextMenuKeyPath -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($contextMenuKeyPath in $contextMenuKeyPaths) {
+  if (Test-Path $contextMenuKeyPath) {
+    if ($PSCmdlet.ShouldProcess($contextMenuKeyPath, 'Remove context menu registration')) {
+      Remove-Item $contextMenuKeyPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
   }
 }
 

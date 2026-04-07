@@ -5,7 +5,7 @@
 #define CloudflaredWingetArgs "install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements --disable-interactivity"
 
 #ifndef AppVersion
-  #define AppVersion "1.0.0"
+  #define AppVersion "1.0.1"
 #endif
 
 #ifndef StageDir
@@ -83,11 +83,23 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
-    Exec(ExpandConstant('{cmd}'), '/c taskkill /IM "{#AgentExe}" /F', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    Exec(ExpandConstant('{cmd}'), '/c taskkill /IM "{#AgentExe}" /F /T', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
     Exec(ExpandConstant('{cmd}'), '/c taskkill /IM "{#DashboardExe}" /F', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
-    Exec(ExpandConstant('{app}\instant_file_share_shell.exe'), '--unregister-context-menu', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    Exec(ExpandConstant('{app}\instant_file_share_shell.exe'), '--unregister-file-context-menu', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    Exec(ExpandConstant('{app}\instant_file_share_shell.exe'), '--unregister-folder-zip-context-menu', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    Exec(ExpandConstant('{app}\instant_file_share_shell.exe'), '--unregister-folder-browse-context-menu', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    Exec(ExpandConstant('{app}\instant_file_share_shell.exe'), '--unregister-folder-receive-context-menu', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
     RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'InstantFileShare');
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\*\shell\InstantFileShare');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\shell\InstantFileShareFolderZip');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\Background\shell\InstantFileShareFolderZip');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\shell\InstantFileShareFolderBrowse');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\Background\shell\InstantFileShareFolderBrowse');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\DesktopBackground\Shell\InstantFileShareFolderBrowse');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\shell\InstantFileShareFolderReceive');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\Background\shell\InstantFileShareFolderReceive');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\DesktopBackground\Shell\InstantFileShareFolderReceive');
     DelTree(ExpandConstant('{localappdata}\InstantFileShare'), True, True, True);
   end;
 end;

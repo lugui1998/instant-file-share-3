@@ -98,7 +98,7 @@ For a fully clean local uninstall before reinstalling, use:
 powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-clean.ps1
 ```
 
-That script stops the installed processes, runs the installer uninstaller when present, removes startup/context-menu registration, and deletes the local app data under `%LOCALAPPDATA%\InstantFileShare`.
+That script stops the agent process tree so agent-owned child processes such as app-started `cloudflared` are also terminated, runs the installer uninstaller when present, removes startup/context-menu registration for every file/folder verb, and deletes the local app data under `%LOCALAPPDATA%\InstantFileShare`.
 
 ## Current MVP behaviors
 
@@ -106,6 +106,8 @@ That script stops the installed processes, runs the installer uninstaller when p
 - Explorer integration communicates through the `InstantFileShare.Agent` named pipe
 - the shell helper forwards the selected file path to the agent; share creation stays in the agent
 - public downloads are served from `/s/{token}` and `/s/{token}/{slug}`
+- receive links are served from `/r/{token}` and can upload files directly into a selected local folder
+- folder shares support both browse-style links and ZIP downloads, depending on the chosen share mode
 - quick tunnel, managed Cloudflare, and manual publish modes are modeled in the agent
 - runtime data is exposed through the local REST API and `/ws/runtime`
 
@@ -115,14 +117,12 @@ That script stops the installed processes, runs the installer uninstaller when p
 - the app serves live file references only
 - `Start on login` is applied through the current-user Windows Run key
 - file context-menu integration depends on the built shell helper and appears in the classic Windows 11 menu under `Show more options`
+- managed Cloudflare tunnel tokens are still stored locally to support automatic relaunch; that local exposure remains an accepted temporary tradeoff
 
 ## To-Do
 
-- receiving files
 - remote upload/server-hosted mode for 24/7 hosting and multi-user support
 - protected links
 - E2E encryption
-- folder sharing
-- ZIP generation and compression
 - QR code support
 - HTTPS certificate management

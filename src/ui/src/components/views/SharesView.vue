@@ -12,6 +12,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   copyShare: [share: AgentShareRecord]
   revokeShare: [shareId: string]
+  showInExplorer: [shareId: string]
 }>()
 
 const activeShares = computed(() => props.shares.filter((share) => share.state === 'Active'))
@@ -85,6 +86,20 @@ watch([activeShares, () => props.itemsPerPage], () => {
             <td>{{ share.useCount }}<span v-if="share.maxUses"> / {{ share.maxUses }}</span></td>
             <td>{{ formatTimestamp(share.createdAtUtc) }}</td>
             <td class="actions-cell">
+              <button
+                aria-label="Show in Explorer"
+                class="secondary compact-icon-button"
+                title="Show in Explorer"
+                type="button"
+                @click="emit('showInExplorer', share.id)"
+              >
+                <svg aria-hidden="true" class="folder-icon" viewBox="0 0 16 16">
+                  <path
+                    d="M1.75 3A1.75 1.75 0 0 1 3.5 1.25h2.18c.4 0 .78.14 1.08.4l1.02.85h4.72A1.75 1.75 0 0 1 14.25 4v1.02a1.7 1.7 0 0 1-.34 1.02l-1.9 2.54A1.75 1.75 0 0 1 10.62 9H3.5A1.75 1.75 0 0 1 1.75 7.25V3Zm1.5.1v4.15c0 .14.11.25.25.25h7.12c.08 0 .15-.04.2-.1l1.9-2.54V4a.25.25 0 0 0-.25-.25H7.5l-1.43-1.2a.24.24 0 0 0-.16-.05H3.5a.25.25 0 0 0-.25.25Zm1.6 7.15a.75.75 0 0 1 .75-.75h5.9a.75.75 0 0 1 0 1.5h-5.9a.75.75 0 0 1-.75-.75Z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
               <button
                 aria-label="Copy link"
                 class="secondary compact-icon-button"

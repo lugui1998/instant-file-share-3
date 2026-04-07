@@ -1,4 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import { createAgentEndpointState } from '../shared/agentEndpoint.js'
+import { readBootstrapLocalApiPort } from './bootstrapSettings.js'
 
 type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
 type ShareKind = 'File' | 'Folder'
@@ -90,10 +92,10 @@ type CloudflaredDashboardStatus = {
   loginMessage: string
 }
 
-const agentBaseUrl = 'http://127.0.0.1:46430'
+const agentEndpoint = createAgentEndpointState(readBootstrapLocalApiPort())
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`${agentBaseUrl}${path}`, {
+  const response = await fetch(`${agentEndpoint.getAgentBaseUrl()}${path}`, {
     headers: {
       'Content-Type': 'application/json',
       ...(init?.headers ?? {}),
@@ -129,12 +131,19 @@ contextBridge.exposeInMainWorld('instantFileShare', {
     }),
   revokeShare: (shareId: string) =>
     request<void>(`/api/shares/${shareId}`, { method: 'DELETE' }),
+  showShareInExplorer: (shareId: string) =>
+    request<void>(`/api/shares/${shareId}/show-in-explorer`, { method: 'POST' }),
   getSettings: () => request<Record<string, unknown>>('/api/settings'),
-  saveSettings: (settings: Record<string, unknown>) =>
-    request<void>('/api/settings', {
+  saveSettings: async (settings: Record<string, unknown>) => {
+    await request<void>('/api/settings', {
       method: 'PUT',
       body: JSON.stringify({ settings }),
-    }),
+    })
+
+    if (typeof settings.localApiPort === 'number') {
+      agentEndpoint.setLocalApiPort(settings.localApiPort)
+    }
+  },
   getPublishProfiles: () => request<Array<Record<string, unknown>>>('/api/publish-profiles'),
   savePublishProfile: (mode: PublishMode, profile: Record<string, unknown>) =>
     request<void>(`/api/publish-profiles/${mode}`, {
@@ -160,18 +169,53 @@ contextBridge.exposeInMainWorld('instantFileShare', {
       body: JSON.stringify({ domain, subdomain }),
     }),
   getAgentLogs: async () => {
-    const response = await fetch(`${agentBaseUrl}/api/logs/agent`)
+    const response = await fetch(`${agentEndpoint.getAgentBaseUrl()}/api/logs/agent`)
     return response.text()
   },
   getCloudflareLogs: async () => {
-    const response = await fetch(`${agentBaseUrl}/api/logs/cloudflare`)
+    const response = await fetch(`${agentEndpoint.getAgentBaseUrl()}/api/logs/cloudflare`)
     return response.text()
   },
   connectRuntime: (onMessage: (event: RuntimeEvent) => void) => {
-    const socket = new WebSocket('ws://127.0.0.1:46430/ws/runtime')
-    socket.addEventListener('message', (event) => {
-      onMessage(JSON.parse(event.data as string) as RuntimeEvent)
-    })
-    return () => socket.close()
+    let socket: WebSocket | null = null
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+    let disposed = false
+
+    const connect = () => {
+      if (disposed) {
+        return
+      }
+
+      socket = new WebSocket(agentEndpoint.getRuntimeSocketUrl())
+      socket.addEventListener('message', (event) => {
+        onMessage(JSON.parse(event.data as string) as RuntimeEvent)
+      })
+      socket.addEventListener('error', () => {
+        socket?.close()
+      })
+      socket.addEventListener('close', () => {
+        socket = null
+        if (disposed || reconnectTimer) {
+          return
+        }
+
+        reconnectTimer = setTimeout(() => {
+          reconnectTimer = null
+          connect()
+        }, 2000)
+      })
+    }
+
+    connect()
+
+    return () => {
+      disposed = true
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer)
+        reconnectTimer = null
+      }
+
+      socket?.close()
+    }
   },
 })

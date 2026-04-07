@@ -10,6 +10,9 @@ namespace InstantFileShare.Agent;
 internal sealed class ShareCoordinator(
     IShareStore shareStore,
     IRuntimeEventStream runtimeEventStream,
+    IBootstrapSettingsSnapshotStore bootstrapSettingsSnapshotStore,
+    IAgentLifecycleManager agentLifecycleManager,
+    IExplorerLauncher explorerLauncher,
     CloudflaredSupervisor cloudflaredSupervisor,
     ExternalAddressResolver externalAddressResolver,
     IStartupRegistrationService startupRegistrationService,
@@ -154,6 +157,14 @@ internal sealed class ShareCoordinator(
 
     public Task<IReadOnlyList<ShareRecord>> ListSharesAsync(CancellationToken cancellationToken) => shareStore.ListSharesAsync(cancellationToken);
 
+    public async Task ShowShareInExplorerAsync(string shareId, CancellationToken cancellationToken)
+    {
+        var share = await shareStore.GetShareByIdAsync(shareId, cancellationToken)
+            ?? throw new KeyNotFoundException("The selected share no longer exists.");
+
+        await explorerLauncher.OpenDirectoryAsync(GetShareDirectoryPath(share), cancellationToken);
+    }
+
     public async Task<ShareRecord?> ResolveDownloadAsync(string token, CancellationToken cancellationToken)
     {
         var share = await shareStore.GetShareByTokenAsync(token, cancellationToken);
@@ -213,6 +224,22 @@ internal sealed class ShareCoordinator(
         }
 
         return share with { LastAccessedAtUtc = DateTimeOffset.UtcNow };
+    }
+
+    private static string GetShareDirectoryPath(ShareRecord share)
+    {
+        if (share.ShareKind == ShareKind.Folder)
+        {
+            return share.FilePath;
+        }
+
+        var directoryPath = Path.GetDirectoryName(share.FilePath);
+        if (string.IsNullOrWhiteSpace(directoryPath))
+        {
+            throw new DirectoryNotFoundException("The share location could not be resolved.");
+        }
+
+        return directoryPath;
     }
 
     public async Task<ReceiveLinkRecord?> ResolveReceiveLinkAsync(string token, CancellationToken cancellationToken)
@@ -321,6 +348,7 @@ internal sealed class ShareCoordinator(
 
     public async Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken)
     {
+        var currentSettings = await shareStore.GetSettingsAsync(cancellationToken);
         settings = settings with
         {
             PublicTokenLength = NormalizePublicTokenLength(settings.PublicTokenLength),
@@ -332,10 +360,16 @@ internal sealed class ShareCoordinator(
             SharesItemsPerPage = Math.Max(0, settings.SharesItemsPerPage),
         };
         await shareStore.SaveSettingsAsync(settings, cancellationToken);
+        await bootstrapSettingsSnapshotStore.WriteAsync(settings, cancellationToken);
         startupRegistrationService.Apply(settings.StartOnLogin);
         await contextMenuRegistrationService.ApplyAsync(settings, cancellationToken);
         await PruneTransfersAsync(cancellationToken);
         await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.SettingsUpdated, DateTimeOffset.UtcNow, settings), cancellationToken);
+
+        if (RequiresListenerRestart(currentSettings, settings))
+        {
+            agentLifecycleManager.ScheduleRestart();
+        }
     }
 
     public Task<IReadOnlyList<PublishProfile>> GetPublishProfilesAsync(CancellationToken cancellationToken)
@@ -589,7 +623,7 @@ internal sealed class ShareCoordinator(
         await shareStore.SaveTransferAsync(completedTransfer, cancellationToken);
 
         var share = await shareStore.GetShareByIdAsync(shareId, cancellationToken);
-        if (share is not null && countsTowardUsage && succeeded && bytesSent >= totalBytes)
+        if (share is not null && countsTowardUsage && succeeded)
         {
             var shouldIncrementUseCount = completedTransfer.TransferKind != TransferKind.FolderFileDownload ||
                 string.IsNullOrWhiteSpace(usageSessionKey) ||
@@ -895,6 +929,8 @@ internal sealed class ShareCoordinator(
             BindAddress = "127.0.0.1",
             CloudflareHostname = hostname,
             CloudflareTunnelName = tunnelName,
+            // Managed tunnel tokens remain locally persisted for automatic relaunch.
+            // This is an accepted local-exposure tradeoff until credential hardening lands.
             CloudflareToken = await FetchManagedTunnelTokenAsync(detection.Path, tunnelName, cancellationToken),
         }, cancellationToken);
 
@@ -1249,6 +1285,13 @@ internal sealed class ShareCoordinator(
     private static long NormalizeReceiveMaxTotalBytes(long maxTotalBytes)
     {
         return Math.Max(0, maxTotalBytes);
+    }
+
+    private static bool RequiresListenerRestart(AppSettings currentSettings, AppSettings nextSettings)
+    {
+        return currentSettings.LocalApiPort != nextSettings.LocalApiPort ||
+               currentSettings.ManualPublicPort != nextSettings.ManualPublicPort ||
+               !string.Equals(currentSettings.ManualBindAddress, nextSettings.ManualBindAddress, StringComparison.OrdinalIgnoreCase);
     }
 
     private static FolderZipCompressionLevel NormalizeFolderZipCompressionLevel(FolderZipCompressionLevel level)

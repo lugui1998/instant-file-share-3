@@ -238,6 +238,12 @@ async function revokeShare(shareId: string) {
   }, 'Failed to revoke the share.')
 }
 
+async function showShareInExplorer(shareId: string) {
+  await runAction(async () => {
+    await agentBridge.showShareInExplorer(shareId)
+  }, 'Failed to open the shared folder in Explorer.')
+}
+
 function buildShareUrl(share: AgentShareRecord) {
   const baseUrl = share.publicBaseUrl.replace(/\/$/, '')
   if (share.shareKind === 'Folder') {
@@ -692,6 +698,7 @@ watch(
         @copy-share="copyShareLink"
         @create-share="createShare"
         @revoke-share="revokeShare"
+        @show-in-explorer="showShareInExplorer"
       />
 
       <TransfersView

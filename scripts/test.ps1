@@ -10,3 +10,12 @@ Write-Host "Using isolated test output: $testOutputRoot"
 dotnet test `
   (Join-Path $repoRoot 'InstantFileShare.slnx') `
   -p:BaseOutputPath="$testOutputRoot\"
+
+Write-Host 'Running UI tests...'
+Push-Location (Join-Path $repoRoot 'src\ui')
+try {
+  npm test
+}
+finally {
+  Pop-Location
+}

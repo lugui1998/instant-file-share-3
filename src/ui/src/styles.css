@@ -358,6 +358,11 @@ td {
   height: 1rem;
 }
 
+.folder-icon {
+  width: 1rem;
+  height: 1rem;
+}
+
 .progress-cell {
   min-width: 240px;
 }

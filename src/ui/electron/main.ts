@@ -2,12 +2,18 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, type OpenDialogOptions } fro
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { createAgentEndpointState } from '../shared/agentEndpoint.js'
+import { readBootstrapLocalApiPort } from './bootstrapSettings.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const rendererUrl = process.env.VITE_DEV_SERVER_URL ?? 'http://127.0.0.1:5173'
-const agentBaseUrl = 'http://127.0.0.1:46430'
 const windowsAppId = 'com.instantfileshare.app'
+const agentEndpoint = createAgentEndpointState(readBootstrapLocalApiPort())
 let mainWindow: BrowserWindow | null = null
+
+function refreshAgentEndpoint() {
+  agentEndpoint.setLocalApiPort(readBootstrapLocalApiPort())
+}
 
 function getRendererEntry() {
   return path.join(app.getAppPath(), 'dist', 'index.html')
@@ -26,8 +32,10 @@ function getInstalledAgentPath() {
 }
 
 async function isAgentReachable() {
+  refreshAgentEndpoint()
+
   try {
-    const response = await fetch(`${agentBaseUrl}/`)
+    const response = await fetch(`${agentEndpoint.getAgentBaseUrl()}/`)
     return response.ok
   } catch {
     return false
