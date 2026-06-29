@@ -99,8 +99,8 @@ GitHub Actions runs the Windows CI workflow on pull requests and pushes to `main
 Releases are automatic for version tags matching `v*.*.*`:
 
 ```powershell
-git tag v1.0.1
-git push origin v1.0.1
+git tag v1.0.2
+git push origin v1.0.2
 ```
 
 The release workflow runs tests, installs Inno Setup on the GitHub runner, runs `scripts\build-installer.ps1`, uploads the installer and staged package ZIP as workflow artifacts, and creates or updates the matching GitHub release.
