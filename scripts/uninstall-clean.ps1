@@ -1,5 +1,7 @@
 [CmdletBinding(SupportsShouldProcess = $true)]
-param()
+param(
+  [switch]$UninstallCloudflared
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -20,7 +22,11 @@ $contextMenuKeyPaths = @(
   'HKCU:\Software\Classes\Directory\Background\shell\InstantFileShareFolderReceive',
   'HKCU:\Software\Classes\DesktopBackground\Shell\InstantFileShareFolderReceive'
 )
-$appDataPath = Join-Path $env:LOCALAPPDATA 'InstantFileShare'
+$appDataPaths = @(
+  (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'InstantFileShare'),
+  (Join-Path ([Environment]::GetFolderPath('ApplicationData')) $appName),
+  (Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) $appName)
+) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
 $desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) "$appName.lnk"
 $programShortcut = Join-Path ([Environment]::GetFolderPath('Programs')) "$appName\Dashboard.lnk"
 
@@ -112,6 +118,18 @@ function Get-InstallLocation {
   return Split-Path -Path $uninstallerPath -Parent
 }
 
+function Uninstall-CloudflaredWithWinget {
+  $wingetCommand = Get-Command winget -ErrorAction SilentlyContinue
+  if ($null -eq $wingetCommand) {
+    Write-Warning 'winget was not found; cloudflared was not uninstalled.'
+    return
+  }
+
+  if ($PSCmdlet.ShouldProcess('Cloudflare.cloudflared', 'Uninstall with winget')) {
+    & $wingetCommand.Source uninstall --id Cloudflare.cloudflared -e --disable-interactivity
+  }
+}
+
 Stop-AppProcess -Name $agentExe -ProcessTree
 Stop-AppProcess -Name $dashboardExe
 
@@ -145,10 +163,16 @@ foreach ($contextMenuKeyPath in $contextMenuKeyPaths) {
   }
 }
 
-if (Test-Path $appDataPath) {
-  if ($PSCmdlet.ShouldProcess($appDataPath, 'Remove application data')) {
-    Remove-Item $appDataPath -Recurse -Force -ErrorAction SilentlyContinue
+foreach ($appDataPath in $appDataPaths) {
+  if (Test-Path $appDataPath) {
+    if ($PSCmdlet.ShouldProcess($appDataPath, 'Remove application data')) {
+      Remove-Item $appDataPath -Recurse -Force -ErrorAction SilentlyContinue
+    }
   }
+}
+
+if ($UninstallCloudflared) {
+  Uninstall-CloudflaredWithWinget
 }
 
 foreach ($shortcut in @($desktopShortcut, $programShortcut)) {

@@ -36,6 +36,7 @@ public interface IShareCoordinator
 {
     Task<(ShareRecord Share, string Url)> CreateShareAsync(CreateShareRequest request, CancellationToken cancellationToken);
     Task<(ReceiveLinkRecord ReceiveLink, string Url)> CreateReceiveLinkAsync(CreateReceiveLinkRequest request, CancellationToken cancellationToken);
+    Task ReconcilePersistedSharesAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<ShareRecord>> ListSharesAsync(CancellationToken cancellationToken);
     Task<ShareRecord?> ResolveDownloadAsync(string token, CancellationToken cancellationToken);
     Task<ReceiveLinkRecord?> ResolveReceiveLinkAsync(string token, CancellationToken cancellationToken);

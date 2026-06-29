@@ -169,9 +169,16 @@ public sealed class PublicShareHelpersTests
             State = ShareState.Active,
         };
 
-        var page = new PublicSharePageModelFactory().BuildFolderBrowsePage(context, share, resolvedEntry!, entries);
+        var page = new PublicSharePageModelFactory().BuildFolderBrowsePage(
+            context,
+            share,
+            resolvedEntry!,
+            entries,
+            new AppSettings { FolderBrowsePageTitle = "Browse files from Lu" });
 
         Assert.Equal("folder", page.Kind);
+        Assert.Equal("Browse files from Lu", page.Title);
+        Assert.Equal(Defaults.RepositoryUrl, page.RepositoryUrl);
         Assert.NotNull(page.Folder);
         Assert.Equal(2, page.Folder!.Breadcrumbs.Count);
         Assert.Contains(page.Folder.Entries, entry => entry.IsParentDirectory);
@@ -214,8 +221,10 @@ public sealed class PublicShareHelpersTests
         var zipPage = factory.BuildFolderZipMetadataPage(context, share with { ShareKind = ShareKind.Folder, FilePath = tempDirectory.RootPath }, resolvedRoot!);
 
         Assert.Equal("file", filePage.Kind);
+        Assert.Equal(Defaults.RepositoryUrl, filePage.RepositoryUrl);
         Assert.NotNull(filePage.File);
         Assert.Equal("zip", zipPage.Kind);
+        Assert.Equal(Defaults.RepositoryUrl, zipPage.RepositoryUrl);
         Assert.NotNull(zipPage.Zip);
     }
 
@@ -242,9 +251,15 @@ public sealed class PublicShareHelpersTests
             State = ReceiveLinkState.Active,
         };
 
-        var page = new PublicSharePageModelFactory().BuildReceivePage(context, receiveLink);
+        var page = new PublicSharePageModelFactory().BuildReceivePage(
+            context,
+            receiveLink,
+            new AppSettings { ReceivePageTitle = "Send files to Lu" });
 
         Assert.Equal("receive", page.Kind);
+        Assert.Equal("Send files to Lu", page.Title);
+        Assert.Equal(Defaults.RepositoryUrl, page.RepositoryUrl);
+        Assert.DoesNotContain("drop", page.Description);
         Assert.NotNull(page.Receive);
         Assert.Equal("drop", page.Receive!.TargetName);
         Assert.Equal("https://share.example.test/r/receive-token", page.Receive.UploadUrl);

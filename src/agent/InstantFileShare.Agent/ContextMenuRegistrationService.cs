@@ -30,7 +30,6 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
     public async Task ApplyAsync(AppSettings settings, CancellationToken cancellationToken)
     {
         var helperPath = ResolveShellHelperPath();
-        var desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
         var folderBackgroundTargetPath = ResolveFolderBackgroundTargetPath();
         var desktopBackgroundTargetPath = ResolveDesktopBackgroundTargetPath(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory));
         if (helperPath is not null)
@@ -83,8 +82,7 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             FolderZipVerbKeyPath,
             FolderZipCommandKeyPath,
             "Share Folder as ZIP",
-            $"\"{helperPath}\" --share-folder-zip \"%1\"",
-            desktopFolderExclusionAppliesTo);
+            $"\"{helperPath}\" --share-folder-zip \"%1\"");
         ApplyDirectRegistration(
             settings.AddFolderZipContextMenuButton,
             FolderZipBackgroundVerbKeyPath,
@@ -102,8 +100,7 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             FolderBrowseVerbKeyPath,
             FolderBrowseCommandKeyPath,
             "Share Folder for Browsing",
-            $"\"{helperPath}\" --share-folder-browse \"%1\"",
-            desktopFolderExclusionAppliesTo);
+            $"\"{helperPath}\" --share-folder-browse \"%1\"");
         ApplyDirectRegistration(
             settings.AddFolderBrowseContextMenuButton,
             FolderBrowseBackgroundVerbKeyPath,
@@ -121,8 +118,7 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             FolderReceiveVerbKeyPath,
             FolderReceiveCommandKeyPath,
             "Receive files here",
-            $"\"{helperPath}\" --receive-here \"%1\"",
-            desktopFolderExclusionAppliesTo);
+            $"\"{helperPath}\" --receive-here \"%1\"");
         ApplyDirectRegistration(
             settings.AddFolderReceiveContextMenuButton,
             FolderReceiveBackgroundVerbKeyPath,
@@ -135,17 +131,6 @@ internal sealed class ContextMenuRegistrationService : IContextMenuRegistrationS
             DesktopFolderReceiveBackgroundCommandKeyPath,
             "Receive files here",
             $"\"{helperPath}\" --receive-here \"{desktopBackgroundTargetPath}\"");
-    }
-
-    internal static string? BuildDesktopFolderExclusionAppliesTo(string? desktopFolderPath)
-    {
-        if (string.IsNullOrWhiteSpace(desktopFolderPath))
-        {
-            return null;
-        }
-
-        var normalizedPath = Path.GetFullPath(Path.TrimEndingDirectorySeparator(desktopFolderPath));
-        return $"System.ItemPathDisplay:<>=\"{normalizedPath}\"";
     }
 
     internal static string ResolveDesktopBackgroundTargetPath(string? desktopFolderPath)

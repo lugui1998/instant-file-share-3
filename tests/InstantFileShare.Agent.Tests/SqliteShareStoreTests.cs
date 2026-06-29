@@ -19,6 +19,8 @@ public sealed class SqliteShareStoreTests
         var profiles = await store.GetPublishProfilesAsync(CancellationToken.None);
 
         Assert.Equal(PublishMode.QuickTunnel, settings.DefaultPublishMode);
+        Assert.Equal(Defaults.CreateDefaultFolderBrowsePageTitle(), settings.FolderBrowsePageTitle);
+        Assert.Equal(Defaults.CreateDefaultReceivePageTitle(), settings.ReceivePageTitle);
         Assert.Null(cloudflaredState.ExecutablePath);
         Assert.Equal(3, profiles.Count);
         Assert.Contains(profiles, profile => profile.Mode == PublishMode.QuickTunnel && profile.Enabled);
@@ -439,6 +441,8 @@ public sealed class SqliteShareStoreTests
             DefaultPublishMode = PublishMode.ManagedCloudflare,
             PublicTokenLength = 22,
             ManualBaseUrl = "https://example.com",
+            FolderBrowsePageTitle = "Browse files from Team",
+            ReceivePageTitle = "Upload to Team",
             ShowLogs = true,
         };
         var cloudflaredState = new CloudflaredState
@@ -458,6 +462,8 @@ public sealed class SqliteShareStoreTests
 
         Assert.Equal(settings.DefaultPublishMode, storedSettings.DefaultPublishMode);
         Assert.Equal(settings.PublicTokenLength, storedSettings.PublicTokenLength);
+        Assert.Equal("Browse files from Team", storedSettings.FolderBrowsePageTitle);
+        Assert.Equal("Upload to Team", storedSettings.ReceivePageTitle);
         Assert.Equal(settings.ManualBaseUrl, storedSettings.ManualBaseUrl);
         Assert.True(storedSettings.ShowLogs);
         Assert.Equal(cloudflaredState.ExecutablePath, storedState.ExecutablePath);

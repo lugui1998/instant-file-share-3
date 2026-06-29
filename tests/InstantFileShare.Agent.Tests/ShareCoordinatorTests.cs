@@ -21,6 +21,8 @@ public sealed class ShareCoordinatorTests
             FolderZipCompressionLevel = (FolderZipCompressionLevel)999,
             DefaultReceiveExpiryValue = -1,
             DefaultReceiveMaxTotalBytes = 0,
+            FolderBrowsePageTitle = "  ",
+            ReceivePageTitle = "  ",
             HistoryRetentionValue = -5,
             HistoryItemsPerPage = -2,
             SharesItemsPerPage = -7,
@@ -34,6 +36,8 @@ public sealed class ShareCoordinatorTests
         Assert.Equal(FolderZipCompressionLevel.Optimal, savedSettings.FolderZipCompressionLevel);
         Assert.Equal(0, savedSettings.DefaultReceiveExpiryValue);
         Assert.Equal(0, savedSettings.DefaultReceiveMaxTotalBytes);
+        Assert.Equal(Defaults.CreateDefaultFolderBrowsePageTitle(), savedSettings.FolderBrowsePageTitle);
+        Assert.Equal(Defaults.CreateDefaultReceivePageTitle(), savedSettings.ReceivePageTitle);
         Assert.Equal(0, savedSettings.HistoryRetentionValue);
         Assert.Equal(0, savedSettings.HistoryItemsPerPage);
         Assert.Equal(0, savedSettings.SharesItemsPerPage);
@@ -140,6 +144,25 @@ public sealed class ShareCoordinatorTests
         Assert.NotNull(persisted);
         Assert.Equal(ShareState.Broken, persisted!.State);
         Assert.Contains(context.RuntimeEvents, entry => entry.Type == RuntimeEventType.ShareUpdated);
+    }
+
+    [Fact]
+    public async Task ReconcilePersistedSharesAsync_MarksChangedFileAsBrokenBeforeAnyDownload()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var filePath = Path.Combine(context.FilesDirectory, "changed.txt");
+        await File.WriteAllTextAsync(filePath, "before");
+        var created = await context.Coordinator.CreateShareAsync(new CreateShareRequest(filePath, PublishMode.Manual), CancellationToken.None);
+        await File.WriteAllTextAsync(filePath, "after");
+
+        await context.Coordinator.ReconcilePersistedSharesAsync(CancellationToken.None);
+
+        var persisted = await context.Store.GetShareByIdAsync(created.Share.Id, CancellationToken.None);
+
+        Assert.NotNull(persisted);
+        Assert.Equal(ShareState.Broken, persisted!.State);
+        Assert.Equal("The shared file changed after the link was created.", persisted.BrokenReason);
+        Assert.Contains(context.RuntimeEvents, entry => entry.Type == RuntimeEventType.ShareUpdated && entry.Payload is ShareRecord share && share.Id == created.Share.Id);
     }
 
     [Fact]

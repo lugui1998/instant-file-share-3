@@ -10,6 +10,7 @@ export type PublicSharePageModel = {
   description: string
   canonicalUrl: string
   siteName: string
+  repositoryUrl: string
   primaryActionLabel?: string | null
   primaryActionUrl?: string | null
   file?: PublicShareFileModel | null

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { agentBridge } from '../agentBridge'
+import { REPOSITORY_URL } from '../../shared/repository'
 import type { ViewKey } from '../types/ui'
 
 const props = defineProps<{
@@ -47,7 +48,7 @@ onMounted(() => {
 <template>
   <aside class="rail">
     <div class="brand">
-      <p class="eyebrow">Instant File Share</p>
+      <a class="eyebrow brand-link" :href="REPOSITORY_URL" target="_blank" rel="noreferrer">Instant File Share</a>
       <p v-if="appVersion" class="version-label">v{{ appVersion }}</p>
     </div>
 

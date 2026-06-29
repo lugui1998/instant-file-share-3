@@ -23,6 +23,7 @@ internal sealed class PublicSharePageModelFactory
             Description: description,
             CanonicalUrl: BuildCurrentUrl(context),
             SiteName: "Instant File Share",
+            RepositoryUrl: Defaults.RepositoryUrl,
             PrimaryActionLabel: $"{actionVerb} file",
             PrimaryActionUrl: BuildCurrentUrl(context),
             File: new PublicShareFileModel(
@@ -52,6 +53,7 @@ internal sealed class PublicSharePageModelFactory
             Description: description,
             CanonicalUrl: BuildCurrentUrl(context),
             SiteName: "Instant File Share",
+            RepositoryUrl: Defaults.RepositoryUrl,
             PrimaryActionLabel: "Download ZIP",
             PrimaryActionUrl: BuildCurrentUrl(context),
             File: null,
@@ -66,11 +68,9 @@ internal sealed class PublicSharePageModelFactory
         HttpContext context,
         ShareRecord share,
         FolderSharePathResolver.ResolvedEntry directoryEntry,
-        IReadOnlyList<FolderSharePathResolver.DirectoryEntry> entries)
+        IReadOnlyList<FolderSharePathResolver.DirectoryEntry> entries,
+        AppSettings settings)
     {
-        var title = string.IsNullOrEmpty(directoryEntry.RelativePath)
-            ? share.FileName
-            : directoryEntry.Name;
         var description = $"Browse {share.FileName}. Shared via Instant File Share.";
         var browseRootPath = $"/s/{share.Token}/{Uri.EscapeDataString(share.Slug ?? string.Empty)}";
         var currentRelativePath = directoryEntry.RelativePath;
@@ -81,10 +81,11 @@ internal sealed class PublicSharePageModelFactory
 
         return new PublicSharePageModel(
             Kind: "folder",
-            Title: title,
+            Title: ResolveFolderBrowsePageTitle(settings),
             Description: description,
             CanonicalUrl: BuildCurrentUrl(context),
             SiteName: "Instant File Share",
+            RepositoryUrl: Defaults.RepositoryUrl,
             PrimaryActionLabel: showDownloadAll ? "Download All" : null,
             PrimaryActionUrl: downloadAllUrl,
             File: null,
@@ -100,17 +101,18 @@ internal sealed class PublicSharePageModelFactory
             Receive: null);
     }
 
-    public PublicSharePageModel BuildReceivePage(HttpContext context, ReceiveLinkRecord receiveLink)
+    public PublicSharePageModel BuildReceivePage(HttpContext context, ReceiveLinkRecord receiveLink, AppSettings settings)
     {
         var remainingBytes = receiveLink.MaxTotalBytes > 0
             ? Math.Max(0, receiveLink.MaxTotalBytes - receiveLink.BytesReceived)
             : 0;
         return new PublicSharePageModel(
             Kind: "receive",
-            Title: $"Upload to {receiveLink.TargetDisplayName}",
-            Description: $"Upload files to {receiveLink.TargetDisplayName}. Shared via Instant File Share.",
+            Title: ResolveReceivePageTitle(settings),
+            Description: "Upload files through Instant File Share.",
             CanonicalUrl: BuildCurrentUrl(context),
             SiteName: "Instant File Share",
+            RepositoryUrl: Defaults.RepositoryUrl,
             PrimaryActionLabel: null,
             PrimaryActionUrl: null,
             File: null,
@@ -122,6 +124,20 @@ internal sealed class PublicSharePageModelFactory
                 remainingBytes,
                 receiveLink.MaxTotalBytes > 0 ? FormatFileSize(remainingBytes) : "Unlimited",
                 receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
+    }
+
+    private static string ResolveReceivePageTitle(AppSettings settings)
+    {
+        return string.IsNullOrWhiteSpace(settings.ReceivePageTitle)
+            ? Defaults.CreateDefaultReceivePageTitle()
+            : settings.ReceivePageTitle.Trim();
+    }
+
+    private static string ResolveFolderBrowsePageTitle(AppSettings settings)
+    {
+        return string.IsNullOrWhiteSpace(settings.FolderBrowsePageTitle)
+            ? Defaults.CreateDefaultFolderBrowsePageTitle()
+            : settings.FolderBrowsePageTitle.Trim();
     }
 
     private static IReadOnlyList<PublicShareBreadcrumb> BuildBreadcrumbs(string fileName, string browseRootPath, string currentRelativePath)

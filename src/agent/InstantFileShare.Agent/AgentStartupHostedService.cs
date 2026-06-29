@@ -25,6 +25,7 @@ internal sealed class AgentStartupHostedService(
 
         startupRegistrationService.Apply(initialSettings.Settings.StartOnLogin);
         await contextMenuRegistrationService.ApplyAsync(initialSettings.Settings, cancellationToken);
+        await shareCoordinator.ReconcilePersistedSharesAsync(cancellationToken);
 
         notificationService.OpenDashboardRequested += HandleOpenDashboardRequested;
 

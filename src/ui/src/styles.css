@@ -90,11 +90,21 @@ button.danger {
 }
 
 .eyebrow {
+  display: block;
   margin: 0;
   color: #ffb57d;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   font-size: 0.72rem;
+}
+
+.brand-link {
+  text-decoration: none;
+}
+
+.brand-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .version-label {
