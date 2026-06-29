@@ -6,6 +6,7 @@ internal sealed record PublicSharePageModel(
     string Description,
     string CanonicalUrl,
     string SiteName,
+    string RepositoryUrl,
     string? PrimaryActionLabel,
     string? PrimaryActionUrl,
     PublicShareFileModel? File,

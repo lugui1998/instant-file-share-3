@@ -73,6 +73,8 @@ type AppSettings = {
   defaultReceiveExpiryValue: number
   defaultReceiveExpiryUnit: ExpiryUnit
   defaultReceiveMaxTotalBytes: number
+  folderBrowsePageTitle: string
+  receivePageTitle: string
   friendlyUrlsEnabled: boolean
   sendMetadataToCrawlers: boolean
   openImagesInBrowser: boolean

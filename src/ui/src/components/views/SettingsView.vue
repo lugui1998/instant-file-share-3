@@ -153,7 +153,7 @@ function resolveReceiveMaxTotalUnit(value: number) {
             v-model="settingsDraft.startOnLogin"
             input-id="start-on-login"
             label="Start on login"
-            help-text="Launches the server automatically when you sign in to Windows."
+            help-text="Launches the server automatically when you sign in."
           />
           <ToggleField
             v-model="settingsDraft.openDashboardOnStart"
@@ -266,87 +266,6 @@ function resolveReceiveMaxTotalUnit(value: number) {
           </div>
         </SettingCard>
 
-        <SettingCard class="settings-card" eyebrow="Cloudflare">
-          <div class="managed-block">
-            <strong v-if="cloudflaredStatus?.installedVersion">Version: {{ cloudflaredStatus.installedVersion }}</strong>
-            <strong v-else>cloudflared not installed</strong>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="cloudflared-path">Cloudflared path override</label>
-              <HelpTooltip text="Lets you point the server at a specific cloudflared executable instead of relying on PATH detection." />
-            </div>
-            <button
-              id="cloudflared-path"
-              class="file-picker-field"
-              type="button"
-              @click="emit('pickCloudflaredPath')"
-            >
-              <span class="file-picker-value" :class="{ empty: !settingsDraft.cloudflaredPathOverride }">
-                {{ settingsDraft.cloudflaredPathOverride || 'Using auto-detected cloudflared path' }}
-              </span>
-            </button>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="managed-domain">Domain</label>
-              <HelpTooltip text="Choose which Cloudflare-managed domain should host your public links." />
-            </div>
-            <select id="managed-domain" v-model="selectedDomain" :disabled="!availableDomains.length">
-              <option value="" disabled>Select a domain</option>
-              <option v-for="domain in availableDomains" :key="domain.zoneId" :value="domain.name">
-                {{ domain.name }}
-              </option>
-            </select>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="managed-subdomain">Subdomain</label>
-              <HelpTooltip text="Subdomain prefix to use under the selected domain for managed Cloudflare sharing." />
-            </div>
-            <input id="managed-subdomain" v-model="managedSubdomain" placeholder="share" />
-          </div>
-
-          <div v-if="managedAvailability" class="managed-block">
-            <strong>{{ managedAvailability.hostname }}</strong>
-            <span>{{ managedAvailability.message }}</span>
-          </div>
-
-          <div class="card-actions column">
-            <button
-              v-if="!cloudflaredStatus?.installed"
-              class="secondary"
-              type="button"
-              @click="emit('installCloudflared')"
-            >
-              Install with winget
-            </button>
-            <button
-              v-if="cloudflaredStatus?.updateAvailable"
-              class="secondary"
-              type="button"
-              @click="emit('updateCloudflared')"
-            >
-              Update cloudflared
-            </button>
-            <button class="primary" type="button" @click="emit('toggleCloudflareLogin')">
-              {{ cloudflareLoginLabel }}
-            </button>
-            <button class="primary" type="button" @click="emit('createManagedTunnel')">Save</button>
-          </div>
-        </SettingCard>
-
-        <SettingCard class="settings-card" eyebrow="Debug">
-          <ToggleField
-            v-model="settingsDraft.showLogs"
-            input-id="show-logs"
-            label="Show logs"
-            help-text="Shows the log views in the sidebar so you can inspect server and cloudflared output."
-          />
-        </SettingCard>
       </div>
     </section>
 
@@ -434,6 +353,18 @@ function resolveReceiveMaxTotalUnit(value: number) {
 
           <div class="field">
             <div class="field-label-row">
+              <label for="folder-browse-page-title">Browse page title</label>
+              <HelpTooltip text="Controls the main title shown on public folder browsing pages. Leave it blank to use this Windows user's default title." />
+            </div>
+            <input
+              id="folder-browse-page-title"
+              v-model="settingsDraft.folderBrowsePageTitle"
+              placeholder="Browse files"
+            />
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
               <label for="folder-share-capability-policy">Folder share mode</label>
               <HelpTooltip text="Choose whether a new folder share only exposes the selected mode, or also allows the secondary ZIP/browse route." />
             </div>
@@ -491,6 +422,18 @@ function resolveReceiveMaxTotalUnit(value: number) {
         <SettingCard class="settings-card" eyebrow="Receiving">
           <div class="field">
             <div class="field-label-row">
+              <label for="receive-page-title">Upload page title</label>
+              <HelpTooltip text="Controls the main title shown on public receive pages. Leave it blank to use this Windows user's default title." />
+            </div>
+            <input
+              id="receive-page-title"
+              v-model="settingsDraft.receivePageTitle"
+              placeholder="Upload files"
+            />
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
               <label for="default-receive-expiry-value">Receive link expiry</label>
               <HelpTooltip text="Sets the default lifetime for new receive links created through the Explorer context menu. Use 0 to keep them from expiring automatically." />
             </div>
@@ -541,6 +484,88 @@ function resolveReceiveMaxTotalUnit(value: number) {
             input-id="folder-receive-context-button"
             label="Folder context menu: Receive files here"
             help-text="Adds a folder context-menu action that creates a public receive link bound to that folder."
+          />
+        </SettingCard>
+
+        <SettingCard class="settings-card" eyebrow="Cloudflare">
+          <div class="managed-block">
+            <strong v-if="cloudflaredStatus?.installedVersion">Version: {{ cloudflaredStatus.installedVersion }}</strong>
+            <strong v-else>cloudflared not installed</strong>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="cloudflared-path">Cloudflared path override</label>
+              <HelpTooltip text="Lets you point the server at a specific cloudflared executable instead of relying on PATH detection." />
+            </div>
+            <button
+              id="cloudflared-path"
+              class="file-picker-field"
+              type="button"
+              @click="emit('pickCloudflaredPath')"
+            >
+              <span class="file-picker-value" :class="{ empty: !settingsDraft.cloudflaredPathOverride }">
+                {{ settingsDraft.cloudflaredPathOverride || 'Using auto-detected cloudflared path' }}
+              </span>
+            </button>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="managed-domain">Domain</label>
+              <HelpTooltip text="Choose which Cloudflare-managed domain should host your public links." />
+            </div>
+            <select id="managed-domain" v-model="selectedDomain" :disabled="!availableDomains.length">
+              <option value="" disabled>Select a domain</option>
+              <option v-for="domain in availableDomains" :key="domain.zoneId" :value="domain.name">
+                {{ domain.name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="managed-subdomain">Subdomain</label>
+              <HelpTooltip text="Subdomain prefix to use under the selected domain for managed Cloudflare sharing." />
+            </div>
+            <input id="managed-subdomain" v-model="managedSubdomain" placeholder="share" />
+          </div>
+
+          <div v-if="managedAvailability" class="managed-block">
+            <strong>{{ managedAvailability.hostname }}</strong>
+            <span>{{ managedAvailability.message }}</span>
+          </div>
+
+          <div class="card-actions column">
+            <button
+              v-if="!cloudflaredStatus?.installed"
+              class="secondary"
+              type="button"
+              @click="emit('installCloudflared')"
+            >
+              Install with winget
+            </button>
+            <button
+              v-if="cloudflaredStatus?.updateAvailable"
+              class="secondary"
+              type="button"
+              @click="emit('updateCloudflared')"
+            >
+              Update cloudflared
+            </button>
+            <button class="primary" type="button" @click="emit('toggleCloudflareLogin')">
+              {{ cloudflareLoginLabel }}
+            </button>
+            <button class="primary" type="button" @click="emit('createManagedTunnel')">Save</button>
+          </div>
+        </SettingCard>
+
+        <SettingCard class="settings-card" eyebrow="Debug">
+          <ToggleField
+            v-model="settingsDraft.showLogs"
+            input-id="show-logs"
+            label="Show logs"
+            help-text="Shows the log views in the sidebar so you can inspect server and cloudflared output."
           />
         </SettingCard>
       </div>

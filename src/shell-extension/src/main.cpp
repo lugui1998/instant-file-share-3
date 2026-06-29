@@ -183,17 +183,6 @@ namespace
         return buffer;
     }
 
-    std::wstring BuildDesktopFolderExclusionAppliesTo()
-    {
-        const auto desktopDirectoryPath = GetDesktopDirectoryPath();
-        if (desktopDirectoryPath.empty())
-        {
-            return {};
-        }
-
-        return L"System.ItemPathDisplay:<>=\"" + desktopDirectoryPath + L"\"";
-    }
-
     std::wstring ResolveDesktopBackgroundTargetToken()
     {
         const auto desktopDirectoryPath = GetDesktopDirectoryPath();
@@ -515,9 +504,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--register-folder-zip-context-menu")
     {
-        const auto desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo();
         const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
-        if (!RegisterContextMenu(kFolderZipVerbKeyPath, kFolderZipCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%1", errorMessage, desktopFolderExclusionAppliesTo) ||
+        if (!RegisterContextMenu(kFolderZipVerbKeyPath, kFolderZipCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%1", errorMessage) ||
             !RegisterContextMenu(kFolderZipBackgroundVerbKeyPath, kFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%V", errorMessage) ||
             !RegisterContextMenu(kDesktopFolderZipBackgroundVerbKeyPath, kDesktopFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", desktopBackgroundTargetToken, errorMessage))
         {
@@ -541,9 +529,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--register-folder-browse-context-menu")
     {
-        const auto desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo();
         const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
-        if (!RegisterContextMenu(kFolderBrowseVerbKeyPath, kFolderBrowseCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%1", errorMessage, desktopFolderExclusionAppliesTo) ||
+        if (!RegisterContextMenu(kFolderBrowseVerbKeyPath, kFolderBrowseCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%1", errorMessage) ||
             !RegisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, kFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%V", errorMessage) ||
             !RegisterContextMenu(kDesktopFolderBrowseBackgroundVerbKeyPath, kDesktopFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", desktopBackgroundTargetToken, errorMessage))
         {
@@ -567,9 +554,8 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--register-folder-receive-context-menu")
     {
-        const auto desktopFolderExclusionAppliesTo = BuildDesktopFolderExclusionAppliesTo();
         const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
-        if (!RegisterContextMenu(kFolderReceiveVerbKeyPath, kFolderReceiveCommandKeyPath, L"Receive files here", L"--receive-here", L"%1", errorMessage, desktopFolderExclusionAppliesTo) ||
+        if (!RegisterContextMenu(kFolderReceiveVerbKeyPath, kFolderReceiveCommandKeyPath, L"Receive files here", L"--receive-here", L"%1", errorMessage) ||
             !RegisterContextMenu(kFolderReceiveBackgroundVerbKeyPath, kFolderReceiveBackgroundCommandKeyPath, L"Receive files here", L"--receive-here", L"%V", errorMessage) ||
             !RegisterContextMenu(kDesktopFolderReceiveBackgroundVerbKeyPath, kDesktopFolderReceiveBackgroundCommandKeyPath, L"Receive files here", L"--receive-here", desktopBackgroundTargetToken, errorMessage))
         {

@@ -3,6 +3,7 @@
 #define AgentExe "InstantFileShare.Agent.exe"
 #define DashboardExe "Instant File Share.exe"
 #define CloudflaredWingetArgs "install --id Cloudflare.cloudflared -e --accept-source-agreements --accept-package-agreements --disable-interactivity"
+#define CloudflaredWingetUninstallArgs "uninstall --id Cloudflare.cloudflared -e --disable-interactivity"
 
 #ifndef AppVersion
   #define AppVersion "1.0.1"
@@ -55,6 +56,7 @@ Filename: "{app}\{#AgentExe}"; Parameters: "--open-dashboard --installer-first-r
 var
   WingetAvailabilityChecked: Boolean;
   WingetAvailable: Boolean;
+  UninstallCloudflared: Boolean;
 
 function IsWingetAvailable: Boolean;
 var
@@ -75,6 +77,33 @@ begin
   end;
 
   Result := WingetAvailable;
+end;
+
+function ShouldUninstallCloudflared: Boolean;
+begin
+  Result := False;
+  if UninstallSilent then
+  begin
+    Exit;
+  end;
+
+  if not IsWingetAvailable then
+  begin
+    Exit;
+  end;
+
+  Result :=
+    MsgBox(
+      'Do you also want to uninstall cloudflared?' #13#13
+        'This optional dependency may be used by other applications and will be kept unless you choose Yes.',
+      mbConfirmation,
+      MB_YESNO or MB_DEFBUTTON2) = IDYES;
+end;
+
+function InitializeUninstall: Boolean;
+begin
+  Result := True;
+  UninstallCloudflared := ShouldUninstallCloudflared;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -101,5 +130,11 @@ begin
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\Directory\Background\shell\InstantFileShareFolderReceive');
     RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Classes\DesktopBackground\Shell\InstantFileShareFolderReceive');
     DelTree(ExpandConstant('{localappdata}\InstantFileShare'), True, True, True);
+    DelTree(ExpandConstant('{userappdata}\{#AppName}'), True, True, True);
+    DelTree(ExpandConstant('{localappdata}\{#AppName}'), True, True, True);
+    if UninstallCloudflared then
+    begin
+      Exec(ExpandConstant('{cmd}'), '/c winget {#CloudflaredWingetUninstallArgs}', '', SW_HIDE, ewWaitUntilTerminated, ExitCode);
+    end;
   end;
 end;

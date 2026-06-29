@@ -56,6 +56,7 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal("text/html; charset=utf-8", response.Content.Headers.ContentType?.ToString());
         Assert.Contains("window.__IFS_PUBLIC_SHARE__", body);
         Assert.Contains("\"kind\":\"file\"", body);
+        Assert.Contains("\"repositoryUrl\":\"https://github.com/lugui1998/instant-file-share-3\"", body);
         Assert.Contains("og:title", body);
     }
 
@@ -67,6 +68,7 @@ public sealed class AgentHttpIntegrationTests
             var rootPath = Path.Combine(context.FilesDirectory, "team-files");
             Directory.CreateDirectory(Path.Combine(rootPath, "docs"));
             await File.WriteAllTextAsync(Path.Combine(rootPath, "docs", "guide.txt"), "guide");
+            await context.Store.SaveSettingsAsync(context.Settings with { FolderBrowsePageTitle = "Browse files from Desk" }, CancellationToken.None);
             await context.Store.AddShareAsync(context.CreateFolderShare("folder-token", rootPath, "team-files"), CancellationToken.None);
         });
 
@@ -76,6 +78,9 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/html; charset=utf-8", response.Content.Headers.ContentType?.ToString());
         Assert.Contains("\"kind\":\"folder\"", body);
+        Assert.Contains("\"title\":\"Browse files from Desk\"", body);
+        Assert.Contains("\"repositoryUrl\":\"https://github.com/lugui1998/instant-file-share-3\"", body);
+        Assert.DoesNotContain("\"title\":\"docs\"", body);
         Assert.Contains("guide.txt", body);
         Assert.Contains("/s/folder-token/team-files/docs/guide.txt", body);
     }
@@ -328,6 +333,7 @@ public sealed class AgentHttpIntegrationTests
         {
             var dropPath = Path.Combine(context.FilesDirectory, "drop");
             Directory.CreateDirectory(dropPath);
+            await context.Store.SaveSettingsAsync(context.Settings with { ReceivePageTitle = "Upload to Desk" }, CancellationToken.None);
             await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
         });
 
@@ -337,6 +343,8 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("text/html; charset=utf-8", response.Content.Headers.ContentType?.ToString());
         Assert.Contains("\"kind\":\"receive\"", body);
+        Assert.Contains("\"title\":\"Upload to Desk\"", body);
+        Assert.DoesNotContain("Upload to drop", body);
         Assert.Contains("window.__IFS_PUBLIC_SHARE__", body);
     }
 

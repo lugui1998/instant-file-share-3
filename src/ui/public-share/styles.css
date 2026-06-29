@@ -57,11 +57,23 @@ a {
 
 .public-shell__eyebrow,
 .label {
+  display: block;
   margin: 0 0 8px;
   color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 0.14em;
   font-size: 0.78rem;
+}
+
+.public-shell__brand-link,
+.public-shell__inline-link {
+  color: var(--accent);
+}
+
+.public-shell__brand-link:hover,
+.public-shell__inline-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .public-shell__title {
@@ -71,8 +83,13 @@ a {
 }
 
 .public-shell--folder .public-shell__title {
-  font-size: clamp(1.55rem, 4vw, 2.5rem);
-  line-height: 1.02;
+  font-size: clamp(1.45rem, 3.2vw, 2.15rem);
+  line-height: 1.08;
+}
+
+.public-shell--receive .public-shell__title {
+  font-size: clamp(1.45rem, 3.2vw, 2.15rem);
+  line-height: 1.08;
 }
 
 .public-shell__description {
@@ -216,9 +233,19 @@ a {
   justify-items: end;
 }
 
+.receive-header-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  flex-shrink: 0;
+  padding-top: 8px;
+}
+
 .receive-meta {
   color: var(--muted);
   font-size: 0.9rem;
+  text-align: right;
 }
 
 .upload-dropzone,
@@ -235,10 +262,41 @@ a {
 }
 
 .upload-dropzone {
+  position: relative;
   display: grid;
-  gap: 16px;
+  min-height: 132px;
+  align-content: center;
+  justify-items: center;
   border-style: dashed;
+  cursor: pointer;
   transition: border-color 150ms ease, background 150ms ease;
+}
+
+.upload-dropzone:focus-visible {
+  outline: 2px solid rgba(255, 181, 125, 0.8);
+  outline-offset: 3px;
+}
+
+.upload-dropzone__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(255, 181, 125, 0.22);
+  border-radius: 999px;
+  color: var(--accent);
+  background: rgba(255, 181, 125, 0.08);
+}
+
+.upload-dropzone__icon svg {
+  width: 28px;
+  height: 28px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .upload-dropzone--active {
@@ -252,17 +310,8 @@ a {
   gap: 12px;
 }
 
-.upload-picker {
-  position: relative;
-  overflow: hidden;
-  cursor: pointer;
-}
-
-.upload-picker input {
-  position: absolute;
-  inset: 0;
-  opacity: 0;
-  cursor: pointer;
+.upload-picker-input {
+  display: none;
 }
 
 .upload-list {
@@ -270,11 +319,14 @@ a {
   gap: 12px;
 }
 
-.upload-item {
+.upload-item,
+.upload-folder {
   padding: 14px;
 }
 
 .upload-item__row,
+.upload-folder__header,
+.upload-child-row,
 .progress-summary {
   display: flex;
   justify-content: space-between;
@@ -282,10 +334,76 @@ a {
   gap: 12px;
 }
 
-.upload-item__row p {
+.upload-item__row p,
+.upload-child-row p {
   margin: 6px 0 0;
   color: var(--muted);
   font-size: 0.92rem;
+}
+
+.upload-item__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.icon-text-button {
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(255, 181, 125, 0.24);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 0.84rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.upload-folder {
+  border: 1px solid var(--line);
+  background: var(--surface-strong);
+  border-radius: 22px;
+}
+
+.folder-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.folder-toggle__chevron {
+  width: 14px;
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.folder-toggle small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.upload-folder__children {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.upload-child-row {
+  align-items: center;
 }
 
 .progress-summary {
@@ -337,11 +455,17 @@ a {
 
   .public-shell__header,
   .hero-panel,
-  .upload-actions,
   .upload-item__row,
+  .upload-folder__header,
+  .upload-child-row,
   .progress-summary {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .receive-header-meta,
+  .upload-item__actions {
+    align-items: flex-start;
   }
 
   .folder-table th:nth-child(2),

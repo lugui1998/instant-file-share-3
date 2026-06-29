@@ -47,6 +47,8 @@ public sealed record AppSettings
     public int DefaultReceiveExpiryValue { get; init; } = 24;
     public ExpiryUnit DefaultReceiveExpiryUnit { get; init; } = ExpiryUnit.Hours;
     public long DefaultReceiveMaxTotalBytes { get; init; } = Defaults.DefaultReceiveMaxTotalBytes;
+    public string FolderBrowsePageTitle { get; init; } = Defaults.CreateDefaultFolderBrowsePageTitle();
+    public string ReceivePageTitle { get; init; } = Defaults.CreateDefaultReceivePageTitle();
     public bool FriendlyUrlsEnabled { get; init; } = true;
     public bool SendMetadataToCrawlers { get; init; } = true;
     public bool OpenImagesInBrowser { get; init; } = true;
@@ -142,4 +144,21 @@ public static class Defaults
     public const string PublicBindAddress = "127.0.0.1";
     public const string NamedPipeName = "InstantFileShare.Agent";
     public const long DefaultReceiveMaxTotalBytes = 10L * 1024 * 1024 * 1024;
+    public const string RepositoryUrl = "https://github.com/lugui1998/instant-file-share-3";
+
+    public static string CreateDefaultReceivePageTitle()
+    {
+        var userName = Environment.UserName;
+        return string.IsNullOrWhiteSpace(userName)
+            ? "Upload files"
+            : $"Upload to {userName}";
+    }
+
+    public static string CreateDefaultFolderBrowsePageTitle()
+    {
+        var userName = Environment.UserName;
+        return string.IsNullOrWhiteSpace(userName)
+            ? "Browse files"
+            : $"Browse files from {userName}";
+    }
 }

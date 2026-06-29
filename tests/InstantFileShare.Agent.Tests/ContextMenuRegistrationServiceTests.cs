@@ -5,22 +5,24 @@ namespace InstantFileShare.Agent.Tests;
 public sealed class ContextMenuRegistrationServiceTests
 {
     [Fact]
-    public void BuildDesktopFolderExclusionAppliesTo_ReturnsExpectedQuery()
+    public void SelectedFolderRegistrations_DoNotExcludeDesktopItems()
     {
-        var query = ContextMenuRegistrationService.BuildDesktopFolderExclusionAppliesTo(@"C:\Users\TestUser\Desktop");
+        var repositoryRoot = AgentPaths.GetRepositoryRoot();
+        var agentSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "agent",
+            "InstantFileShare.Agent",
+            "ContextMenuRegistrationService.cs"));
+        var shellSource = File.ReadAllText(Path.Combine(
+            repositoryRoot,
+            "src",
+            "shell-extension",
+            "src",
+            "main.cpp"));
 
-        Assert.Equal("System.ItemPathDisplay:<>=\"C:\\Users\\TestUser\\Desktop\"", query);
-    }
-
-    [Theory]
-    [InlineData(null)]
-    [InlineData("")]
-    [InlineData("   ")]
-    public void BuildDesktopFolderExclusionAppliesTo_ReturnsNullWhenDesktopPathMissing(string? desktopPath)
-    {
-        var query = ContextMenuRegistrationService.BuildDesktopFolderExclusionAppliesTo(desktopPath);
-
-        Assert.Null(query);
+        Assert.DoesNotContain("System.ItemPathDisplay:<>", agentSource);
+        Assert.DoesNotContain("System.ItemPathDisplay:<>", shellSource);
     }
 
     [Fact]

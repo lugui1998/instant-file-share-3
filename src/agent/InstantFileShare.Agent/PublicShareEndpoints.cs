@@ -202,7 +202,8 @@ internal static class PublicShareEndpoints
             return unavailableResult;
         }
 
-        var pageModel = pageModelFactory.BuildReceivePage(context, receiveLink);
+        var settings = await coordinator.GetSettingsAsync(cancellationToken);
+        var pageModel = pageModelFactory.BuildReceivePage(context, receiveLink, settings);
         if (!htmlRenderer.TryRender(pageModel, out var html, out var renderError))
         {
             return Results.Problem(renderError, statusCode: StatusCodes.Status500InternalServerError);
@@ -671,7 +672,7 @@ internal static class PublicShareEndpoints
                 cancellationToken);
         }
 
-        var pageModel = pageModelFactory.BuildFolderBrowsePage(context, share, directoryEntry, entries);
+        var pageModel = pageModelFactory.BuildFolderBrowsePage(context, share, directoryEntry, entries, settings);
         if (!htmlRenderer.TryRender(pageModel, out var html, out var renderError))
         {
             return Results.Problem(renderError, statusCode: StatusCodes.Status500InternalServerError);

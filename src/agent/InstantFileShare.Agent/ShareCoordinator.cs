@@ -155,6 +155,17 @@ internal sealed class ShareCoordinator(
         return null;
     }
 
+    public async Task ReconcilePersistedSharesAsync(CancellationToken cancellationToken)
+    {
+        var shares = await shareStore.ListSharesAsync(cancellationToken);
+        var settings = await shareStore.GetSettingsAsync(cancellationToken);
+
+        foreach (var share in shares)
+        {
+            await ValidateShareAsync(share, settings, updateLastAccessedAtUtc: false, cancellationToken);
+        }
+    }
+
     public Task<IReadOnlyList<ShareRecord>> ListSharesAsync(CancellationToken cancellationToken) => shareStore.ListSharesAsync(cancellationToken);
 
     public async Task ShowShareInExplorerAsync(string shareId, CancellationToken cancellationToken)
@@ -173,6 +184,32 @@ internal sealed class ShareCoordinator(
             return null;
         }
 
+        var settings = await shareStore.GetSettingsAsync(cancellationToken);
+        return await ValidateShareAsync(share, settings, updateLastAccessedAtUtc: true, cancellationToken);
+    }
+
+    private static string GetShareDirectoryPath(ShareRecord share)
+    {
+        if (share.ShareKind == ShareKind.Folder)
+        {
+            return share.FilePath;
+        }
+
+        var directoryPath = Path.GetDirectoryName(share.FilePath);
+        if (string.IsNullOrWhiteSpace(directoryPath))
+        {
+            throw new DirectoryNotFoundException("The share location could not be resolved.");
+        }
+
+        return directoryPath;
+    }
+
+    private async Task<ShareRecord> ValidateShareAsync(
+        ShareRecord share,
+        AppSettings settings,
+        bool updateLastAccessedAtUtc,
+        CancellationToken cancellationToken)
+    {
         if (share.State is ShareState.Revoked or ShareState.Broken or ShareState.Expired)
         {
             return share;
@@ -195,51 +232,42 @@ internal sealed class ShareCoordinator(
             var directoryInfo = new DirectoryInfo(share.FilePath);
             if (!directoryInfo.Exists || directoryInfo.Attributes.HasFlag(FileAttributes.ReparsePoint))
             {
-                share = share with { State = ShareState.Broken, BrokenReason = "The shared folder is no longer available." };
-                await shareStore.UpdateShareAsync(share, cancellationToken);
-                await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareUpdated, DateTimeOffset.UtcNow, share), cancellationToken);
-                return share;
+                return await UpdateBrokenShareAsync(share, "The shared folder is no longer available.", cancellationToken);
             }
 
-            return share with { LastAccessedAtUtc = DateTimeOffset.UtcNow };
+            return updateLastAccessedAtUtc
+                ? share with { LastAccessedAtUtc = DateTimeOffset.UtcNow }
+                : share;
         }
 
         var fileInfo = new FileInfo(share.FilePath);
         if (!fileInfo.Exists)
         {
-            share = share with { State = ShareState.Broken, BrokenReason = "The file is no longer available." };
-            await shareStore.UpdateShareAsync(share, cancellationToken);
-            await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareUpdated, DateTimeOffset.UtcNow, share), cancellationToken);
-            return share;
+            return await UpdateBrokenShareAsync(share, "The file is no longer available.", cancellationToken);
         }
 
-        var settings = await shareStore.GetSettingsAsync(cancellationToken);
         if (settings.FileChangeBehavior == FileChangeBehavior.Strict &&
             (fileInfo.Length != share.FileSize || fileInfo.LastWriteTimeUtc != share.FileModifiedAtUtc.UtcDateTime))
         {
-            share = share with { State = ShareState.Broken, BrokenReason = "The shared file changed after the link was created." };
-            await shareStore.UpdateShareAsync(share, cancellationToken);
-            await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareUpdated, DateTimeOffset.UtcNow, share), cancellationToken);
-            return share;
+            return await UpdateBrokenShareAsync(share, "The shared file changed after the link was created.", cancellationToken);
         }
 
-        return share with { LastAccessedAtUtc = DateTimeOffset.UtcNow };
+        return updateLastAccessedAtUtc
+            ? share with { LastAccessedAtUtc = DateTimeOffset.UtcNow }
+            : share;
     }
 
-    private static string GetShareDirectoryPath(ShareRecord share)
+    private async Task<ShareRecord> UpdateBrokenShareAsync(ShareRecord share, string brokenReason, CancellationToken cancellationToken)
     {
-        if (share.ShareKind == ShareKind.Folder)
+        var updatedShare = share with
         {
-            return share.FilePath;
-        }
+            State = ShareState.Broken,
+            BrokenReason = brokenReason,
+        };
 
-        var directoryPath = Path.GetDirectoryName(share.FilePath);
-        if (string.IsNullOrWhiteSpace(directoryPath))
-        {
-            throw new DirectoryNotFoundException("The share location could not be resolved.");
-        }
-
-        return directoryPath;
+        await shareStore.UpdateShareAsync(updatedShare, cancellationToken);
+        await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareUpdated, DateTimeOffset.UtcNow, updatedShare), cancellationToken);
+        return updatedShare;
     }
 
     public async Task<ReceiveLinkRecord?> ResolveReceiveLinkAsync(string token, CancellationToken cancellationToken)
@@ -355,6 +383,8 @@ internal sealed class ShareCoordinator(
             FolderZipCompressionLevel = NormalizeFolderZipCompressionLevel(settings.FolderZipCompressionLevel),
             DefaultReceiveExpiryValue = Math.Max(0, settings.DefaultReceiveExpiryValue),
             DefaultReceiveMaxTotalBytes = NormalizeReceiveMaxTotalBytes(settings.DefaultReceiveMaxTotalBytes),
+            FolderBrowsePageTitle = NormalizeFolderBrowsePageTitle(settings.FolderBrowsePageTitle),
+            ReceivePageTitle = NormalizeReceivePageTitle(settings.ReceivePageTitle),
             HistoryRetentionValue = Math.Max(0, settings.HistoryRetentionValue),
             HistoryItemsPerPage = Math.Max(0, settings.HistoryItemsPerPage),
             SharesItemsPerPage = Math.Max(0, settings.SharesItemsPerPage),
@@ -1285,6 +1315,20 @@ internal sealed class ShareCoordinator(
     private static long NormalizeReceiveMaxTotalBytes(long maxTotalBytes)
     {
         return Math.Max(0, maxTotalBytes);
+    }
+
+    private static string NormalizeReceivePageTitle(string? title)
+    {
+        return string.IsNullOrWhiteSpace(title)
+            ? Defaults.CreateDefaultReceivePageTitle()
+            : title.Trim();
+    }
+
+    private static string NormalizeFolderBrowsePageTitle(string? title)
+    {
+        return string.IsNullOrWhiteSpace(title)
+            ? Defaults.CreateDefaultFolderBrowsePageTitle()
+            : title.Trim();
     }
 
     private static bool RequiresListenerRestart(AppSettings currentSettings, AppSettings nextSettings)

@@ -92,6 +92,21 @@ Notes:
 - if Inno Setup is not installed, the script still prepares the staged files so the installer can be compiled later
 - the installer exposes an optional `cloudflared` component and uses `winget` to install it when `winget` is available for the current user
 
+## CI and releases
+
+GitHub Actions runs the Windows CI workflow on pull requests and pushes to `main`. The workflow builds and tests the .NET solution, runs the UI tests and build, and builds the shell helper.
+
+Releases are automatic for version tags matching `v*.*.*`:
+
+```powershell
+git tag v1.0.1
+git push origin v1.0.1
+```
+
+The release workflow runs tests, installs Inno Setup on the GitHub runner, runs `scripts\build-installer.ps1`, uploads the installer and staged package ZIP as workflow artifacts, and creates or updates the matching GitHub release.
+
+Manual verification for the release workflow is still done by running the GitHub Actions release workflow for a real tag, because GitHub release creation and artifact upload depend on GitHub-hosted runner state and `GITHUB_TOKEN` permissions.
+
 For a fully clean local uninstall before reinstalling, use:
 
 ```powershell
@@ -99,6 +114,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-clean.ps1
 ```
 
 That script stops the agent process tree so agent-owned child processes such as app-started `cloudflared` are also terminated, runs the installer uninstaller when present, removes startup/context-menu registration for every file/folder verb, and deletes the local app data under `%LOCALAPPDATA%\InstantFileShare`.
+It also removes Electron user data/cache leftovers under the app's roaming/local profile folders. To also uninstall the optional winget-managed `cloudflared` package during cleanup, pass `-UninstallCloudflared`; this is off by default because `cloudflared` may be used by other applications.
 
 ## Current MVP behaviors
 
@@ -126,3 +142,12 @@ That script stops the agent process tree so agent-owned child processes such as 
 - E2E encryption
 - QR code support
 - HTTPS certificate management
+
+## Disclosure
+
+AI tools where used in the process of creating this project.
+
+## License
+
+FixPix is licensed under the GNU General Public License v3.0 only. See
+`LICENSE` for the full license text.
