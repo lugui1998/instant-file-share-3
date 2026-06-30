@@ -12,6 +12,8 @@ dist/
 dist-electron/
 build/
 coverage/
+playwright-report/
+test-results/
 
 *.log
 *.lscache
@@ -27,6 +29,8 @@ coverage/
 src/ui/node_modules/
 src/ui/dist/
 src/ui/dist-electron/
+src/ui/playwright-report/
+src/ui/test-results/
 src/agent/**/bin/
 src/agent/**/obj/
 tests/**/bin/

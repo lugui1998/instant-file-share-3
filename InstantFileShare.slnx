@@ -10,5 +10,6 @@
     <Project Path="tests/InstantFileShare.Agent.Tests/InstantFileShare.Agent.Tests.csproj" />
     <Project Path="tests/InstantFileShare.Data.Tests/InstantFileShare.Data.Tests.csproj" />
     <Project Path="tests/InstantFileShare.Core.Tests/InstantFileShare.Core.Tests.csproj" />
+    <Project Path="tests/InstantFileShare.E2EHost/InstantFileShare.E2EHost.csproj" />
   </Folder>
 </Solution>
