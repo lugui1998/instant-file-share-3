@@ -1,5 +1,7 @@
 import type { PublicShareFileModel } from './types'
 
+const uncompressedLengthHeaderName = 'X-IFS-Uncompressed-Length'
+
 export type CompressionRuntimeScope = {
   DecompressionStream?: new (format: CompressionFormat) => GenericTransformStream
   showSaveFilePicker?: (options?: {
@@ -66,41 +68,85 @@ export async function downloadFileWithCompressionFallback(
     return { mode: 'raw-fallback', reason: 'gzip decompression is not available' }
   }
 
+  const fetchImpl = scope.fetch ?? fetch
+  let response: Response
   try {
-    const fetchImpl = scope.fetch ?? fetch
-    const response = await fetchImpl(file.compressedDownloadUrl)
-    if (!response.ok || !response.body || !scope.DecompressionStream) {
-      startRawDownload(file.rawDownloadUrl, scope)
-      return { mode: 'raw-fallback', reason: 'compressed response was unavailable' }
-    }
-
-    const decompressor = new scope.DecompressionStream('gzip')
-    const decodedStream = response.body.pipeThrough(decompressor)
-
-    if (supportsStreamingFileSave(scope) && scope.showSaveFilePicker) {
-      const handle = await scope.showSaveFilePicker({
-        suggestedName: file.fileName,
-        types: [
-          {
-            description: 'Downloaded file',
-            accept: { 'application/octet-stream': ['.*'] },
-          },
-        ],
-      })
-      const writable = await handle.createWritable()
-      await decodedStream.pipeTo(writable)
-      return { mode: 'compressed-stream' }
-    }
-
-    await saveDecodedStreamAsBlob(decodedStream, file.fileName, scope)
-    return { mode: 'compressed-blob' }
+    response = await fetchImpl(file.compressedDownloadUrl)
   } catch (error) {
     startRawDownload(file.rawDownloadUrl, scope)
     return {
       mode: 'raw-fallback',
-      reason: error instanceof Error ? error.message : 'compressed download failed',
+      reason: error instanceof Error ? error.message : 'compressed response was unavailable',
     }
   }
+
+  if (!response.ok || !response.body || !scope.DecompressionStream) {
+    startRawDownload(file.rawDownloadUrl, scope)
+    return { mode: 'raw-fallback', reason: 'compressed response was unavailable' }
+  }
+
+  const expectedDecodedBytes = getExpectedDecodedLength(response.headers, file)
+  const decompressor = new scope.DecompressionStream('gzip')
+  const decodedStream = response.body
+    .pipeThrough(decompressor)
+    .pipeThrough(createDecodedLengthValidator(expectedDecodedBytes))
+
+  if (supportsStreamingFileSave(scope) && scope.showSaveFilePicker) {
+    const handle = await scope.showSaveFilePicker({
+      suggestedName: file.fileName,
+      types: [
+        {
+          description: 'Downloaded file',
+          accept: { 'application/octet-stream': ['.*'] },
+        },
+      ],
+    })
+    const writable = await handle.createWritable()
+    await decodedStream.pipeTo(writable)
+    return { mode: 'compressed-stream' }
+  }
+
+  await saveDecodedStreamAsBlob(decodedStream, file.fileName, scope)
+  return { mode: 'compressed-blob' }
+}
+
+function getExpectedDecodedLength(headers: Headers, file: PublicShareFileModel): number {
+  const advertisedLength = headers.get(uncompressedLengthHeaderName)
+  if (advertisedLength !== null) {
+    return parseExpectedDecodedLength(advertisedLength, uncompressedLengthHeaderName)
+  }
+
+  return parseExpectedDecodedLength(String(file.sizeBytes), 'file size')
+}
+
+function parseExpectedDecodedLength(value: string, source: string): number {
+  const expectedLength = Number(value)
+  if (!Number.isSafeInteger(expectedLength) || expectedLength < 0) {
+    throw new Error(`Invalid ${source}: ${value}`)
+  }
+
+  return expectedLength
+}
+
+function createDecodedLengthValidator(expectedBytes: number): TransformStream<Uint8Array, Uint8Array> {
+  let decodedBytes = 0
+
+  return new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      decodedBytes += chunk.byteLength
+
+      if (decodedBytes > expectedBytes) {
+        throw new Error(`Compressed download decoded more bytes than expected (${decodedBytes} > ${expectedBytes}).`)
+      }
+
+      controller.enqueue(chunk)
+    },
+    flush() {
+      if (decodedBytes !== expectedBytes) {
+        throw new Error(`Compressed download decoded ${decodedBytes} bytes, expected ${expectedBytes} bytes.`)
+      }
+    },
+  })
 }
 
 async function saveDecodedStreamAsBlob(
