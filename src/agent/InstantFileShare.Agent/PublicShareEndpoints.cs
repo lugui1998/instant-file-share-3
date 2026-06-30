@@ -38,15 +38,6 @@ internal static class PublicShareEndpoints
     private static readonly JsonSerializerOptions WebSocketJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly ConcurrentDictionary<string, ReceiveUploadSpeedState> ReceiveUploadSpeedStates = new(StringComparer.Ordinal);
 
-    private sealed record BrowserTransferEncryptedDownloadPlan(
-        string Algorithm,
-        string EncryptedDownloadUrl,
-        string FileName,
-        string ContentType,
-        int ChunkIndex,
-        string IvBase64Url,
-        string KeyDelivery);
-
     public static IEndpointRouteBuilder MapPublicShareEndpoints(this IEndpointRouteBuilder endpoints)
     {
         endpoints.MapMethods(
@@ -2033,14 +2024,12 @@ internal static class PublicShareEndpoints
 
         if (IsEncryptedDownloadPlanRequest(context.Request))
         {
-            return HandleBrowserTransferEncryptedDownloadPlan(context, responseFileName, fileResponseMetadata);
+            return CreateEncryptedDownloadUnavailableResult();
         }
 
         if (IsEncryptedDownloadRequest(context.Request))
         {
-            context.Response.Headers.CacheControl = "no-store";
-            context.Response.Headers["X-IFS-Encryption-Experiment"] = "browser-aes-gcm-v1";
-            return Results.File(file.FullName, BinaryChunkContentType, enableRangeProcessing: false);
+            return CreateEncryptedDownloadUnavailableResult();
         }
 
         if (crawlerName is not null && settings.SendMetadataToCrawlers)
@@ -2200,20 +2189,11 @@ internal static class PublicShareEndpoints
         return Results.File(meteredStream, contentType: fileResponseMetadata.ContentType, enableRangeProcessing: allowRangeRequests);
     }
 
-    private static IResult HandleBrowserTransferEncryptedDownloadPlan(
-        HttpContext context,
-        string responseFileName,
-        ShareFileResponseMetadata fileResponseMetadata)
+    private static IResult CreateEncryptedDownloadUnavailableResult()
     {
-        context.Response.Headers.CacheControl = "no-store";
-        return Results.Json(new BrowserTransferEncryptedDownloadPlan(
-            Algorithm: "AES-GCM",
-            EncryptedDownloadUrl: BuildCurrentUrl(context, [("ifs", EncryptedDownloadQueryValue)]),
-            FileName: responseFileName,
-            ContentType: fileResponseMetadata.ContentType,
-            ChunkIndex: 0,
-            IvBase64Url: Base64UrlEncode(new byte[12]),
-            KeyDelivery: "The AES-GCM key must be supplied in the URL fragment as ifs-key; fragments are not sent in HTTP requests."));
+        return Results.Problem(
+            "Encrypted browser downloads are disabled for live file shares because no persisted AES-GCM IV metadata exists for the stored object.",
+            statusCode: StatusCodes.Status409Conflict);
     }
 
     private static bool IsEncryptedDownloadPlanRequest(HttpRequest request)
@@ -2224,31 +2204,6 @@ internal static class PublicShareEndpoints
     private static bool IsEncryptedDownloadRequest(HttpRequest request)
     {
         return string.Equals(request.Query["ifs"], EncryptedDownloadQueryValue, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string BuildCurrentUrl(HttpContext context, IReadOnlyList<(string Name, string Value)> queryValues)
-    {
-        var builder = new StringBuilder();
-        builder.Append(context.Request.Scheme)
-            .Append("://")
-            .Append(context.Request.Host)
-            .Append(context.Request.PathBase)
-            .Append(context.Request.Path);
-
-        for (var index = 0; index < queryValues.Count; index++)
-        {
-            builder.Append(index == 0 ? '?' : '&')
-                .Append(Uri.EscapeDataString(queryValues[index].Name))
-                .Append('=')
-                .Append(Uri.EscapeDataString(queryValues[index].Value));
-        }
-
-        return builder.ToString();
-    }
-
-    private static string Base64UrlEncode(byte[] bytes)
-    {
-        return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
 
     private static async Task<IResult> HandleFolderBrowseDirectoryAsync(

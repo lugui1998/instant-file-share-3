@@ -38,7 +38,7 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
-    public async Task EncryptedDownloadPlan_AdvertisesFragmentKeyDeliveryWithoutRequestKeyMaterial()
+    public async Task EncryptedDownloadPlan_RejectsLiveFileSharesWithoutIvMetadata()
     {
         await using var host = await AgentTestHost.StartAsync(async context =>
         {
@@ -48,15 +48,31 @@ public sealed class AgentHttpIntegrationTests
         });
 
         using var response = await host.PublicClient.GetAsync("/s/file-token?ifs=encrypted-download-plan");
-        using var plan = await JsonDocument.ParseAsync(await response.Content.ReadAsStreamAsync());
-        var root = plan.RootElement;
+        var body = await response.Content.ReadAsStringAsync();
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        Assert.Equal("no-store", response.Headers.CacheControl?.ToString());
-        Assert.Equal("AES-GCM", root.GetProperty("algorithm").GetString());
-        Assert.Equal("secret.bin", root.GetProperty("fileName").GetString());
-        Assert.Contains("ifs-key", root.GetProperty("keyDelivery").GetString(), StringComparison.Ordinal);
-        Assert.DoesNotContain("ifs-key", root.GetProperty("encryptedDownloadUrl").GetString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("no persisted AES-GCM IV metadata", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("ivBase64Url", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AAAAAAAAAAAAAAAA", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("encryptedDownloadUrl", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task EncryptedDownload_RejectsLiveFileSharesInsteadOfServingPlaintextAsCiphertext()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "secret.bin");
+            await File.WriteAllBytesAsync(filePath, [1, 2, 3, 4]);
+            await context.Store.AddShareAsync(context.CreateFileShare("file-token", filePath), CancellationToken.None);
+        });
+
+        using var response = await host.PublicClient.GetAsync("/s/file-token?ifs=encrypted-download");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("no persisted AES-GCM IV metadata", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AQIDBA", body, StringComparison.Ordinal);
     }
 
     [Fact]

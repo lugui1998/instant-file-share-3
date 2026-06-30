@@ -5,6 +5,7 @@ import {
   base64UrlDecode,
   decryptBrowserTransferChunk,
   importBrowserTransferKey,
+  maxBrowserTransferBufferedBytes,
   parseBrowserTransferKeyFragment,
 } from '../../crypto/browserTransferCrypto'
 
@@ -20,7 +21,9 @@ const encryptionFragment = computed(() =>
 
 async function startEncryptedDownload() {
   const experiment = props.file.encryptionExperiment
-  if (!experiment) {
+  if (!experiment?.downloadManifestUrl) {
+    encryptionState.value = 'error'
+    encryptionStatus.value = 'Encrypted browser downloads are unavailable for this file. Use the standard download action.'
     return
   }
 
@@ -46,6 +49,11 @@ async function startEncryptedDownload() {
       throw new Error(`Encrypted download failed with HTTP ${encryptedResponse.status}.`)
     }
 
+    const contentLength = Number(encryptedResponse.headers?.get('Content-Length') ?? 0)
+    if (contentLength > maxBrowserTransferBufferedBytes) {
+      throw new Error('Encrypted browser downloads are limited to 64 MB because this experiment buffers the full file before decryption.')
+    }
+
     const key = await importBrowserTransferKey(fragment.keyBytes)
     const plaintext = await decryptBrowserTransferChunk(key, {
       iv: base64UrlDecode(plan.ivBase64Url),
@@ -56,7 +64,8 @@ async function startEncryptedDownload() {
     encryptionStatus.value = 'Encrypted download decrypted in the browser.'
   } catch (error) {
     encryptionState.value = 'error'
-    encryptionStatus.value = error instanceof Error ? error.message : 'Encrypted download decryption failed.'
+    const message = error instanceof Error ? error.message : 'Encrypted download decryption failed.'
+    encryptionStatus.value = `${message} Use the standard download action instead.`
   }
 }
 
@@ -87,7 +96,7 @@ function saveBlob(fileName: string, contentType: string, parts: BlobPart[]) {
 
     <p class="body-copy">{{ file.actionLabel }}</p>
 
-    <div v-if="file.encryptionExperiment" class="download-panel">
+    <div v-if="file.encryptionExperiment?.downloadManifestUrl" class="download-panel">
       <div class="download-panel__header">
         <div>
           <span class="label">Encryption experiment</span>
@@ -106,6 +115,9 @@ function saveBlob(fileName: string, contentType: string, parts: BlobPart[]) {
         >
           {{ encryptionState === 'decrypting' ? 'Decrypting...' : 'Try encrypted download' }}
         </button>
+        <a v-if="encryptionState === 'error' && page.primaryActionUrl" class="icon-text-button" :href="page.primaryActionUrl">
+          Standard download
+        </a>
       </div>
     </div>
 

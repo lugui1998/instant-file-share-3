@@ -23,8 +23,8 @@ internal sealed record PublicShareFileModel(
     BrowserTransferEncryptionExperimentModel? EncryptionExperiment);
 
 internal sealed record BrowserTransferEncryptionExperimentModel(
-    string DownloadManifestUrl,
-    string EncryptedDownloadUrl,
+    string? DownloadManifestUrl,
+    string? EncryptedDownloadUrl,
     string FragmentKeyParameter,
     string Algorithm,
     string IvStrategy,

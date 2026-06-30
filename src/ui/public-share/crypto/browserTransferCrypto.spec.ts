@@ -40,6 +40,7 @@ describe('browserTransferCrypto', () => {
     expect(createBrowserTransferIv(noncePrefix, 0)).not.toEqual(createBrowserTransferIv(noncePrefix, 1))
     expect(() => createBrowserTransferIv(noncePrefix, -1)).toThrow('Chunk index')
     expect(() => createBrowserTransferIv(new Uint8Array([1, 2, 3]), 0)).toThrow('nonce prefix')
+    expect(() => createBrowserTransferIv(new Uint8Array([0, 0, 0, 0]), 0)).toThrow('all zero')
   })
 
   it('creates random nonce prefixes for separate transfer keys', () => {

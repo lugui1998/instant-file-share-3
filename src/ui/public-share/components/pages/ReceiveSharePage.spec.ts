@@ -7,6 +7,7 @@ import {
   createBrowserTransferKeyFragment,
   decryptBrowserTransferChunk,
   importBrowserTransferKey,
+  maxBrowserTransferBufferedBytes,
 } from '../../crypto/browserTransferCrypto'
 
 const uploadChunkSizeBytes = 16 * 1024 * 1024
@@ -979,6 +980,27 @@ describe('ReceiveSharePage', () => {
 
     expect(new TextDecoder().decode(decrypted)).toBe('classified')
   })
+
+  it('rejects encrypted receive uploads larger than the browser buffer limit', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
+    window.location.hash = createBrowserTransferKeyFragment(new Uint8Array(32).fill(33), 'upload')
+    const wrapper = mount(ReceiveSharePage, {
+      props: {
+        page: createPage({ encryptionExperiment: createEncryptionExperiment() }),
+        receive: createReceive({ encryptionExperiment: createEncryptionExperiment() }),
+      },
+    })
+    const input = wrapper.find('input[type="file"]')
+
+    Object.defineProperty(input.element, 'files', {
+      configurable: true,
+      value: [createSizedFile('large.bin', 'large.bin', maxBrowserTransferBufferedBytes + 1)],
+    })
+    await input.trigger('change')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('Encrypted browser uploads are limited to 64 MB'))
+
+    expect(FakeXMLHttpRequest.instances).toHaveLength(0)
+  })
 })
 
 function createPage(receive: Partial<PublicShareReceiveModel> = {}): PublicSharePageModel {
@@ -1014,8 +1036,8 @@ function createReceive(overrides: Partial<PublicShareReceiveModel> = {}): Public
 
 function createEncryptionExperiment() {
   return {
-    downloadManifestUrl: '/r/token?ifs=encrypted-download-plan',
-    encryptedDownloadUrl: '/r/token?ifs=encrypted-download',
+    downloadManifestUrl: null,
+    encryptedDownloadUrl: null,
     fragmentKeyParameter: 'ifs-key',
     algorithm: 'AES-GCM' as const,
     ivStrategy: 'test',

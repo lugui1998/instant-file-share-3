@@ -6,6 +6,7 @@ import {
   createBrowserTransferNoncePrefix,
   encryptBrowserTransferChunk,
   importBrowserTransferKey,
+  maxBrowserTransferBufferedBytes,
   parseBrowserTransferKeyFragment,
 } from '../../crypto/browserTransferCrypto'
 import type {
@@ -312,6 +313,10 @@ async function sendEncryptedStoreUploadRequest(entry: UploadEntry) {
   const fragment = encryptionFragment.value
   if (!fragment) {
     throw new Error('Encrypted upload key is missing.')
+  }
+
+  if (entry.file.size > maxBrowserTransferBufferedBytes) {
+    throw new Error('Encrypted browser uploads are limited to 64 MB because this experiment buffers the full file before encryption.')
   }
 
   entry.message = 'Encrypting...'
