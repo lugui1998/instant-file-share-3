@@ -296,6 +296,10 @@ async function uploadEntry(entry: UploadEntry) {
 }
 
 function sendUploadForEntry(entry: UploadEntry) {
+  if (props.receive.uploadMode === 'CompressedStream') {
+    return sendCompressedStreamUploadRequest(entry)
+  }
+
   if (props.receive.uploadMode === 'Auto') {
     return sendAutoChunkedUploadRequest(entry)
   }
@@ -629,6 +633,20 @@ async function sendBinaryChunkedUploadRequest(entry: UploadEntry) {
   return finalResponse
 }
 
+async function sendCompressedStreamUploadRequest(entry: UploadEntry) {
+  const compressedBlob = await createGzipBlob(entry.file)
+  return sendCompressedStreamRequest(entry, compressedBlob)
+}
+
+async function createGzipBlob(file: File) {
+  if (typeof CompressionStream === 'undefined') {
+    throw new Error('Compressed uploads are not supported by this browser.')
+  }
+
+  const compressedStream = file.stream().pipeThrough(new CompressionStream('gzip'))
+  return await new Response(compressedStream).blob()
+}
+
 async function sendWebSocketChunkedUploadRequest(entry: UploadEntry) {
   const socket = await openUploadSocket(entry)
   let finalResponse: PublicReceiveUploadResponse | null = null
@@ -896,6 +914,57 @@ function sendBinaryChunkUploadRequest(
     })
 
     request.send(chunk)
+  })
+}
+
+function sendCompressedStreamRequest(entry: UploadEntry, compressedBlob: Blob) {
+  return new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    entry.request = request
+    request.open('POST', props.receive.uploadUrl, true)
+    request.responseType = 'json'
+    request.setRequestHeader('Content-Type', 'application/gzip')
+    request.setRequestHeader('X-IFS-Upload-Id', entry.uploadId)
+    request.setRequestHeader('X-IFS-Batch-Id', entry.batchId)
+    request.setRequestHeader('X-IFS-Relative-Path', encodeURIComponent(entry.relativePath))
+    request.setRequestHeader('X-IFS-File-Name', encodeURIComponent(entry.file.name))
+    request.setRequestHeader('X-IFS-File-Size', entry.file.size.toString())
+
+    request.upload.addEventListener('progress', (event) => {
+      if (!event.lengthComputable || entry.state !== 'uploading') {
+        return
+      }
+
+      const totalWireBytes = Math.max(1, event.total || compressedBlob.size)
+      const logicalBytes = Math.min(entry.file.size, entry.file.size * (event.loaded / totalWireBytes))
+      updateEntryUploadProgress(entry, logicalBytes)
+    })
+
+    request.addEventListener('load', () => {
+      const response = request.response as PublicReceiveUploadResponse | null
+
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(getUploadFailureMessage(response) || `Upload failed with status ${request.status}.`))
+        return
+      }
+
+      if (!response) {
+        reject(new Error('Upload failed.'))
+        return
+      }
+
+      resolve(response)
+    })
+
+    request.addEventListener('abort', () => {
+      reject(new Error('Upload stopped.'))
+    })
+
+    request.addEventListener('error', () => {
+      reject(new Error('Upload failed.'))
+    })
+
+    request.send(compressedBlob)
   })
 }
 

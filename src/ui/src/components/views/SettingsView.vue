@@ -519,13 +519,14 @@ function resolveReceiveMaxTotalUnit(value: number) {
           <div class="field">
             <div class="field-label-row">
               <label for="receive-upload-mode">Upload mode</label>
-              <HelpTooltip text="Auto probes the available upload transports and keeps one server upload session per file. Multipart chunks sends each piece as multipart form data. Binary chunks sends raw binary requests. WebSocket uploads send chunks through a dedicated upload socket." />
+              <HelpTooltip text="Auto probes the available upload transports and keeps one server upload session per file. Multipart chunks sends each piece as multipart form data. Binary chunks sends raw binary requests. WebSocket uploads send chunks through a dedicated upload socket. Compressed stream is an experimental single-request gzip upload path." />
             </div>
             <select id="receive-upload-mode" v-model="settingsDraft.receiveUploadMode">
               <option value="Auto">Auto</option>
               <option value="MultipartChunks">Multipart chunks</option>
               <option value="BinaryChunks">Binary chunks</option>
               <option value="WebSocket">WebSocket chunks</option>
+              <option value="CompressedStream">Compressed stream (experimental)</option>
             </select>
           </div>
 
