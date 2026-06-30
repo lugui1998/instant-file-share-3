@@ -3,8 +3,11 @@ import { computed, ref } from 'vue'
 import {
   canPauseManagedDownload,
   canResumeManagedDownload,
+  canUseBlobManagedDownload,
   createManagedDownloadState,
+  largeFileStreamingRequiredMessage,
   reduceManagedDownloadState,
+  requiresStreamingManagedDownload,
 } from '../../downloadState'
 import type {
   BrowserManagedDownloadChunk,
@@ -73,17 +76,25 @@ async function startManagedDownload() {
 
     const nextPlan = await manifestResponse.json() as BrowserManagedDownloadPlan
     plan.value = nextPlan
-    chunks.value = Array.from({ length: nextPlan.chunks.length }, () => null)
     state.value = reduceManagedDownloadState(state.value, { type: 'plan-ready', totalBytes: nextPlan.fileSizeBytes })
-    await downloadMissingChunks(nextPlan)
+    const useBlobAssembly = canUseBlobManagedDownload(nextPlan.fileSizeBytes)
+    chunks.value = useBlobAssembly ? Array.from({ length: nextPlan.chunks.length }, () => null) : []
+
+    if (useBlobAssembly) {
+      await downloadMissingChunksToMemory(nextPlan)
+    } else {
+      await streamDownloadToDisk(nextPlan)
+    }
 
     if (isPaused.value) {
       state.value = reduceManagedDownloadState(state.value, { type: 'pause' })
       return
     }
 
-    state.value = reduceManagedDownloadState(state.value, { type: 'saving' })
-    saveBlob(new Blob(chunks.value.filter((chunk): chunk is Blob => chunk !== null), { type: nextPlan.contentType }), nextPlan.fileName)
+    if (useBlobAssembly) {
+      state.value = reduceManagedDownloadState(state.value, { type: 'saving' })
+      saveBlob(new Blob(chunks.value.filter((chunk): chunk is Blob => chunk !== null), { type: nextPlan.contentType }), nextPlan.fileName)
+    }
     state.value = reduceManagedDownloadState(state.value, { type: 'complete' })
   } catch (error) {
     if (isPaused.value) {
@@ -110,14 +121,22 @@ async function resumeManagedDownload() {
   state.value = reduceManagedDownloadState(state.value, { type: 'resume' })
 
   try {
-    await downloadMissingChunks(plan.value)
+    if (requiresStreamingManagedDownload(plan.value.fileSizeBytes)) {
+      chunks.value = []
+      await streamDownloadToDisk(plan.value)
+    } else {
+      await downloadMissingChunksToMemory(plan.value)
+    }
+
     if (isPaused.value) {
       state.value = reduceManagedDownloadState(state.value, { type: 'pause' })
       return
     }
 
-    state.value = reduceManagedDownloadState(state.value, { type: 'saving' })
-    saveBlob(new Blob(chunks.value.filter((chunk): chunk is Blob => chunk !== null), { type: plan.value.contentType }), plan.value.fileName)
+    if (canUseBlobManagedDownload(plan.value.fileSizeBytes)) {
+      state.value = reduceManagedDownloadState(state.value, { type: 'saving' })
+      saveBlob(new Blob(chunks.value.filter((chunk): chunk is Blob => chunk !== null), { type: plan.value.contentType }), plan.value.fileName)
+    }
     state.value = reduceManagedDownloadState(state.value, { type: 'complete' })
   } catch (error) {
     if (isPaused.value) {
@@ -140,7 +159,7 @@ function pauseManagedDownload() {
   state.value = reduceManagedDownloadState(state.value, { type: 'pause' })
 }
 
-async function downloadMissingChunks(downloadPlan: BrowserManagedDownloadPlan) {
+async function downloadMissingChunksToMemory(downloadPlan: BrowserManagedDownloadPlan) {
   let completedBytes = chunks.value.reduce((total, chunk) => total + (chunk?.size ?? 0), 0)
   for (const chunk of downloadPlan.chunks) {
     if (isPaused.value) {
@@ -159,6 +178,43 @@ async function downloadMissingChunks(downloadPlan: BrowserManagedDownloadPlan) {
       chunkIndex: chunk.index,
       downloadedBytes: completedBytes,
     })
+  }
+}
+
+async function streamDownloadToDisk(downloadPlan: BrowserManagedDownloadPlan) {
+  const picker = window.showSaveFilePicker
+  if (typeof picker !== 'function') {
+    throw new Error(largeFileStreamingRequiredMessage)
+  }
+
+  const handle = await picker({
+    suggestedName: downloadPlan.fileName,
+  })
+  const writable = await handle.createWritable()
+  let completedBytes = 0
+
+  try {
+    for (const chunk of downloadPlan.chunks) {
+      if (isPaused.value) {
+        await writable.abort()
+        return
+      }
+
+      const buffer = await fetchVerifiedChunkBufferWithRetry(downloadPlan, chunk)
+      await writable.write(buffer)
+      completedBytes += buffer.byteLength
+      state.value = reduceManagedDownloadState(state.value, {
+        type: 'chunk-progress',
+        chunkIndex: chunk.index,
+        downloadedBytes: completedBytes,
+      })
+    }
+
+    state.value = reduceManagedDownloadState(state.value, { type: 'saving' })
+    await writable.close()
+  } catch (error) {
+    await writable.abort().catch(() => {})
+    throw error
   }
 }
 
@@ -185,14 +241,41 @@ async function fetchChunkWithRetry(downloadPlan: BrowserManagedDownloadPlan, chu
 }
 
 async function fetchChunk(downloadPlan: BrowserManagedDownloadPlan, chunk: BrowserManagedDownloadChunk) {
+  const buffer = await fetchVerifiedChunkBuffer(downloadPlan, chunk)
+  return new Blob([buffer], { type: downloadPlan.contentType })
+}
+
+async function fetchVerifiedChunkBufferWithRetry(downloadPlan: BrowserManagedDownloadPlan, chunk: BrowserManagedDownloadChunk) {
+  for (let attempt = 0; attempt <= downloadPlan.maxRetriesPerChunk; attempt++) {
+    if (attempt > 0) {
+      state.value = reduceManagedDownloadState(state.value, {
+        type: 'chunk-retry',
+        chunkIndex: chunk.index,
+        retryCount: attempt,
+      })
+    }
+
+    try {
+      return await fetchVerifiedChunkBuffer(downloadPlan, chunk)
+    } catch (error) {
+      if (isPaused.value || attempt >= downloadPlan.maxRetriesPerChunk) {
+        throw error
+      }
+    }
+  }
+
+  throw new Error(`Chunk ${chunk.index} failed.`)
+}
+
+async function fetchVerifiedChunkBuffer(downloadPlan: BrowserManagedDownloadPlan, chunk: BrowserManagedDownloadChunk) {
   if (chunk.sizeBytes === 0) {
     const emptyBuffer = new ArrayBuffer(0)
     const actualHash = await sha256Hex(emptyBuffer)
     if (actualHash !== chunk.sha256) {
-      throw new Error(`Chunk ${chunk.index} failed integrity verification.`)
+      throwChunkIntegrityError(chunk.index)
     }
 
-    return new Blob([emptyBuffer], { type: downloadPlan.contentType })
+    return emptyBuffer
   }
 
   activeController.value = new AbortController()
@@ -215,10 +298,14 @@ async function fetchChunk(downloadPlan: BrowserManagedDownloadPlan, chunk: Brows
 
   const actualHash = await sha256Hex(buffer)
   if (actualHash !== chunk.sha256) {
-    throw new Error(`Chunk ${chunk.index} failed integrity verification.`)
+    throwChunkIntegrityError(chunk.index)
   }
 
-  return new Blob([buffer], { type: downloadPlan.contentType })
+  return buffer
+}
+
+function throwChunkIntegrityError(chunkIndex: number): never {
+  throw new Error(`Chunk ${chunkIndex} failed integrity verification. The shared file may have changed after the download plan was created. Restart the download or use Direct download.`)
 }
 
 async function sha256Hex(buffer: ArrayBuffer) {

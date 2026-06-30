@@ -136,10 +136,17 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal("chunks.bin", plan.GetProperty("fileName").GetString());
         Assert.Equal(bytes.Length, plan.GetProperty("fileSizeBytes").GetInt64());
         Assert.Equal("application/octet-stream", plan.GetProperty("contentType").GetString());
-        Assert.Contains("download=raw", plan.GetProperty("rawDownloadUrl").GetString());
         Assert.Equal("bytes", plan.GetProperty("rangeUnit").GetString());
         Assert.Equal("sha-256", plan.GetProperty("integrityAlgorithm").GetString());
+        Assert.True(plan.GetProperty("lastModifiedUtcTicks").GetInt64() > 0);
+        Assert.False(string.IsNullOrWhiteSpace(plan.GetProperty("lastModifiedUtc").GetString()));
+        Assert.Equal(64, plan.GetProperty("planHash").GetString()?.Length);
         Assert.Equal(65536, plan.GetProperty("chunkSizeBytes").GetInt32());
+        Assert.Contains("download=raw", plan.GetProperty("rawDownloadUrl").GetString());
+        Assert.Contains("ifsPlanHash=", plan.GetProperty("rawDownloadUrl").GetString());
+        Assert.Contains("ifsPlanSize=", plan.GetProperty("rawDownloadUrl").GetString());
+        Assert.Contains("ifsPlanModified=", plan.GetProperty("rawDownloadUrl").GetString());
+        Assert.Contains("chunkSize=65536", plan.GetProperty("rawDownloadUrl").GetString());
 
         var chunks = plan.GetProperty("chunks").EnumerateArray().ToArray();
         Assert.Equal(2, chunks.Length);
@@ -151,6 +158,35 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal(69999, chunks[1].GetProperty("end").GetInt64());
         Assert.Equal(4464, chunks[1].GetProperty("sizeBytes").GetInt64());
         Assert.Equal(ComputeSha256Hex(bytes, 65536, 4464), chunks[1].GetProperty("sha256").GetString());
+    }
+
+    [Fact]
+    public async Task BrowserManagedDownloadPlan_RawChunkRequestRejectsStaleLiveFile()
+    {
+        var filePath = string.Empty;
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            filePath = Path.Combine(context.FilesDirectory, "live.bin");
+            await File.WriteAllBytesAsync(filePath, [1, 2, 3, 4]);
+            await context.Store.SaveSettingsAsync(context.Settings with { FileChangeBehavior = FileChangeBehavior.Lenient }, CancellationToken.None);
+            await context.Store.AddShareAsync(context.CreateFileShare("live-token", filePath), CancellationToken.None);
+        });
+
+        using var planResponse = await host.PublicClient.GetAsync("/s/live-token?ifs=download-plan&chunkSize=65536");
+        var plan = await planResponse.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        var rawDownloadUrl = plan.GetProperty("rawDownloadUrl").GetString();
+
+        await Task.Delay(20);
+        await File.WriteAllBytesAsync(filePath, [9, 8, 7, 6]);
+        File.SetLastWriteTimeUtc(filePath, DateTime.UtcNow.AddSeconds(1));
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(rawDownloadUrl!).PathAndQuery);
+        request.Headers.Range = new RangeHeaderValue(0, 3);
+        using var response = await host.PublicClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("changed after the browser-managed download plan was created", body);
     }
 
     [Fact]

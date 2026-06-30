@@ -22,6 +22,9 @@ internal static class PublicShareEndpoints
     private const string DownloadPlanQueryValue = "download-plan";
     private const string ManagedDownloadQueryValue = "managed";
     private const string RawDownloadQueryValue = "raw";
+    private const string PlanHashQueryName = "ifsPlanHash";
+    private const string PlanSizeQueryName = "ifsPlanSize";
+    private const string PlanModifiedQueryName = "ifsPlanModified";
     private const string PartialUploadSuffix = ".downloadpart";
     private const string BinaryChunkContentType = "application/octet-stream";
     private const string UploadIdHeaderName = "X-IFS-Upload-Id";
@@ -47,6 +50,9 @@ internal static class PublicShareEndpoints
         string RawDownloadUrl,
         string RangeUnit,
         string IntegrityAlgorithm,
+        string LastModifiedUtc,
+        long LastModifiedUtcTicks,
+        string PlanHash,
         int ChunkSizeBytes,
         int MaxRetriesPerChunk,
         IReadOnlyList<BrowserManagedDownloadChunk> Chunks,
@@ -2108,6 +2114,11 @@ internal static class PublicShareEndpoints
             return Results.Empty;
         }
 
+        if (!TryValidateBrowserManagedDownloadPlanBinding(context.Request, file, responseFileName, out var bindingError))
+        {
+            return Results.Conflict(new { message = bindingError });
+        }
+
         var (clientSessionId, setCookie) = DownloadSessionManager.ResolveDownloadSession(context, share.Token);
         var clientFingerprint = RequestAddressResolver.BuildClientFingerprint(remoteAddress, userAgent);
         var requestedRange = allowRangeRequests ? context.Request.GetTypedHeaders().Range?.Ranges.FirstOrDefault() : null;
@@ -2222,22 +2233,87 @@ internal static class PublicShareEndpoints
             return Results.NotFound();
         }
 
+        file.Refresh();
         var chunkSizeBytes = ResolveBrowserManagedDownloadChunkSize(context.Request);
+        var lastModifiedUtc = file.LastWriteTimeUtc;
+        var lastModifiedUtcTicks = lastModifiedUtc.Ticks;
+        var planHash = ComputeBrowserManagedDownloadPlanHash(responseFileName, file.Length, lastModifiedUtcTicks, chunkSizeBytes);
         var chunks = await BuildBrowserManagedDownloadChunksAsync(file, chunkSizeBytes, cancellationToken);
         var payload = new BrowserManagedDownloadPlan(
             responseFileName,
             file.Length,
             fileResponseMetadata.ContentType,
-            BuildCurrentUrl(context, [("download", RawDownloadQueryValue)]),
+            BuildCurrentUrl(context, [
+                ("download", RawDownloadQueryValue),
+                (PlanHashQueryName, planHash),
+                (PlanSizeQueryName, file.Length.ToString(CultureInfo.InvariantCulture)),
+                (PlanModifiedQueryName, lastModifiedUtcTicks.ToString(CultureInfo.InvariantCulture)),
+                ("chunkSize", chunkSizeBytes.ToString(CultureInfo.InvariantCulture)),
+            ]),
             "bytes",
             "sha-256",
+            lastModifiedUtc.ToString("O", CultureInfo.InvariantCulture),
+            lastModifiedUtcTicks,
+            planHash,
             chunkSizeBytes,
             PublicSharePageModelFactory.BrowserManagedDownloadMaxRetriesPerChunk,
             chunks,
-            "The browser-managed downloader fetches byte ranges, verifies every chunk hash, retries failed chunks, and assembles a Blob before saving. Direct raw download remains available.");
+            "The browser-managed downloader fetches byte ranges, verifies every chunk hash, retries failed chunks, and saves small files through a Blob. Large files require File System Access streaming or direct raw download. Shares are live file references; if the file changes after this plan is generated, chunk requests fail and the download must be restarted.");
 
         context.Response.Headers.CacheControl = "no-store";
         return Results.Json(payload);
+    }
+
+    private static bool TryValidateBrowserManagedDownloadPlanBinding(
+        HttpRequest request,
+        FileInfo file,
+        string responseFileName,
+        out string? error)
+    {
+        error = null;
+        var planHash = request.Query[PlanHashQueryName].ToString();
+        if (string.IsNullOrWhiteSpace(planHash))
+        {
+            return true;
+        }
+
+        if (!long.TryParse(request.Query[PlanSizeQueryName], NumberStyles.Integer, CultureInfo.InvariantCulture, out var expectedSize) ||
+            !long.TryParse(request.Query[PlanModifiedQueryName], NumberStyles.Integer, CultureInfo.InvariantCulture, out var expectedModifiedUtcTicks))
+        {
+            error = "The browser-managed download plan is missing file binding metadata. Restart the download.";
+            return false;
+        }
+
+        file.Refresh();
+        var actualHash = ComputeBrowserManagedDownloadPlanHash(
+            responseFileName,
+            file.Length,
+            file.LastWriteTimeUtc.Ticks,
+            ResolveBrowserManagedDownloadChunkSize(request));
+
+        if (file.Length != expectedSize ||
+            file.LastWriteTimeUtc.Ticks != expectedModifiedUtcTicks ||
+            !CryptographicOperations.FixedTimeEquals(
+                Encoding.ASCII.GetBytes(planHash),
+                Encoding.ASCII.GetBytes(actualHash)))
+        {
+            error = "The shared file changed after the browser-managed download plan was created. Restart the download or use direct download.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static string ComputeBrowserManagedDownloadPlanHash(
+        string responseFileName,
+        long fileSizeBytes,
+        long lastModifiedUtcTicks,
+        int chunkSizeBytes)
+    {
+        var input = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{responseFileName}\n{fileSizeBytes}\n{lastModifiedUtcTicks}\n{chunkSizeBytes}");
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input))).ToLowerInvariant();
     }
 
     private static async Task<IReadOnlyList<BrowserManagedDownloadChunk>> BuildBrowserManagedDownloadChunksAsync(
