@@ -37,6 +37,8 @@ Run the automated test suite:
 powershell -ExecutionPolicy Bypass -File .\scripts\test.ps1
 ```
 
+For focused unit, integration, public-share, and browser E2E commands, see [docs/test-workflow.md](docs/test-workflow.md).
+
 1. Build the backend and run solution tests:
 
    ```powershell
