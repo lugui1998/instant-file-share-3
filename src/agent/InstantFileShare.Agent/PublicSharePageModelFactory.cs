@@ -17,21 +17,23 @@ internal sealed class PublicSharePageModelFactory
             ? $"Open this link to view {responseFileName} in your browser or download it."
             : $"Open this link to download {responseFileName}.";
 
+        var currentUrl = BuildCurrentUrl(context);
         return new PublicSharePageModel(
             Kind: "file",
             Title: responseFileName,
             Description: description,
-            CanonicalUrl: BuildCurrentUrl(context),
+            CanonicalUrl: currentUrl,
             SiteName: "Instant File Share",
             RepositoryUrl: Defaults.RepositoryUrl,
             PrimaryActionLabel: $"{actionVerb} file",
-            PrimaryActionUrl: BuildCurrentUrl(context),
+            PrimaryActionUrl: currentUrl,
             File: new PublicShareFileModel(
                 responseFileName,
                 FormatFileSize(file.Length),
                 fileResponseMetadata.PreferInline,
                 actionVerb,
-                actionLabel),
+                actionLabel,
+                CreateBrowserTransferEncryptionExperiment(currentUrl)),
             Folder: null,
             Zip: null,
             Receive: null);
@@ -139,7 +141,20 @@ internal sealed class PublicSharePageModelFactory
                 Math.Max(
                     Defaults.MinimumReceiveUploadChunkTargetSeconds,
                     settings.ReceiveUploadChunkTargetSeconds <= 0 ? Defaults.DefaultReceiveUploadChunkTargetSeconds : settings.ReceiveUploadChunkTargetSeconds),
+                CreateBrowserTransferEncryptionExperiment(BuildCurrentPath(context)),
                 receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
+    }
+
+    private static BrowserTransferEncryptionExperimentModel CreateBrowserTransferEncryptionExperiment(string baseUrl)
+    {
+        return new BrowserTransferEncryptionExperimentModel(
+            DownloadManifestUrl: AppendQueryValue(baseUrl, "ifs", "encrypted-download-plan"),
+            EncryptedDownloadUrl: AppendQueryValue(baseUrl, "ifs", "encrypted-download"),
+            FragmentKeyParameter: "ifs-key",
+            Algorithm: "AES-GCM",
+            IvStrategy: "96-bit AES-GCM IV: 4 random nonce-prefix bytes plus an 8-byte big-endian chunk index; never reuse an IV with the same key.",
+            KeyDelivery: "Prototype keys are passed in the URL fragment so browsers do not include them in HTTP requests.",
+            ReceiveUploadModes: ["store-encrypted"]);
     }
 
     private static string ResolveReceivePageTitle(AppSettings settings)
@@ -218,6 +233,12 @@ internal sealed class PublicSharePageModelFactory
     {
         var path = $"{context.Request.PathBase}{context.Request.Path}";
         return string.IsNullOrEmpty(path) ? "/" : path;
+    }
+
+    private static string AppendQueryValue(string url, string name, string value)
+    {
+        var separator = url.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+        return $"{url}{separator}{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}";
     }
 
     private static string EncodeRelativePath(string relativePath)

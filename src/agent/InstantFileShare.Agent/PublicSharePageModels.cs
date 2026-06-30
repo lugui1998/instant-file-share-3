@@ -19,7 +19,17 @@ internal sealed record PublicShareFileModel(
     string DisplaySize,
     bool PreferInline,
     string ActionVerb,
-    string ActionLabel);
+    string ActionLabel,
+    BrowserTransferEncryptionExperimentModel? EncryptionExperiment);
+
+internal sealed record BrowserTransferEncryptionExperimentModel(
+    string DownloadManifestUrl,
+    string EncryptedDownloadUrl,
+    string FragmentKeyParameter,
+    string Algorithm,
+    string IvStrategy,
+    string KeyDelivery,
+    IReadOnlyList<string> ReceiveUploadModes);
 
 internal sealed record PublicShareFolderModel(
     string Name,
@@ -47,6 +57,7 @@ internal sealed record PublicShareReceiveModel(
     long UploadChunkSizeBytes,
     long UploadMaxBodySizeBytes,
     int UploadChunkTargetSeconds,
+    BrowserTransferEncryptionExperimentModel? EncryptionExperiment,
     string? ExpiresAtLabel);
 
 internal sealed record PublicShareBreadcrumb(string Label, string Href);
