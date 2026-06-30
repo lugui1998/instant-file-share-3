@@ -34,6 +34,7 @@ internal static class PublicShareEndpoints
     private const int AdaptiveChunkGrowthFactor = 2;
     private const long MaximumAdaptiveChunkSizeBytes = 64L * 1024 * 1024;
     private const int ReceiveUploadBufferSizeBytes = 1024 * 1024;
+    private const int MaximumCompressedUploadExpansionRatio = 128;
     private static readonly JsonSerializerOptions WebSocketJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly ConcurrentDictionary<string, ReceiveUploadSpeedState> ReceiveUploadSpeedStates = new(StringComparer.Ordinal);
 
@@ -378,8 +379,6 @@ internal static class PublicShareEndpoints
             return HandleReceiveUploadBatchComplete(context, receiveLink, batchNotificationTracker);
         }
 
-        DisableRequestBodySizeLimit(context);
-
         if (IsReceiveUploadCompressedStreamRequest(context.Request))
         {
             return await HandleReceiveCompressedStreamUploadAsync(
@@ -392,6 +391,8 @@ internal static class PublicShareEndpoints
                 chunkSessionStore,
                 cancellationToken);
         }
+
+        DisableRequestBodySizeLimit(context);
 
         if (IsReceiveUploadBinaryChunkRequest(context.Request))
         {
@@ -622,6 +623,18 @@ internal static class PublicShareEndpoints
         }
 
         var settings = await coordinator.GetSettingsAsync(cancellationToken);
+        if (!TryValidateCompressedStreamUploadLimits(
+            context.Request,
+            receiveLink,
+            settings,
+            fileName,
+            clientRelativePath,
+            expectedFileSize,
+            out var limitError))
+        {
+            return limitError!;
+        }
+
         var remoteAddress = RequestAddressResolver.ResolveClientIpAddress(context);
         var clientFingerprint = RequestAddressResolver.BuildClientFingerprint(remoteAddress, context.Request.Headers.UserAgent.ToString());
         var uploadPlanState = new ReceiveUploadPlanState(receiveLink.TargetDirectoryPath);
@@ -643,7 +656,9 @@ internal static class PublicShareEndpoints
                 keepAwakeNotified = true;
             }
 
-            await using var countingBody = new CountingReadStream(context.Request.Body);
+            await using var countingBody = new CountingReadStream(
+                context.Request.Body,
+                ResolveReceiveUploadMaxBodySizeBytes(settings.ReceiveUploadMaxBodySizeBytes));
             await using var decodedStream = new GZipStream(countingBody, CompressionMode.Decompress, leaveOpen: false);
             var streamResult = await SaveCompressedReceiveUploadSectionAsync(
                 decodedStream,
@@ -1322,6 +1337,13 @@ internal static class PublicShareEndpoints
                 receiveLink,
                 new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "The decoded upload size did not match the declared file size.", decodedBytesWritten));
         }
+        catch (ReceiveUploadCompressedBodyTooLargeException)
+        {
+            await RollBackFailedUploadAsync(coordinator, receiveLink.Id, reservedBytes, partialDestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, compressedWireStream.BytesRead);
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "The compressed upload body exceeds the configured size limit.", decodedBytesWritten));
+        }
         catch (ReceiveUploadUnavailableException)
         {
             await RollBackFailedUploadAsync(coordinator, receiveLink.Id, reservedBytes, partialDestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, compressedWireStream.BytesRead);
@@ -1688,6 +1710,56 @@ internal static class PublicShareEndpoints
         }
 
         return true;
+    }
+
+    private static bool TryValidateCompressedStreamUploadLimits(
+        HttpRequest request,
+        ReceiveLinkRecord receiveLink,
+        AppSettings settings,
+        string fileName,
+        string clientRelativePath,
+        long expectedFileSize,
+        out IResult? error)
+    {
+        error = null;
+        var compressedBodyLimitBytes = ResolveReceiveUploadMaxBodySizeBytes(settings.ReceiveUploadMaxBodySizeBytes);
+        if (request.ContentLength is > 0 &&
+            request.ContentLength.Value > compressedBodyLimitBytes)
+        {
+            error = Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            return false;
+        }
+
+        var remainingQuotaBytes = receiveLink.MaxTotalBytes > 0
+            ? Math.Max(0, receiveLink.MaxTotalBytes - receiveLink.BytesReceived)
+            : 0;
+        if (receiveLink.MaxTotalBytes > 0 && expectedFileSize > remainingQuotaBytes)
+        {
+            error = CreateReceiveUploadBatchResponse(new ReceiveUploadBatchResult(
+                0,
+                1,
+                remainingQuotaBytes,
+                [new ReceiveUploadFileResult(fileName, clientRelativePath, null, false, "This receive link has reached its upload limit.", 0)]));
+            return false;
+        }
+
+        if (request.ContentLength is > 0 &&
+            expectedFileSize / MaximumCompressedUploadExpansionRatio > request.ContentLength.Value)
+        {
+            error = CreateReceiveUploadBatchResponse(new ReceiveUploadBatchResult(
+                0,
+                1,
+                remainingQuotaBytes,
+                [new ReceiveUploadFileResult(fileName, clientRelativePath, null, false, "The declared decoded size exceeds the compressed upload expansion limit.", 0)]));
+            return false;
+        }
+
+        return true;
+    }
+
+    private static long ResolveReceiveUploadMaxBodySizeBytes(long maxBodySizeBytes)
+    {
+        return Math.Max(Defaults.MinimumReceiveUploadChunkSizeBytes, maxBodySizeBytes);
     }
 
     private static bool TryReadBinaryChunkHeaders(
@@ -2207,9 +2279,11 @@ internal static class PublicShareEndpoints
 
     private sealed class ReceiveUploadCanceledException : Exception;
 
+    private sealed class ReceiveUploadCompressedBodyTooLargeException : Exception;
+
     private sealed class ReceiveUploadUnavailableException : Exception;
 
-    private sealed class CountingReadStream(Stream inner) : Stream
+    private sealed class CountingReadStream(Stream inner, long? maxBytesRead = null) : Stream
     {
         public long BytesRead { get; private set; }
 
@@ -2231,15 +2305,31 @@ internal static class PublicShareEndpoints
         public override int Read(byte[] buffer, int offset, int count)
         {
             var bytesRead = inner.Read(buffer, offset, count);
-            BytesRead += bytesRead;
+            CountBytesRead(bytesRead);
             return bytesRead;
         }
 
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             var bytesRead = await inner.ReadAsync(buffer, cancellationToken);
-            BytesRead += bytesRead;
+            CountBytesRead(bytesRead);
             return bytesRead;
+        }
+
+        private void CountBytesRead(int bytesRead)
+        {
+            if (bytesRead <= 0)
+            {
+                return;
+            }
+
+            var nextBytesRead = BytesRead + bytesRead;
+            if (maxBytesRead is > 0 && nextBytesRead > maxBytesRead.Value)
+            {
+                throw new ReceiveUploadCompressedBodyTooLargeException();
+            }
+
+            BytesRead = nextBytesRead;
         }
 
         public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
@@ -2288,6 +2378,11 @@ internal static class PublicShareEndpoints
         }
 
         if (failedMessages.Any(message => message.Contains("upload limit", StringComparison.OrdinalIgnoreCase)))
+        {
+            return StatusCodes.Status413PayloadTooLarge;
+        }
+
+        if (failedMessages.Any(message => message.Contains("configured size limit", StringComparison.OrdinalIgnoreCase)))
         {
             return StatusCodes.Status413PayloadTooLarge;
         }

@@ -702,6 +702,64 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
+    public async Task ReceiveUpload_RejectsCompressedStreamWhenCompressedBodyExceedsConfiguredLimit()
+    {
+        var contentBytes = new byte[Defaults.MinimumReceiveUploadChunkSizeBytes + 1];
+        new Random(42).NextBytes(contentBytes);
+
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            await context.Store.SaveSettingsAsync(
+                context.Settings with { ReceiveUploadMaxBodySizeBytes = Defaults.MinimumReceiveUploadChunkSizeBytes },
+                CancellationToken.None);
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var request = CreateCompressedStreamUploadRequest(
+            relativePath: "compressed/too-large.gz",
+            expectedDecodedBytes: contentBytes.Length,
+            contentBytes);
+        using var response = await host.PublicClient.SendAsync(request);
+        using var transfersResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var transfers = await transfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.False(File.Exists(Path.Combine(host.FilesDirectory, "drop", "compressed", "too-large.gz")));
+        AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
+        Assert.Empty(transfers!);
+    }
+
+    [Fact]
+    public async Task ReceiveUpload_RejectsCompressedStreamWhenDeclaredDecodedSizeExceedsQuota()
+    {
+        var contentBytes = System.Text.Encoding.UTF8.GetBytes("small");
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLinkWithQuota("receive-token", dropPath, 8), CancellationToken.None);
+        });
+
+        using var request = CreateCompressedStreamUploadRequest(
+            relativePath: "compressed/quota.txt",
+            expectedDecodedBytes: 9,
+            contentBytes);
+        using var response = await host.PublicClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        using var transfersResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var transfers = await transfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.Contains("\"uploadedCount\":0", body);
+        Assert.Contains("This receive link has reached its upload limit.", body);
+        Assert.False(File.Exists(Path.Combine(host.FilesDirectory, "drop", "compressed", "quota.txt")));
+        AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
+        Assert.Empty(transfers!);
+    }
+
+    [Fact]
     public async Task ReceiveUpload_AssemblesWebSocketChunkedFile()
     {
         await using var host = await AgentTestHost.StartAsync(async context =>
