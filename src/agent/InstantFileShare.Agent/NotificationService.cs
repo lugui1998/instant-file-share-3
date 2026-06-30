@@ -29,8 +29,7 @@ internal sealed class NotificationService : IHostedService, INotificationService
                 Visible = true,
                 ContextMenuStrip = BuildMenu(),
             };
-            _notifyIcon.MouseClick += (_, args) => HandleTrayMouseClick(args.Button);
-            _notifyIcon.DoubleClick += (_, _) => RequestOpenDashboard();
+            _notifyIcon.DoubleClick += (_, _) => OpenDashboardRequested?.Invoke();
             _ready.TrySetResult();
             Application.Run();
         });
@@ -84,22 +83,10 @@ internal sealed class NotificationService : IHostedService, INotificationService
     private ContextMenuStrip BuildMenu()
     {
         var menu = new ContextMenuStrip();
-        menu.Items.Add("Open Dashboard", null, (_, _) => RequestOpenDashboard());
+        menu.Items.Add("Open Dashboard", null, (_, _) => OpenDashboardRequested?.Invoke());
         menu.Items.Add("Exit", null, (_, _) => Environment.Exit(0));
         return menu;
     }
-
-    internal void HandleTrayMouseClick(MouseButtons button)
-    {
-        if (button != MouseButtons.Left)
-        {
-            return;
-        }
-
-        RequestOpenDashboard();
-    }
-
-    private void RequestOpenDashboard() => OpenDashboardRequested?.Invoke();
 
     private void Show(string title, string text, ToolTipIcon icon)
     {
