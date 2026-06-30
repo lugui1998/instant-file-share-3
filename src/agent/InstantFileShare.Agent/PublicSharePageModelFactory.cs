@@ -4,6 +4,9 @@ namespace InstantFileShare.Agent;
 
 internal sealed class PublicSharePageModelFactory
 {
+    public const int BrowserManagedDownloadChunkSizeBytes = 4 * 1024 * 1024;
+    public const int BrowserManagedDownloadMaxRetriesPerChunk = 3;
+
     public PublicSharePageModel BuildFileMetadataPage(
         HttpContext context,
         ShareRecord share,
@@ -16,22 +19,33 @@ internal sealed class PublicSharePageModelFactory
         var actionLabel = fileResponseMetadata.PreferInline
             ? $"Open this link to view {responseFileName} in your browser or download it."
             : $"Open this link to download {responseFileName}.";
+        var currentUrl = BuildCurrentUrl(context);
+        var rawDownloadUrl = AppendQueryValue(currentUrl, "download", "raw");
 
         return new PublicSharePageModel(
             Kind: "file",
             Title: responseFileName,
             Description: description,
-            CanonicalUrl: BuildCurrentUrl(context),
+            CanonicalUrl: currentUrl,
             SiteName: "Instant File Share",
             RepositoryUrl: Defaults.RepositoryUrl,
-            PrimaryActionLabel: $"{actionVerb} file",
-            PrimaryActionUrl: BuildCurrentUrl(context),
+            PrimaryActionLabel: fileResponseMetadata.PreferInline ? $"{actionVerb} file" : "Direct download",
+            PrimaryActionUrl: fileResponseMetadata.PreferInline ? currentUrl : rawDownloadUrl,
             File: new PublicShareFileModel(
                 responseFileName,
                 FormatFileSize(file.Length),
                 fileResponseMetadata.PreferInline,
                 actionVerb,
-                actionLabel),
+                actionLabel,
+                fileResponseMetadata.PreferInline
+                    ? null
+                    : new PublicShareManagedDownloadModel(
+                        ManifestUrl: AppendQueryValue(currentUrl, "ifs", "download-plan"),
+                        RawDownloadUrl: rawDownloadUrl,
+                        FileSizeBytes: file.Length,
+                        DefaultChunkSizeBytes: BrowserManagedDownloadChunkSizeBytes,
+                        MaxRetriesPerChunk: BrowserManagedDownloadMaxRetriesPerChunk,
+                        SaveLimitationNote: "The browser-managed downloader verifies Range chunks and assembles a Blob before saving. Very large files may require substantial browser memory; direct download remains available.")),
             Folder: null,
             Zip: null,
             Receive: null);
@@ -212,6 +226,12 @@ internal sealed class PublicSharePageModelFactory
     private static string BuildCurrentUrl(HttpContext context)
     {
         return $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{context.Request.Path}";
+    }
+
+    private static string AppendQueryValue(string url, string name, string value)
+    {
+        var separator = url.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+        return $"{url}{separator}{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}";
     }
 
     private static string BuildCurrentPath(HttpContext context)

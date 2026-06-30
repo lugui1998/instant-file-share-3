@@ -4,6 +4,7 @@ using System.Net.WebSockets;
 using System.Net.Sockets;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using InstantFileShare.Agent;
@@ -60,6 +61,96 @@ public sealed class AgentHttpIntegrationTests
         Assert.Contains("\"repositoryUrl\":\"https://github.com/lugui1998/instant-file-share-3\"", body);
         Assert.Contains("og:title", body);
         Assert.Contains("<link rel=\"icon\" href=\"/favicon.ico\" />", body);
+    }
+
+    [Fact]
+    public async Task BrowserManagedDownloadPageRequest_ReturnsShellForNonInlineBrowserClients_AndKeepsRawFallback()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "archive.bin");
+            await File.WriteAllTextAsync(filePath, "managed body");
+            await context.Store.AddShareAsync(context.CreateFileShare("managed-token", filePath), CancellationToken.None);
+        });
+
+        using var rawResponse = await host.PublicClient.GetAsync("/s/managed-token");
+        var rawBody = await rawResponse.Content.ReadAsStringAsync();
+        using var browserRequest = new HttpRequestMessage(HttpMethod.Get, "/s/managed-token");
+        browserRequest.Headers.Accept.ParseAdd("text/html");
+        using var pageResponse = await host.PublicClient.SendAsync(browserRequest);
+        var pageBody = await pageResponse.Content.ReadAsStringAsync();
+        using var rawBrowserRequest = new HttpRequestMessage(HttpMethod.Get, "/s/managed-token?download=raw");
+        rawBrowserRequest.Headers.Accept.ParseAdd("text/html");
+        using var rawBrowserResponse = await host.PublicClient.SendAsync(rawBrowserRequest);
+        var rawBrowserBody = await rawBrowserResponse.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, rawResponse.StatusCode);
+        Assert.Equal("managed body", rawBody);
+        Assert.Equal(HttpStatusCode.OK, pageResponse.StatusCode);
+        Assert.Equal("text/html; charset=utf-8", pageResponse.Content.Headers.ContentType?.ToString());
+        Assert.Contains("\"managedDownload\"", pageBody);
+        Assert.Contains("\"manifestUrl\":\"http://127.0.0.1:", pageBody);
+        Assert.Contains("ifs=download-plan", pageBody);
+        Assert.Contains("\"rawDownloadUrl\":\"http://127.0.0.1:", pageBody);
+        Assert.Contains("download=raw", pageBody);
+        Assert.Equal(HttpStatusCode.OK, rawBrowserResponse.StatusCode);
+        Assert.Equal("managed body", rawBrowserBody);
+    }
+
+    [Fact]
+    public async Task BrowserManagedDownloadPageRequest_DoesNotReplaceInlineBrowserContent()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "paper.pdf");
+            await File.WriteAllTextAsync(filePath, "%PDF-1.7");
+            await context.Store.AddShareAsync(context.CreateFileShare("pdf-token", filePath), CancellationToken.None);
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/s/pdf-token");
+        request.Headers.Accept.ParseAdd("text/html");
+        using var response = await host.PublicClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/pdf", response.Content.Headers.ContentType?.MediaType);
+        Assert.Equal("%PDF-1.7", body);
+    }
+
+    [Fact]
+    public async Task BrowserManagedDownloadPlan_ReturnsRangeChunksWithSha256Integrity()
+    {
+        var bytes = Enumerable.Range(0, 70000).Select(index => (byte)(index % 251)).ToArray();
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "chunks.bin");
+            await File.WriteAllBytesAsync(filePath, bytes);
+            await context.Store.AddShareAsync(context.CreateFileShare("chunks-token", filePath), CancellationToken.None);
+        });
+
+        using var response = await host.PublicClient.GetAsync("/s/chunks-token?ifs=download-plan&chunkSize=65536");
+        var plan = await response.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("application/json; charset=utf-8", response.Content.Headers.ContentType?.ToString());
+        Assert.Equal("chunks.bin", plan.GetProperty("fileName").GetString());
+        Assert.Equal(bytes.Length, plan.GetProperty("fileSizeBytes").GetInt64());
+        Assert.Equal("application/octet-stream", plan.GetProperty("contentType").GetString());
+        Assert.Contains("download=raw", plan.GetProperty("rawDownloadUrl").GetString());
+        Assert.Equal("bytes", plan.GetProperty("rangeUnit").GetString());
+        Assert.Equal("sha-256", plan.GetProperty("integrityAlgorithm").GetString());
+        Assert.Equal(65536, plan.GetProperty("chunkSizeBytes").GetInt32());
+
+        var chunks = plan.GetProperty("chunks").EnumerateArray().ToArray();
+        Assert.Equal(2, chunks.Length);
+        Assert.Equal(0, chunks[0].GetProperty("start").GetInt64());
+        Assert.Equal(65535, chunks[0].GetProperty("end").GetInt64());
+        Assert.Equal(65536, chunks[0].GetProperty("sizeBytes").GetInt64());
+        Assert.Equal(ComputeSha256Hex(bytes, 0, 65536), chunks[0].GetProperty("sha256").GetString());
+        Assert.Equal(65536, chunks[1].GetProperty("start").GetInt64());
+        Assert.Equal(69999, chunks[1].GetProperty("end").GetInt64());
+        Assert.Equal(4464, chunks[1].GetProperty("sizeBytes").GetInt64());
+        Assert.Equal(ComputeSha256Hex(bytes, 65536, 4464), chunks[1].GetProperty("sha256").GetString());
     }
 
     [Fact]
@@ -955,6 +1046,11 @@ public sealed class AgentHttpIntegrationTests
         var options = new JsonSerializerOptions(JsonSerializerDefaults.Web);
         options.Converters.Add(new JsonStringEnumConverter());
         return options;
+    }
+
+    private static string ComputeSha256Hex(byte[] bytes, int offset, int count)
+    {
+        return Convert.ToHexString(SHA256.HashData(bytes.AsSpan(offset, count))).ToLowerInvariant();
     }
 
     private static ByteArrayContent CreateFileContent(string value)
