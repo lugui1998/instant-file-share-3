@@ -606,7 +606,7 @@ function normalizeReceiveUploadMode(value: AppSettings['receiveUploadMode']) {
     return 'BinaryChunks'
   }
 
-  return value === 'BinaryChunks' || value === 'WebSocket'
+  return value === 'BinaryChunks' || value === 'WebSocket' || value === 'CompressedStream'
     ? value
     : 'MultipartChunks'
 }

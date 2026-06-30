@@ -50,7 +50,7 @@ export type PublicShareReceiveModel = {
   remainingQuotaBytes: number
   remainingQuotaLabel: string
   parallelUploadLimit: number
-  uploadMode: 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket'
+  uploadMode: 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket' | 'CompressedStream'
   uploadChunkSizingMode: 'Fixed' | 'Auto'
   uploadChunkSizeBytes: number
   uploadMaxBodySizeBytes: number

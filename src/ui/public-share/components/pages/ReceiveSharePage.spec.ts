@@ -128,6 +128,27 @@ class FakeWebSocket {
   }
 }
 
+class FakeCompressionStream {
+  readonly readable: ReadableStream<Uint8Array>
+  readonly writable: WritableStream<Uint8Array>
+
+  constructor(format: CompressionFormat) {
+    expect(format).toBe('gzip')
+    const transform = new TransformStream<Uint8Array, Uint8Array>()
+    this.readable = transform.readable
+    this.writable = transform.writable
+  }
+}
+
+class FakeResponse {
+  constructor(_body: unknown) {
+  }
+
+  async blob() {
+    return new Blob(['compressed'], { type: 'application/gzip' })
+  }
+}
+
 describe('ReceiveSharePage', () => {
   afterEach(() => {
     vi.useRealTimers()
@@ -547,6 +568,49 @@ describe('ReceiveSharePage', () => {
     await wrapper.find('.folder-toggle').trigger('click')
 
     expect(wrapper.text()).not.toContain('Saved as folder/large-video.bin')
+    expect(wrapper.find('.success-icon').exists()).toBe(true)
+  })
+
+  it('uploads files as compressed streams when configured', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
+    vi.stubGlobal('CompressionStream', FakeCompressionStream)
+    vi.stubGlobal('Response', FakeResponse)
+    const wrapper = mount(ReceiveSharePage, {
+      props: {
+        page: createPage({ uploadMode: 'CompressedStream' }),
+        receive: createReceive({ uploadMode: 'CompressedStream' }),
+      },
+    })
+    const file = createFile('report.txt', 'folder/report.txt', 'compress me')
+    Object.defineProperty(file, 'stream', {
+      configurable: true,
+      value: () => ({
+        pipeThrough: () => ({}),
+      }),
+    })
+    const input = wrapper.find('input[type="file"]')
+
+    Object.defineProperty(input.element, 'files', {
+      configurable: true,
+      value: [file],
+    })
+    await input.trigger('change')
+    await waitForCondition(() => FakeXMLHttpRequest.instances.length === 1)
+
+    expect(FakeXMLHttpRequest.instances).toHaveLength(1)
+    expect(FakeXMLHttpRequest.instances[0].sentBody).toBeInstanceOf(Blob)
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'Content-Type')).toBe('application/gzip')
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Relative-Path')).toBe(encodeURIComponent('folder/report.txt'))
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-File-Name')).toBe(encodeURIComponent('report.txt'))
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-File-Size')).toBe(file.size.toString())
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Upload-Id')).toBeTruthy()
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Batch-Id')).toBeTruthy()
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Chunk-Index')).toBeUndefined()
+
+    FakeXMLHttpRequest.instances[0].response = createUploadResponse()
+    FakeXMLHttpRequest.instances[0].emit('load')
+    await vi.dynamicImportSettled()
+
     expect(wrapper.find('.success-icon').exists()).toBe(true)
   })
 
@@ -1006,6 +1070,16 @@ function createFailedUploadResponse(message: string) {
         sizeBytes: 0,
       },
     ],
+  }
+}
+
+async function waitForCondition(predicate: () => boolean) {
+  for (let index = 0; index < 20; index += 1) {
+    if (predicate()) {
+      return
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
   }
 }
 
