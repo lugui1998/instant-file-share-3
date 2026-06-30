@@ -14,11 +14,12 @@ function createSettingsDraft(): AppSettings {
     defaultReceiveExpiryUnit: 'Hours',
     defaultReceiveMaxTotalBytes: 10 * 1024 * 1024 * 1024,
     receiveParallelUploadLimit: 4,
-    receiveUploadMode: 'MultipartChunks',
+    receiveUploadMode: 'Auto',
     receiveUploadChunkSizingMode: 'Fixed',
     receiveUploadChunkSizeBytes: 16 * 1024 * 1024,
     receiveUploadMaxBodySizeBytes: 95 * 1024 * 1024,
     receiveUploadChunkTargetSeconds: 30,
+    receiveUploadAutoProbeChunkCount: 4,
     folderBrowsePageTitle: '',
     receivePageTitle: '',
     friendlyUrlsEnabled: true,
@@ -134,10 +135,39 @@ describe('SettingsView', () => {
     expect(wrapper.text()).toContain('Upload mode')
     expect(select.exists()).toBe(true)
     expect(select.findAll('option').map((option) => option.attributes('value'))).toEqual([
+      'Auto',
       'MultipartChunks',
       'BinaryChunks',
       'WebSocket',
     ])
+  })
+
+  it('shows the auto probing threshold only for auto receive uploads', async () => {
+    const settingsDraft = createSettingsDraft()
+    const wrapper = mount(SettingsView, {
+      props: {
+        settingsDraft,
+        bandwidthValue: null,
+        bandwidthUnit: 'MB/s',
+        selectedDomain: '',
+        managedSubdomain: 'share',
+        cloudflaredStatus: null,
+        clearingTransferHistory: false,
+        managedStatus: null,
+        managedAvailability: null,
+        saveMessage: '',
+      },
+    })
+
+    const input = wrapper.find('#receive-upload-auto-probe-chunks')
+    expect(input.exists()).toBe(true)
+    expect(input.element).toHaveProperty('value', '4')
+    expect(input.attributes('min')).toBe('1')
+    expect(wrapper.text()).toContain('Default: 4 chunks')
+
+    await wrapper.find('#receive-upload-mode').setValue('BinaryChunks')
+
+    expect(wrapper.find('#receive-upload-auto-probe-chunks').exists()).toBe(false)
   })
 
   it('shows fixed and automatic packet sizing settings', async () => {

@@ -139,6 +139,9 @@ internal sealed class PublicSharePageModelFactory
                 Math.Max(
                     Defaults.MinimumReceiveUploadChunkTargetSeconds,
                     settings.ReceiveUploadChunkTargetSeconds <= 0 ? Defaults.DefaultReceiveUploadChunkTargetSeconds : settings.ReceiveUploadChunkTargetSeconds),
+                Math.Max(
+                    Defaults.MinimumReceiveUploadAutoProbeChunkCount,
+                    settings.ReceiveUploadAutoProbeChunkCount <= 0 ? Defaults.DefaultReceiveUploadAutoProbeChunkCount : settings.ReceiveUploadAutoProbeChunkCount),
                 receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
     }
 

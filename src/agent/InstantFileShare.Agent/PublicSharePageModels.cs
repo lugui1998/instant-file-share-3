@@ -47,6 +47,7 @@ internal sealed record PublicShareReceiveModel(
     long UploadChunkSizeBytes,
     long UploadMaxBodySizeBytes,
     int UploadChunkTargetSeconds,
+    int UploadAutoProbeChunkCount,
     string? ExpiresAtLabel);
 
 internal sealed record PublicShareBreadcrumb(string Label, string Href);
