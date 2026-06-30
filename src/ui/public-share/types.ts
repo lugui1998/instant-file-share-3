@@ -29,8 +29,8 @@ export type PublicShareFileModel = {
 }
 
 export type BrowserTransferEncryptionExperimentModel = {
-  downloadManifestUrl: string
-  encryptedDownloadUrl: string
+  downloadManifestUrl?: string | null
+  encryptedDownloadUrl?: string | null
   fragmentKeyParameter: string
   algorithm: 'AES-GCM'
   ivStrategy: string

@@ -33,7 +33,7 @@ internal sealed class PublicSharePageModelFactory
                 fileResponseMetadata.PreferInline,
                 actionVerb,
                 actionLabel,
-                CreateBrowserTransferEncryptionExperiment(currentUrl)),
+                EncryptionExperiment: null),
             Folder: null,
             Zip: null,
             Receive: null);
@@ -141,15 +141,15 @@ internal sealed class PublicSharePageModelFactory
                 Math.Max(
                     Defaults.MinimumReceiveUploadChunkTargetSeconds,
                     settings.ReceiveUploadChunkTargetSeconds <= 0 ? Defaults.DefaultReceiveUploadChunkTargetSeconds : settings.ReceiveUploadChunkTargetSeconds),
-                CreateBrowserTransferEncryptionExperiment(BuildCurrentPath(context)),
+                CreateBrowserTransferReceiveEncryptionExperiment(),
                 receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
     }
 
-    private static BrowserTransferEncryptionExperimentModel CreateBrowserTransferEncryptionExperiment(string baseUrl)
+    private static BrowserTransferEncryptionExperimentModel CreateBrowserTransferReceiveEncryptionExperiment()
     {
         return new BrowserTransferEncryptionExperimentModel(
-            DownloadManifestUrl: AppendQueryValue(baseUrl, "ifs", "encrypted-download-plan"),
-            EncryptedDownloadUrl: AppendQueryValue(baseUrl, "ifs", "encrypted-download"),
+            DownloadManifestUrl: null,
+            EncryptedDownloadUrl: null,
             FragmentKeyParameter: "ifs-key",
             Algorithm: "AES-GCM",
             IvStrategy: "96-bit AES-GCM IV: 4 random nonce-prefix bytes plus an 8-byte big-endian chunk index; never reuse an IV with the same key.",
@@ -233,12 +233,6 @@ internal sealed class PublicSharePageModelFactory
     {
         var path = $"{context.Request.PathBase}{context.Request.Path}";
         return string.IsNullOrEmpty(path) ? "/" : path;
-    }
-
-    private static string AppendQueryValue(string url, string name, string value)
-    {
-        var separator = url.Contains('?', StringComparison.Ordinal) ? "&" : "?";
-        return $"{url}{separator}{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}";
     }
 
     private static string EncodeRelativePath(string relativePath)

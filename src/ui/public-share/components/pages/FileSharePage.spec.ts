@@ -34,10 +34,11 @@ describe('FileSharePage', () => {
   it('decrypts an encrypted download with a URL-fragment key and never sends the key in requests', async () => {
     const keyBytes = new Uint8Array(32).fill(21)
     const key = await importBrowserTransferKey(keyBytes)
+    const noncePrefix = new Uint8Array([1, 2, 3, 4])
     const encrypted = await encryptBrowserTransferChunk(
       key,
       new TextEncoder().encode('browser secret'),
-      new Uint8Array([0, 0, 0, 0]),
+      noncePrefix,
       0,
     )
     window.location.hash = createBrowserTransferKeyFragment(keyBytes, 'download')
@@ -48,7 +49,7 @@ describe('FileSharePage', () => {
         fileName: 'secret.txt',
         contentType: 'text/plain',
         chunkIndex: 0,
-        ivBase64Url: 'AAAAAAAAAAAAAAAA',
+        ivBase64Url: 'AQIDBAAAAAAAAAAA',
         keyDelivery: 'fragment',
       }))
       .mockResolvedValueOnce(arrayBufferResponse(encrypted.ciphertext.buffer))
@@ -77,6 +78,55 @@ describe('FileSharePage', () => {
     expect(clickSpy).toHaveBeenCalled()
     expect(revokeSpy).toHaveBeenCalledWith('blob:download')
   })
+
+  it('offers the standard download action when encrypted decryption fails', async () => {
+    const keyBytes = new Uint8Array(32).fill(21)
+    window.location.hash = createBrowserTransferKeyFragment(keyBytes, 'download')
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        algorithm: 'AES-GCM',
+        encryptedDownloadUrl: '/s/file-token?ifs=encrypted-download',
+        fileName: 'secret.txt',
+        contentType: 'text/plain',
+        chunkIndex: 0,
+        ivBase64Url: 'AQIDBAAAAAAAAAAA',
+        keyDelivery: 'fragment',
+      }))
+      .mockResolvedValueOnce(arrayBufferResponse(new Uint8Array([1, 2, 3]).buffer)))
+    const wrapper = mount(FileSharePage, {
+      props: {
+        page: createPage(),
+        file: createFile(),
+      },
+    })
+
+    await wrapper.find('button').trigger('click')
+    await vi.waitFor(() => expect(wrapper.text()).toContain('Use the standard download action instead'))
+
+    const fallback = wrapper.find('a.icon-text-button')
+    expect(fallback.text()).toBe('Standard download')
+    expect(fallback.attributes('href')).toBe('https://example.test/s/file-token')
+  })
+
+  it('does not advertise encrypted downloads without a manifest URL', () => {
+    const file = createFile()
+    const wrapper = mount(FileSharePage, {
+      props: {
+        page: createPage(),
+        file: {
+          ...file,
+          encryptionExperiment: {
+            ...file.encryptionExperiment!,
+            downloadManifestUrl: null,
+            encryptedDownloadUrl: null,
+          },
+        },
+      },
+    })
+
+    expect(wrapper.text()).not.toContain('Encryption experiment')
+    expect(wrapper.find('button').exists()).toBe(false)
+  })
 })
 
 function createPage(): PublicSharePageModel {
@@ -87,6 +137,8 @@ function createPage(): PublicSharePageModel {
     canonicalUrl: 'https://example.test/s/file-token',
     siteName: 'Instant File Share',
     repositoryUrl: 'https://github.com/lugui1998/instant-file-share-3',
+    primaryActionLabel: 'Download file',
+    primaryActionUrl: 'https://example.test/s/file-token',
   }
 }
 

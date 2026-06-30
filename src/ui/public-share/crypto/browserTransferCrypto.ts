@@ -18,6 +18,7 @@ const noncePrefixBytes = aesGcmIvLengthBytes - chunkCounterBytes
 const fragmentKeyName = 'ifs-key'
 const fragmentVersionName = 'ifs-crypto'
 const fragmentModeName = 'ifs-mode'
+export const maxBrowserTransferBufferedBytes = 64 * 1024 * 1024
 
 export function getBrowserTransferNoncePrefixLength() {
   return noncePrefixBytes
@@ -54,6 +55,9 @@ export function createBrowserTransferIv(noncePrefix: Uint8Array, chunkIndex: num
   iv.set(noncePrefix, 0)
   const view = new DataView(iv.buffer, iv.byteOffset + noncePrefixBytes, chunkCounterBytes)
   view.setBigUint64(0, BigInt(chunkIndex), false)
+  if (iv.every((byte) => byte === 0)) {
+    throw new Error('AES-GCM IV must not be all zero.')
+  }
   return iv
 }
 
