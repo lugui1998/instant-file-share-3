@@ -46,6 +46,7 @@ public enum ReceiveUploadMode
     BinaryChunks = 1,
     AdaptiveBinaryChunks = 2,
     WebSocket = 3,
+    Auto = 4,
 }
 
 public enum ReceiveUploadChunkSizingMode

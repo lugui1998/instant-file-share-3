@@ -304,11 +304,12 @@ public sealed class PublicShareHelpersTests
         Assert.Equal("/r/receive-token", page.Receive.UploadUrl);
         Assert.Equal(768, page.Receive.RemainingQuotaBytes);
         Assert.Equal(5, page.Receive.ParallelUploadLimit);
-        Assert.Equal(ReceiveUploadMode.MultipartChunks.ToString(), page.Receive.UploadMode);
+        Assert.Equal(ReceiveUploadMode.Auto.ToString(), page.Receive.UploadMode);
         Assert.Equal(ReceiveUploadChunkSizingMode.Fixed.ToString(), page.Receive.UploadChunkSizingMode);
         Assert.Equal(Defaults.DefaultReceiveUploadChunkSizeBytes, page.Receive.UploadChunkSizeBytes);
         Assert.Equal(Defaults.DefaultReceiveUploadMaxBodySizeBytes, page.Receive.UploadMaxBodySizeBytes);
         Assert.Equal(Defaults.DefaultReceiveUploadChunkTargetSeconds, page.Receive.UploadChunkTargetSeconds);
+        Assert.Equal(Defaults.DefaultReceiveUploadAutoProbeChunkCount, page.Receive.UploadAutoProbeChunkCount);
     }
 
     [Fact]

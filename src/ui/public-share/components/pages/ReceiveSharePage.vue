@@ -28,6 +28,18 @@ type UploadEntry = {
   request?: XMLHttpRequest | null
   socket?: WebSocket | null
   recommendedChunkSizeBytes?: number | null
+  autoTransportScores?: Record<ReceiveUploadTransport, AutoUploadTransportScore>
+}
+
+type ReceiveUploadTransport = 'MultipartChunks' | 'BinaryChunks' | 'WebSocket'
+
+type AutoUploadTransportScore = {
+  successes: number
+  failures: number
+  bytes: number
+  durationMs: number
+  receiveBytes: number
+  receiveDurationMs: number
 }
 
 type UploadListItem =
@@ -53,6 +65,7 @@ const defaultUploadChunkSizeBytes = 16 * 1024 * 1024
 const defaultUploadMaxBodySizeBytes = 95 * 1024 * 1024
 const minimumUploadChunkSizeBytes = 1024 * 1024
 const receiveProgressUpdateIntervalMs = 250
+const autoUploadTransports: ReceiveUploadTransport[] = ['BinaryChunks', 'WebSocket', 'MultipartChunks']
 
 const emit = defineEmits<{
   quotaLabelChange: [label: string]
@@ -154,6 +167,7 @@ function createUploadEntries(files: Array<{ file: File; relativePath: string }>,
     request: null,
     socket: null,
     recommendedChunkSizeBytes: null,
+    autoTransportScores: undefined,
   }))
 }
 
@@ -257,6 +271,7 @@ async function uploadEntry(entry: UploadEntry) {
   entry.receiveSpeedBytesPerSecond = null
   entry.receiveLastUpdatedAtMs = null
   entry.recommendedChunkSizeBytes = null
+  entry.autoTransportScores = undefined
   entry.state = 'uploading'
   entry.message = 'Uploading...'
   entry.uploadedBytes = 0
@@ -281,6 +296,10 @@ async function uploadEntry(entry: UploadEntry) {
 }
 
 function sendUploadForEntry(entry: UploadEntry) {
+  if (props.receive.uploadMode === 'Auto') {
+    return sendAutoChunkedUploadRequest(entry)
+  }
+
   if (props.receive.uploadMode === 'WebSocket') {
     return sendWebSocketChunkedUploadRequest(entry)
   }
@@ -292,6 +311,210 @@ function sendUploadForEntry(entry: UploadEntry) {
   return props.receive.uploadMode === 'BinaryChunks' || props.receive.uploadMode === 'AdaptiveBinaryChunks'
     ? sendBinaryChunkedUploadRequest(entry)
     : sendChunkedUploadRequest(entry)
+}
+
+async function sendAutoChunkedUploadRequest(entry: UploadEntry) {
+  entry.autoTransportScores = createAutoTransportScores()
+  let finalResponse: PublicReceiveUploadResponse | null = null
+  let chunkStart = 0
+  let chunkIndex = 0
+  const failedTransportsAtBoundary = new Set<ReceiveUploadTransport>()
+
+  while (chunkStart < entry.file.size) {
+    const confirmedStart = resolveConfirmedChunkStart(entry, chunkStart)
+    if (confirmedStart > chunkStart) {
+      updateEntryUploadProgress(entry, confirmedStart)
+      chunkStart = confirmedStart
+      chunkIndex += 1
+      failedTransportsAtBoundary.clear()
+    }
+
+    const chunkSizeBytes = resolveNextChunkSizeBytes(entry)
+    const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
+    const chunkSize = chunkEnd - chunkStart
+    const transport = chooseAutoUploadTransport(entry, chunkIndex, failedTransportsAtBoundary)
+    const startedAtMs = Date.now()
+    const receivedBytesAtStart = entry.receivedBytes
+    const receiveUpdatedAtStartMs = entry.receiveLastUpdatedAtMs
+
+    try {
+      finalResponse = await sendChunkWithTransport(
+        entry,
+        transport,
+        chunkIndex,
+        resolveChunkCountForRequest(entry.file.size, chunkStart, chunkSize, chunkSizeBytes, chunkIndex),
+        chunkStart,
+        chunkSizeBytes,
+      )
+      assertUploadResponseSucceeded(finalResponse)
+      recordAutoTransportSuccess(entry, transport, chunkSize, Date.now() - startedAtMs, receivedBytesAtStart, receiveUpdatedAtStartMs)
+
+      const nextChunkStart = Math.max(chunkEnd, resolveConfirmedChunkStart(entry, chunkEnd))
+      updateEntryUploadProgress(entry, nextChunkStart)
+      chunkStart = nextChunkStart
+      chunkIndex += 1
+      failedTransportsAtBoundary.clear()
+    } catch (cause) {
+      recordAutoTransportFailure(entry, transport)
+      failedTransportsAtBoundary.add(transport)
+
+      const confirmedBoundary = resolveConfirmedChunkStart(entry, chunkStart)
+      if (confirmedBoundary > chunkStart) {
+        updateEntryUploadProgress(entry, confirmedBoundary)
+        chunkStart = confirmedBoundary
+        chunkIndex += 1
+        failedTransportsAtBoundary.clear()
+        continue
+      }
+
+      if (failedTransportsAtBoundary.size >= autoUploadTransports.length) {
+        throw cause
+      }
+    }
+  }
+
+  if (!finalResponse) {
+    throw new Error('Upload failed.')
+  }
+
+  return finalResponse
+}
+
+function sendChunkWithTransport(
+  entry: UploadEntry,
+  transport: ReceiveUploadTransport,
+  chunkIndex: number,
+  chunkCount: number,
+  chunkStart: number,
+  chunkSizeBytes: number,
+) {
+  if (transport === 'BinaryChunks') {
+    const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
+    return sendBinaryChunkUploadRequest(entry, entry.file.slice(chunkStart, chunkEnd), chunkIndex, chunkCount, chunkStart)
+  }
+
+  if (transport === 'WebSocket') {
+    return sendWebSocketChunkUploadRequest(entry, chunkIndex, chunkCount, chunkStart, chunkSizeBytes)
+  }
+
+  return sendUploadRequest(
+    entry,
+    createChunkUploadFormData(entry, entry.uploadId, chunkIndex, chunkCount, chunkStart, chunkSizeBytes),
+    chunkStart,
+  )
+}
+
+function createAutoTransportScores(): Record<ReceiveUploadTransport, AutoUploadTransportScore> {
+  return {
+    MultipartChunks: createAutoTransportScore(),
+    BinaryChunks: createAutoTransportScore(),
+    WebSocket: createAutoTransportScore(),
+  }
+}
+
+function createAutoTransportScore(): AutoUploadTransportScore {
+  return {
+    successes: 0,
+    failures: 0,
+    bytes: 0,
+    durationMs: 0,
+    receiveBytes: 0,
+    receiveDurationMs: 0,
+  }
+}
+
+function chooseAutoUploadTransport(
+  entry: UploadEntry,
+  chunkIndex: number,
+  failedTransportsAtBoundary: Set<ReceiveUploadTransport>,
+): ReceiveUploadTransport {
+  if (failedTransportsAtBoundary.size >= autoUploadTransports.length - 1 && !failedTransportsAtBoundary.has('MultipartChunks')) {
+    return 'MultipartChunks'
+  }
+
+  const probeChunkCount = normalizeAutoProbeChunkCount(props.receive.uploadAutoProbeChunkCount)
+  if (chunkIndex < probeChunkCount) {
+    const probeTransport = chooseAutoProbeTransport(chunkIndex, failedTransportsAtBoundary)
+    if (probeTransport) {
+      return probeTransport
+    }
+  }
+
+  const scores = entry.autoTransportScores ?? createAutoTransportScores()
+  let bestTransport: ReceiveUploadTransport = 'MultipartChunks'
+  let bestScore = Number.NEGATIVE_INFINITY
+  for (const transport of autoUploadTransports) {
+    if (failedTransportsAtBoundary.has(transport)) {
+      continue
+    }
+
+    const score = calculateAutoTransportScore(scores[transport], transport)
+    if (score > bestScore) {
+      bestScore = score
+      bestTransport = transport
+    }
+  }
+
+  return bestTransport
+}
+
+function chooseAutoProbeTransport(
+  chunkIndex: number,
+  failedTransportsAtBoundary: Set<ReceiveUploadTransport>,
+) {
+  for (let offset = 0; offset < autoUploadTransports.length; offset += 1) {
+    const transport = autoUploadTransports[(chunkIndex + offset) % autoUploadTransports.length]
+    if (!failedTransportsAtBoundary.has(transport)) {
+      return transport
+    }
+  }
+
+  return null
+}
+
+function calculateAutoTransportScore(score: AutoUploadTransportScore, transport: ReceiveUploadTransport) {
+  const measuredDurationMs = score.receiveDurationMs > 0 ? score.receiveDurationMs : score.durationMs
+  const measuredBytes = score.receiveDurationMs > 0 ? score.receiveBytes : score.bytes
+  const bytesPerSecond = measuredDurationMs > 0 ? measuredBytes / (measuredDurationMs / 1000) : 0
+  const conservativeBias = transport === 'MultipartChunks' ? 100 : 0
+  return score.successes * 1000 - score.failures * 5000 + conservativeBias + Math.min(bytesPerSecond / 1024, 1000)
+}
+
+function recordAutoTransportSuccess(
+  entry: UploadEntry,
+  transport: ReceiveUploadTransport,
+  bytes: number,
+  durationMs: number,
+  receivedBytesAtStart: number,
+  receiveUpdatedAtStartMs: number | null,
+) {
+  const score = getAutoTransportScore(entry, transport)
+  score.successes += 1
+  score.bytes += Math.max(0, bytes)
+  score.durationMs += Math.max(1, durationMs)
+
+  if (entry.receiveLastUpdatedAtMs !== null && receiveUpdatedAtStartMs !== null) {
+    const receiveDurationMs = entry.receiveLastUpdatedAtMs - receiveUpdatedAtStartMs
+    const receiveBytes = entry.receivedBytes - receivedBytesAtStart
+    if (receiveDurationMs > 0 && receiveBytes > 0) {
+      score.receiveBytes += receiveBytes
+      score.receiveDurationMs += receiveDurationMs
+    }
+  }
+}
+
+function recordAutoTransportFailure(entry: UploadEntry, transport: ReceiveUploadTransport) {
+  const score = getAutoTransportScore(entry, transport)
+  score.failures += 1
+}
+
+function getAutoTransportScore(entry: UploadEntry, transport: ReceiveUploadTransport) {
+  entry.autoTransportScores ??= createAutoTransportScores()
+  return entry.autoTransportScores[transport]
+}
+
+function resolveConfirmedChunkStart(entry: UploadEntry, fallback: number) {
+  return Math.max(fallback, Math.min(entry.file.size, entry.receivedBytes))
 }
 
 function createUploadFormData(entry: UploadEntry, file: Blob) {
@@ -432,6 +655,39 @@ async function sendWebSocketChunkedUploadRequest(entry: UploadEntry) {
   }
 
   return finalResponse
+}
+
+async function sendWebSocketChunkUploadRequest(
+  entry: UploadEntry,
+  chunkIndex: number,
+  chunkCount: number,
+  chunkStart: number,
+  chunkSizeBytes: number,
+) {
+  const socket = await openUploadSocket(entry)
+  try {
+    const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
+    const chunk = entry.file.slice(chunkStart, chunkEnd)
+    socket.send(JSON.stringify({
+      type: 'chunk',
+      uploadId: entry.uploadId,
+      batchId: entry.batchId,
+      relativePath: entry.relativePath,
+      fileName: entry.file.name,
+      fileSize: entry.file.size,
+      chunkIndex,
+      chunkCount,
+      chunkStart,
+      chunkSize: chunk.size,
+    }))
+    socket.send(chunk)
+    return await waitForUploadSocketResponse(socket)
+  } finally {
+    socket.close()
+    if (entry.socket === socket) {
+      entry.socket = null
+    }
+  }
 }
 
 function assertUploadResponseSucceeded(response: PublicReceiveUploadResponse) {
@@ -893,6 +1149,14 @@ function normalizeUploadMaxBodySizeBytes(value: number | null | undefined) {
   }
 
   return Math.max(minimumUploadChunkSizeBytes, Math.round(value))
+}
+
+function normalizeAutoProbeChunkCount(value: number | null | undefined) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return 4
+  }
+
+  return Math.max(1, Math.round(value))
 }
 
 function calculateUploadSpeed(entry: UploadEntry, loadedBytes: number) {

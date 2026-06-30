@@ -52,11 +52,12 @@ const settingsDraft = ref<AppSettings>({
   defaultReceiveExpiryUnit: 'Hours',
   defaultReceiveMaxTotalBytes: 10 * 1024 * 1024 * 1024,
   receiveParallelUploadLimit: 4,
-  receiveUploadMode: 'MultipartChunks',
+  receiveUploadMode: 'Auto',
   receiveUploadChunkSizingMode: 'Fixed',
   receiveUploadChunkSizeBytes: 16 * 1024 * 1024,
   receiveUploadMaxBodySizeBytes: 95 * 1024 * 1024,
   receiveUploadChunkTargetSeconds: 30,
+  receiveUploadAutoProbeChunkCount: 4,
   folderBrowsePageTitle: 'Browse files',
   receivePageTitle: 'Upload files',
   friendlyUrlsEnabled: true,
@@ -591,6 +592,7 @@ function buildSettingsPayload(): AppSettings {
     receiveUploadChunkSizeBytes: normalizeWholeNumber(settingsDraft.value.receiveUploadChunkSizeBytes, 16 * 1024 * 1024, 1024 * 1024),
     receiveUploadMaxBodySizeBytes: normalizeWholeNumber(settingsDraft.value.receiveUploadMaxBodySizeBytes, 95 * 1024 * 1024, 1024 * 1024),
     receiveUploadChunkTargetSeconds: normalizeWholeNumber(settingsDraft.value.receiveUploadChunkTargetSeconds, 30, 5),
+    receiveUploadAutoProbeChunkCount: normalizeWholeNumber(settingsDraft.value.receiveUploadAutoProbeChunkCount, 4, 1),
     folderBrowsePageTitle: settingsDraft.value.folderBrowsePageTitle?.trim() ?? '',
     receivePageTitle: settingsDraft.value.receivePageTitle?.trim() ?? '',
     historyRetentionValue: normalizeWholeNumber(settingsDraft.value.historyRetentionValue, 3, 0),
@@ -606,7 +608,7 @@ function normalizeReceiveUploadMode(value: AppSettings['receiveUploadMode']) {
     return 'BinaryChunks'
   }
 
-  return value === 'BinaryChunks' || value === 'WebSocket'
+  return value === 'BinaryChunks' || value === 'WebSocket' || value === 'Auto'
     ? value
     : 'MultipartChunks'
 }

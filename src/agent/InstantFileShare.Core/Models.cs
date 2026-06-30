@@ -53,6 +53,7 @@ public sealed record AppSettings
     public long ReceiveUploadChunkSizeBytes { get; init; } = Defaults.DefaultReceiveUploadChunkSizeBytes;
     public long ReceiveUploadMaxBodySizeBytes { get; init; } = Defaults.DefaultReceiveUploadMaxBodySizeBytes;
     public int ReceiveUploadChunkTargetSeconds { get; init; } = Defaults.DefaultReceiveUploadChunkTargetSeconds;
+    public int ReceiveUploadAutoProbeChunkCount { get; init; } = Defaults.DefaultReceiveUploadAutoProbeChunkCount;
     public string FolderBrowsePageTitle { get; init; } = Defaults.CreateDefaultFolderBrowsePageTitle();
     public string ReceivePageTitle { get; init; } = Defaults.CreateDefaultReceivePageTitle();
     public bool FriendlyUrlsEnabled { get; init; } = true;
@@ -231,13 +232,15 @@ public static class Defaults
     public const string NamedPipeName = "InstantFileShare.Agent";
     public const long DefaultReceiveMaxTotalBytes = 10L * 1024 * 1024 * 1024;
     public const int DefaultReceiveParallelUploadLimit = 4;
-    public const ReceiveUploadMode DefaultReceiveUploadMode = ReceiveUploadMode.MultipartChunks;
+    public const ReceiveUploadMode DefaultReceiveUploadMode = ReceiveUploadMode.Auto;
     public const ReceiveUploadChunkSizingMode DefaultReceiveUploadChunkSizingMode = ReceiveUploadChunkSizingMode.Fixed;
     public const long DefaultReceiveUploadChunkSizeBytes = 16L * 1024 * 1024;
     public const long DefaultReceiveUploadMaxBodySizeBytes = 95L * 1024 * 1024;
     public const long MinimumReceiveUploadChunkSizeBytes = 1L * 1024 * 1024;
     public const int DefaultReceiveUploadChunkTargetSeconds = 30;
     public const int MinimumReceiveUploadChunkTargetSeconds = 5;
+    public const int DefaultReceiveUploadAutoProbeChunkCount = 4;
+    public const int MinimumReceiveUploadAutoProbeChunkCount = 1;
     public const string RepositoryUrl = "https://github.com/lugui1998/instant-file-share-3";
 
     public static string CreateDefaultReceivePageTitle()

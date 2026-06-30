@@ -40,7 +40,7 @@ type ShareKind = 'File' | 'Folder'
 type FolderShareEntryPoint = 'Browse' | 'Zip'
 type FolderShareCapabilityPolicy = 'Exclusive' | 'AllowBoth'
 type FolderZipCompressionLevel = 'Optimal' | 'Fastest' | 'NoCompression' | 'SmallestSize'
-type ReceiveUploadMode = 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket'
+type ReceiveUploadMode = 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket' | 'Auto'
 type ReceiveUploadChunkSizingMode = 'Fixed' | 'Auto'
 type FileChangeBehavior = 'Strict' | 'Lenient'
 type ExpiryUnit = 'Minutes' | 'Hours' | 'Days'
@@ -88,6 +88,7 @@ type AppSettings = {
   receiveUploadChunkSizeBytes: number
   receiveUploadMaxBodySizeBytes: number
   receiveUploadChunkTargetSeconds: number
+  receiveUploadAutoProbeChunkCount: number
   folderBrowsePageTitle: string
   receivePageTitle: string
   friendlyUrlsEnabled: boolean
