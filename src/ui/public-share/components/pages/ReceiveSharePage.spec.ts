@@ -2,6 +2,12 @@ import { mount } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ReceiveSharePage from './ReceiveSharePage.vue'
 import type { PublicSharePageModel, PublicShareReceiveModel } from '../../types'
+import {
+  base64UrlDecode,
+  createBrowserTransferKeyFragment,
+  decryptBrowserTransferChunk,
+  importBrowserTransferKey,
+} from '../../crypto/browserTransferCrypto'
 
 const uploadChunkSizeBytes = 16 * 1024 * 1024
 const minimumUploadChunkSizeBytes = 1024 * 1024
@@ -130,6 +136,7 @@ class FakeWebSocket {
 
 describe('ReceiveSharePage', () => {
   afterEach(() => {
+    window.location.hash = ''
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
@@ -937,6 +944,41 @@ describe('ReceiveSharePage', () => {
     expect(nextUpload).toBeDefined()
     expect(getBatchId(nextUpload!)).not.toBe(firstBatchId)
   })
+
+  it('encrypts receive uploads in the browser when an upload fragment key is present', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
+    const keyBytes = new Uint8Array(32).fill(33)
+    window.location.hash = createBrowserTransferKeyFragment(keyBytes, 'upload')
+    const wrapper = mount(ReceiveSharePage, {
+      props: {
+        page: createPage({ encryptionExperiment: createEncryptionExperiment() }),
+        receive: createReceive({ encryptionExperiment: createEncryptionExperiment() }),
+      },
+    })
+    const input = wrapper.find('input[type="file"]')
+
+    Object.defineProperty(input.element, 'files', {
+      configurable: true,
+      value: [createFile('secret.txt', 'secret.txt', 'classified')],
+    })
+    await input.trigger('change')
+    await vi.waitFor(() => expect(FakeXMLHttpRequest.instances).toHaveLength(1))
+
+    const request = FakeXMLHttpRequest.instances[0]
+    expect(request.sentBody).toBeInstanceOf(Blob)
+    expect(getRequestHeader(request, 'X-IFS-Encryption-Mode')).toBe('store-encrypted')
+    expect(getRequestHeader(request, 'X-IFS-Encryption-Algorithm')).toBe('AES-GCM')
+    expect(getRequestHeader(request, 'X-IFS-Plaintext-File-Size')).toBe('10')
+    expect(Array.from(request.headers.values()).every((value) => !value.includes('ifs-key'))).toBe(true)
+
+    const key = await importBrowserTransferKey(keyBytes)
+    const decrypted = await decryptBrowserTransferChunk(key, {
+      iv: base64UrlDecode(getRequestHeader(request, 'X-IFS-Encryption-IV') ?? ''),
+      ciphertext: new Uint8Array(await readBlobAsArrayBuffer(request.sentBody as Blob)),
+    })
+
+    expect(new TextDecoder().decode(decrypted)).toBe('classified')
+  })
 })
 
 function createPage(receive: Partial<PublicShareReceiveModel> = {}): PublicSharePageModel {
@@ -968,6 +1010,31 @@ function createReceive(overrides: Partial<PublicShareReceiveModel> = {}): Public
     expiresAtLabel: '6/30/2026 12:00 PM',
     ...overrides,
   }
+}
+
+function createEncryptionExperiment() {
+  return {
+    downloadManifestUrl: '/r/token?ifs=encrypted-download-plan',
+    encryptedDownloadUrl: '/r/token?ifs=encrypted-download',
+    fragmentKeyParameter: 'ifs-key',
+    algorithm: 'AES-GCM' as const,
+    ivStrategy: 'test',
+    keyDelivery: 'fragment',
+    receiveUploadModes: ['store-encrypted' as const],
+  }
+}
+
+function readBlobAsArrayBuffer(blob: Blob) {
+  if (typeof blob.arrayBuffer === 'function') {
+    return blob.arrayBuffer()
+  }
+
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(reader.result as ArrayBuffer))
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('File read failed.')))
+    reader.readAsArrayBuffer(blob)
+  })
 }
 
 function createUploadResponse() {

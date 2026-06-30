@@ -18,6 +18,8 @@ internal static class PublicShareEndpoints
 {
     private const string FolderListQueryValue = "folder-list";
     private const string FolderEventsQueryValue = "folder-events";
+    private const string EncryptedDownloadPlanQueryValue = "encrypted-download-plan";
+    private const string EncryptedDownloadQueryValue = "encrypted-download";
     private const string PartialUploadSuffix = ".downloadpart";
     private const string BinaryChunkContentType = "application/octet-stream";
     private const string UploadIdHeaderName = "X-IFS-Upload-Id";
@@ -35,6 +37,15 @@ internal static class PublicShareEndpoints
     private const int ReceiveUploadBufferSizeBytes = 1024 * 1024;
     private static readonly JsonSerializerOptions WebSocketJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly ConcurrentDictionary<string, ReceiveUploadSpeedState> ReceiveUploadSpeedStates = new(StringComparer.Ordinal);
+
+    private sealed record BrowserTransferEncryptedDownloadPlan(
+        string Algorithm,
+        string EncryptedDownloadUrl,
+        string FileName,
+        string ContentType,
+        int ChunkIndex,
+        string IvBase64Url,
+        string KeyDelivery);
 
     public static IEndpointRouteBuilder MapPublicShareEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -2020,6 +2031,18 @@ internal static class PublicShareEndpoints
         var remoteAddress = RequestAddressResolver.ResolveClientIpAddress(context);
         var userAgent = context.Request.Headers.UserAgent.ToString();
 
+        if (IsEncryptedDownloadPlanRequest(context.Request))
+        {
+            return HandleBrowserTransferEncryptedDownloadPlan(context, responseFileName, fileResponseMetadata);
+        }
+
+        if (IsEncryptedDownloadRequest(context.Request))
+        {
+            context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers["X-IFS-Encryption-Experiment"] = "browser-aes-gcm-v1";
+            return Results.File(file.FullName, BinaryChunkContentType, enableRangeProcessing: false);
+        }
+
         if (crawlerName is not null && settings.SendMetadataToCrawlers)
         {
             var previewTransfer = await coordinator.StartTransferAsync(
@@ -2175,6 +2198,57 @@ internal static class PublicShareEndpoints
 
         ResponseHeaderWriter.ApplyFileResponseHeaders(context.Response, responseFileName, fileResponseMetadata);
         return Results.File(meteredStream, contentType: fileResponseMetadata.ContentType, enableRangeProcessing: allowRangeRequests);
+    }
+
+    private static IResult HandleBrowserTransferEncryptedDownloadPlan(
+        HttpContext context,
+        string responseFileName,
+        ShareFileResponseMetadata fileResponseMetadata)
+    {
+        context.Response.Headers.CacheControl = "no-store";
+        return Results.Json(new BrowserTransferEncryptedDownloadPlan(
+            Algorithm: "AES-GCM",
+            EncryptedDownloadUrl: BuildCurrentUrl(context, [("ifs", EncryptedDownloadQueryValue)]),
+            FileName: responseFileName,
+            ContentType: fileResponseMetadata.ContentType,
+            ChunkIndex: 0,
+            IvBase64Url: Base64UrlEncode(new byte[12]),
+            KeyDelivery: "The AES-GCM key must be supplied in the URL fragment as ifs-key; fragments are not sent in HTTP requests."));
+    }
+
+    private static bool IsEncryptedDownloadPlanRequest(HttpRequest request)
+    {
+        return string.Equals(request.Query["ifs"], EncryptedDownloadPlanQueryValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEncryptedDownloadRequest(HttpRequest request)
+    {
+        return string.Equals(request.Query["ifs"], EncryptedDownloadQueryValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildCurrentUrl(HttpContext context, IReadOnlyList<(string Name, string Value)> queryValues)
+    {
+        var builder = new StringBuilder();
+        builder.Append(context.Request.Scheme)
+            .Append("://")
+            .Append(context.Request.Host)
+            .Append(context.Request.PathBase)
+            .Append(context.Request.Path);
+
+        for (var index = 0; index < queryValues.Count; index++)
+        {
+            builder.Append(index == 0 ? '?' : '&')
+                .Append(Uri.EscapeDataString(queryValues[index].Name))
+                .Append('=')
+                .Append(Uri.EscapeDataString(queryValues[index].Value));
+        }
+
+        return builder.ToString();
+    }
+
+    private static string Base64UrlEncode(byte[] bytes)
+    {
+        return Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
     }
 
     private static async Task<IResult> HandleFolderBrowseDirectoryAsync(

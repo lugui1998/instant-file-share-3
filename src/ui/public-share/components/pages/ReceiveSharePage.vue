@@ -1,5 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import {
+  base64UrlEncode,
+  bytesToArrayBuffer,
+  createBrowserTransferNoncePrefix,
+  encryptBrowserTransferChunk,
+  importBrowserTransferKey,
+  parseBrowserTransferKeyFragment,
+} from '../../crypto/browserTransferCrypto'
 import type {
   PublicReceiveUploadResponse,
   PublicSharePageModel,
@@ -95,6 +103,8 @@ const parallelUploadLimit = computed(() => normalizeParallelUploadLimit(props.re
 const uploadChunkSizeBytes = computed(() => normalizeUploadChunkSizeBytes(props.receive.uploadChunkSizeBytes))
 const uploadMaxBodySizeBytes = computed(() => normalizeUploadMaxBodySizeBytes(props.receive.uploadMaxBodySizeBytes))
 const uploadPacketSizeBytes = computed(() => Math.min(uploadChunkSizeBytes.value, uploadMaxBodySizeBytes.value))
+const encryptionFragment = computed(() =>
+  props.receive.encryptionExperiment ? parseBrowserTransferKeyFragment(window.location.hash) : null)
 const uploadListItems = computed<UploadListItem[]>(() => {
   const items: UploadListItem[] = []
   const folderItems = new Map<string, UploadEntry[]>()
@@ -281,6 +291,10 @@ async function uploadEntry(entry: UploadEntry) {
 }
 
 function sendUploadForEntry(entry: UploadEntry) {
+  if (encryptionFragment.value && encryptionFragment.value.mode !== 'download') {
+    return sendEncryptedStoreUploadRequest(entry)
+  }
+
   if (props.receive.uploadMode === 'WebSocket') {
     return sendWebSocketChunkedUploadRequest(entry)
   }
@@ -292,6 +306,96 @@ function sendUploadForEntry(entry: UploadEntry) {
   return props.receive.uploadMode === 'BinaryChunks' || props.receive.uploadMode === 'AdaptiveBinaryChunks'
     ? sendBinaryChunkedUploadRequest(entry)
     : sendChunkedUploadRequest(entry)
+}
+
+async function sendEncryptedStoreUploadRequest(entry: UploadEntry) {
+  const fragment = encryptionFragment.value
+  if (!fragment) {
+    throw new Error('Encrypted upload key is missing.')
+  }
+
+  entry.message = 'Encrypting...'
+  const key = await importBrowserTransferKey(fragment.keyBytes)
+  const noncePrefix = createBrowserTransferNoncePrefix()
+  const encrypted = await encryptBrowserTransferChunk(key, await readBlobAsArrayBuffer(entry.file), noncePrefix, 0)
+  const ciphertext = new Blob([bytesToArrayBuffer(encrypted.ciphertext)], { type: 'application/octet-stream' })
+
+  return sendEncryptedBinaryUploadRequest(entry, ciphertext, encrypted.iv)
+}
+
+function readBlobAsArrayBuffer(blob: Blob) {
+  if (typeof blob.arrayBuffer === 'function') {
+    return blob.arrayBuffer()
+  }
+
+  return new Promise<ArrayBuffer>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(reader.result as ArrayBuffer))
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('File read failed.')))
+    reader.readAsArrayBuffer(blob)
+  })
+}
+
+function sendEncryptedBinaryUploadRequest(
+  entry: UploadEntry,
+  ciphertext: Blob,
+  iv: Uint8Array,
+) {
+  return new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
+    const request = new XMLHttpRequest()
+    entry.request = request
+    request.open('POST', props.receive.uploadUrl, true)
+    request.responseType = 'json'
+    request.setRequestHeader('Content-Type', 'application/octet-stream')
+    request.setRequestHeader('X-IFS-Upload-Id', entry.uploadId)
+    request.setRequestHeader('X-IFS-Batch-Id', entry.batchId)
+    request.setRequestHeader('X-IFS-Relative-Path', encodeURIComponent(entry.relativePath))
+    request.setRequestHeader('X-IFS-File-Name', encodeURIComponent(entry.file.name))
+    request.setRequestHeader('X-IFS-File-Size', ciphertext.size.toString())
+    request.setRequestHeader('X-IFS-Chunk-Index', '0')
+    request.setRequestHeader('X-IFS-Chunk-Count', '1')
+    request.setRequestHeader('X-IFS-Chunk-Start', '0')
+    request.setRequestHeader('X-IFS-Chunk-Size', ciphertext.size.toString())
+    request.setRequestHeader('X-IFS-Encryption-Mode', 'store-encrypted')
+    request.setRequestHeader('X-IFS-Encryption-Algorithm', 'AES-GCM')
+    request.setRequestHeader('X-IFS-Encryption-IV', base64UrlEncode(iv))
+    request.setRequestHeader('X-IFS-Plaintext-File-Size', entry.file.size.toString())
+
+    request.upload.addEventListener('progress', (event) => {
+      if (!event.lengthComputable || entry.state !== 'uploading') {
+        return
+      }
+
+      const uploadedBytes = Math.min(entry.file.size, Math.round(entry.file.size * (event.loaded / Math.max(1, event.total))))
+      updateEntryUploadProgress(entry, uploadedBytes)
+    })
+
+    request.addEventListener('load', () => {
+      const response = request.response as PublicReceiveUploadResponse | null
+
+      if (request.status < 200 || request.status >= 300) {
+        reject(new Error(getUploadFailureMessage(response) || `Upload failed with status ${request.status}.`))
+        return
+      }
+
+      if (!response) {
+        reject(new Error('Upload failed.'))
+        return
+      }
+
+      resolve(response)
+    })
+
+    request.addEventListener('abort', () => {
+      reject(new Error('Upload stopped.'))
+    })
+
+    request.addEventListener('error', () => {
+      reject(new Error('Upload failed.'))
+    })
+
+    request.send(ciphertext)
+  })
 }
 
 function createUploadFormData(entry: UploadEntry, file: Blob) {

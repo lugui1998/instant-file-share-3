@@ -25,6 +25,29 @@ export type PublicShareFileModel = {
   preferInline: boolean
   actionVerb: string
   actionLabel: string
+  encryptionExperiment?: BrowserTransferEncryptionExperimentModel | null
+}
+
+export type BrowserTransferEncryptionExperimentModel = {
+  downloadManifestUrl: string
+  encryptedDownloadUrl: string
+  fragmentKeyParameter: string
+  algorithm: 'AES-GCM'
+  ivStrategy: string
+  keyDelivery: string
+  receiveUploadModes: BrowserTransferReceiveEncryptionMode[]
+}
+
+export type BrowserTransferReceiveEncryptionMode = 'store-encrypted'
+
+export type BrowserTransferEncryptedDownloadPlan = {
+  algorithm: 'AES-GCM'
+  encryptedDownloadUrl: string
+  fileName: string
+  contentType: string
+  chunkIndex: number
+  ivBase64Url: string
+  keyDelivery: string
 }
 
 export type PublicShareFolderModel = {
@@ -55,6 +78,7 @@ export type PublicShareReceiveModel = {
   uploadChunkSizeBytes: number
   uploadMaxBodySizeBytes: number
   uploadChunkTargetSeconds: number
+  encryptionExperiment?: BrowserTransferEncryptionExperimentModel | null
   expiresAtLabel?: string | null
 }
 
