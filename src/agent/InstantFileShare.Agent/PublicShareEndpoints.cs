@@ -25,6 +25,8 @@ internal static class PublicShareEndpoints
     private const string PlanHashQueryName = "ifsPlanHash";
     private const string PlanSizeQueryName = "ifsPlanSize";
     private const string PlanModifiedQueryName = "ifsPlanModified";
+    private const string EncryptedDownloadPlanQueryValue = "encrypted-download-plan";
+    private const string EncryptedDownloadQueryValue = "encrypted-download";
     private const string PartialUploadSuffix = ".downloadpart";
     private const string BinaryChunkContentType = "application/octet-stream";
     private const string CompressedStreamContentType = "application/gzip";
@@ -2532,6 +2534,16 @@ internal static class PublicShareEndpoints
             return await HandleBrowserManagedDownloadPlanAsync(context, file, responseFileName, fileResponseMetadata, cancellationToken);
         }
 
+        if (IsEncryptedDownloadPlanRequest(context.Request))
+        {
+            return CreateEncryptedDownloadUnavailableResult();
+        }
+
+        if (IsEncryptedDownloadRequest(context.Request))
+        {
+            return CreateEncryptedDownloadUnavailableResult();
+        }
+
         if ((crawlerName is not null && settings.SendMetadataToCrawlers) ||
             (isManagedDownloadCandidate && IsBrowserManagedDownloadPageRequest(context.Request)))
         {
@@ -2909,6 +2921,23 @@ internal static class PublicShareEndpoints
         }
 
         return builder.ToString();
+    }
+
+    private static IResult CreateEncryptedDownloadUnavailableResult()
+    {
+        return Results.Problem(
+            "Encrypted browser downloads are disabled for live file shares because no persisted AES-GCM IV metadata exists for the stored object.",
+            statusCode: StatusCodes.Status409Conflict);
+    }
+
+    private static bool IsEncryptedDownloadPlanRequest(HttpRequest request)
+    {
+        return string.Equals(request.Query["ifs"], EncryptedDownloadPlanQueryValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsEncryptedDownloadRequest(HttpRequest request)
+    {
+        return string.Equals(request.Query["ifs"], EncryptedDownloadQueryValue, StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<IResult> HandleFolderBrowseDirectoryAsync(

@@ -50,7 +50,8 @@ internal sealed class PublicSharePageModelFactory
                         FileSizeBytes: file.Length,
                         DefaultChunkSizeBytes: BrowserManagedDownloadChunkSizeBytes,
                         MaxRetriesPerChunk: BrowserManagedDownloadMaxRetriesPerChunk,
-                        SaveLimitationNote: "The browser-managed downloader verifies Range chunks and assembles a Blob before saving. Very large files may require substantial browser memory; direct download remains available.")),
+                        SaveLimitationNote: "The browser-managed downloader verifies Range chunks and assembles a Blob before saving. Very large files may require substantial browser memory; direct download remains available."),
+                EncryptionExperiment: null),
             Folder: null,
             Zip: null,
             Receive: null);
@@ -161,7 +162,20 @@ internal sealed class PublicSharePageModelFactory
                 Math.Max(
                     Defaults.MinimumReceiveUploadAutoProbeChunkCount,
                     settings.ReceiveUploadAutoProbeChunkCount <= 0 ? Defaults.DefaultReceiveUploadAutoProbeChunkCount : settings.ReceiveUploadAutoProbeChunkCount),
+                CreateBrowserTransferReceiveEncryptionExperiment(),
                 receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
+    }
+
+    private static BrowserTransferEncryptionExperimentModel CreateBrowserTransferReceiveEncryptionExperiment()
+    {
+        return new BrowserTransferEncryptionExperimentModel(
+            DownloadManifestUrl: null,
+            EncryptedDownloadUrl: null,
+            FragmentKeyParameter: "ifs-key",
+            Algorithm: "AES-GCM",
+            IvStrategy: "96-bit AES-GCM IV: 4 random nonce-prefix bytes plus an 8-byte big-endian chunk index; never reuse an IV with the same key.",
+            KeyDelivery: "Prototype keys are passed in the URL fragment so browsers do not include them in HTTP requests.",
+            ReceiveUploadModes: ["store-encrypted"]);
     }
 
     private static string ResolveReceivePageTitle(AppSettings settings)
