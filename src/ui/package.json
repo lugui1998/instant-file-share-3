@@ -17,6 +17,7 @@
     "build:public-share": "vue-tsc --noEmit -p tsconfig.public-share.json && vite build --config vite.public-share.config.ts",
     "build:electron": "tsc -p tsconfig.electron.json",
     "test": "vitest --run --environment jsdom",
+    "test:e2e": "npm run build:public-share && playwright test",
     "package:win": "npm run build && electron-builder --win dir",
     "typecheck": "vue-tsc --noEmit && vue-tsc --noEmit -p tsconfig.public-share.json && tsc -p tsconfig.electron.json --noEmit",
     "preview": "vite preview"
@@ -25,6 +26,7 @@
     "vue": "^3.5.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@vue/test-utils": "^2.4.6",
     "@types/node": "^22.15.30",
     "@vitejs/plugin-vue": "^6.0.0",
