@@ -11,7 +11,7 @@ dotnet test InstantFileShare.slnx
 When a local `InstantFileShare.Agent` process is already running and locks normal build outputs, run focused .NET tests with an isolated output directory:
 
 ```powershell
-dotnet test tests\InstantFileShare.Agent.Tests\InstantFileShare.Agent.Tests.csproj --no-restore -p:OutDir=D:\Projetos\instant-file-share-3\.codex-build\verify-test-out\
+dotnet test tests\InstantFileShare.Agent.Tests\InstantFileShare.Agent.Tests.csproj --no-restore -p:OutDir=.codex-build\verify-test-out\
 ```
 
 ## UI unit tests
@@ -32,6 +32,7 @@ npm run build:public-share
 
 ```powershell
 cd src\ui
+npx playwright install chromium
 npm run test:e2e
 ```
 
