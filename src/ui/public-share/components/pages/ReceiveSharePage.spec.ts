@@ -73,10 +73,14 @@ class FakeXMLHttpRequest {
 }
 
 class FakeWebSocket {
+  static CONNECTING = 0
+  static OPEN = 1
+  static CLOSED = 3
   static instances: FakeWebSocket[] = []
 
   readonly url: string
   sent: Array<string | Blob | ArrayBufferLike | ArrayBufferView> = []
+  readyState = FakeWebSocket.CONNECTING
   private listeners = new Map<string, Array<(event: MessageEvent) => void>>()
   private openListeners: Array<() => void> = []
   private closeListeners: Array<() => void> = []
@@ -117,6 +121,7 @@ class FakeWebSocket {
   }
 
   emitOpen() {
+    this.readyState = FakeWebSocket.OPEN
     for (const listener of this.openListeners) {
       listener()
     }
@@ -135,6 +140,7 @@ class FakeWebSocket {
   }
 
   close() {
+    this.readyState = FakeWebSocket.CLOSED
     for (const listener of this.closeListeners) {
       listener()
     }
@@ -313,7 +319,7 @@ describe('ReceiveSharePage', () => {
     }))
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.text()).toContain('2 KB/s')
+    expect(wrapper.text()).toContain('16 Kb/s')
   })
 
   it('sends cancel and ignores later host speed updates when stopped', async () => {
@@ -349,7 +355,7 @@ describe('ReceiveSharePage', () => {
     }))
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.text()).toContain('2 KB/s')
+    expect(wrapper.text()).toContain('16 Kb/s')
 
     const stopButton = wrapper.findAll('button').find((button) => button.text() === 'Stop')
     expect(stopButton).toBeDefined()
@@ -361,7 +367,7 @@ describe('ReceiveSharePage', () => {
       { method: 'POST', keepalive: true },
     )
     expect(wrapper.text()).toContain('Stopped')
-    expect(wrapper.text()).not.toContain('2 KB/s')
+    expect(wrapper.text()).not.toContain('16 Kb/s')
 
     nowSpy.mockReturnValue(5000)
     FakeWebSocket.instances[0].emitMessage({
@@ -376,7 +382,7 @@ describe('ReceiveSharePage', () => {
     await vi.advanceTimersByTimeAsync(250)
 
     expect(wrapper.text()).toContain('Stopped')
-    expect(wrapper.text()).not.toContain('KB/s')
+    expect(wrapper.text()).not.toContain('Kb/s')
   })
 
   it('shows saving state after bytes are sent and before the server confirms completion', async () => {
@@ -408,7 +414,7 @@ describe('ReceiveSharePage', () => {
     expect(wrapper.text()).not.toContain('Saving...')
     expect(wrapper.text()).toContain('100%')
     expect(wrapper.text()).not.toContain('Stop')
-    expect(wrapper.text()).not.toContain('4 KB/s')
+    expect(wrapper.text()).not.toContain('32 Kb/s')
     expect(wrapper.find('.success-icon').exists()).toBe(false)
     expect(wrapper.find('.progress-fill--client').exists()).toBe(true)
 
@@ -501,6 +507,47 @@ describe('ReceiveSharePage', () => {
     expect(FakeXMLHttpRequest.instances).toHaveLength(1)
     expect(wrapper.text()).toContain('The upload session was not found.')
     expect(wrapper.text()).toContain('Restart')
+  })
+
+  it('automatically retries transient binary chunk upload failures', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
+    const wrapper = mount(ReceiveSharePage, {
+      props: {
+        page: createPage({ uploadMode: 'BinaryChunks' }),
+        receive: createReceive({ uploadMode: 'BinaryChunks' }),
+      },
+    })
+    const largeFile = createSizedFile('retry.bin', 'retry.bin', uploadChunkSizeBytes + 10)
+    const input = wrapper.find('input[type="file"]')
+
+    Object.defineProperty(input.element, 'files', {
+      configurable: true,
+      value: [largeFile],
+    })
+    await input.trigger('change')
+
+    expect(FakeXMLHttpRequest.instances).toHaveLength(1)
+    const uploadId = getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Upload-Id')
+
+    FakeXMLHttpRequest.instances[0].emit('error')
+    await vi.advanceTimersByTimeAsync(1000)
+    await vi.dynamicImportSettled()
+
+    expect(FakeXMLHttpRequest.instances).toHaveLength(2)
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[1], 'X-IFS-Upload-Id')).toBe(uploadId)
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[1], 'X-IFS-Chunk-Start')).toBe('0')
+    expect(wrapper.text()).toContain('Retrying 1/8')
+
+    FakeXMLHttpRequest.instances[1].response = createChunkUploadResponse()
+    FakeXMLHttpRequest.instances[1].emit('load')
+    await vi.dynamicImportSettled()
+
+    expect(FakeXMLHttpRequest.instances).toHaveLength(3)
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[2], 'X-IFS-Upload-Id')).toBe(uploadId)
+    expect(getRequestHeader(FakeXMLHttpRequest.instances[2], 'X-IFS-Chunk-Start')).toBe(uploadChunkSizeBytes.toString())
+    expect(wrapper.text()).not.toContain('Retrying 1/8')
+    expect(wrapper.text()).toContain('Uploading...')
   })
 
   it('uses a fresh upload ID for each retry attempt', async () => {
@@ -802,20 +849,26 @@ describe('ReceiveSharePage', () => {
     })
     expect(FakeWebSocket.instances[0].sent[1]).toBeInstanceOf(Blob)
     expect((FakeWebSocket.instances[0].sent[1] as Blob).size).toBe(customChunkSizeBytes)
+    const uploadId = JSON.parse(FakeWebSocket.instances[0].sent[0] as string).uploadId
 
     FakeWebSocket.instances[0].emitMessage(createChunkUploadResponse())
     await vi.dynamicImportSettled()
 
-    expect(FakeWebSocket.instances[0].sent).toHaveLength(4)
-    expect(JSON.parse(FakeWebSocket.instances[0].sent[2] as string)).toMatchObject({
+    expect(FakeWebSocket.instances).toHaveLength(2)
+    FakeWebSocket.instances[1].emitOpen()
+    await vi.dynamicImportSettled()
+
+    expect(FakeWebSocket.instances[1].sent).toHaveLength(2)
+    expect(JSON.parse(FakeWebSocket.instances[1].sent[0] as string)).toMatchObject({
       type: 'chunk',
+      uploadId,
       chunkIndex: 1,
       chunkStart: customChunkSizeBytes,
       chunkSize: 7,
     })
-    expect((FakeWebSocket.instances[0].sent[3] as Blob).size).toBe(7)
+    expect((FakeWebSocket.instances[1].sent[1] as Blob).size).toBe(7)
 
-    FakeWebSocket.instances[0].emitMessage(createUploadResponse())
+    FakeWebSocket.instances[1].emitMessage(createUploadResponse())
     await vi.dynamicImportSettled()
 
     expect(wrapper.find('.success-icon').exists()).toBe(true)
@@ -1110,13 +1163,27 @@ describe('ReceiveSharePage', () => {
     await input.trigger('change')
 
     expect(FakeWebSocket.instances[0].url).toBe('ws://localhost:3000/r/token/events')
+    FakeWebSocket.instances[0].emitOpen()
+    const subscribedUploadId = getFormValue(FakeXMLHttpRequest.instances[0], 'uploadId')
+    expect(JSON.parse(FakeWebSocket.instances[0].sent[0] as string)).toEqual({
+      type: 'subscribe',
+      uploadIds: [subscribedUploadId],
+    })
     FakeXMLHttpRequest.instances[0].upload.emit('progress', new ProgressEvent('progress', {
       lengthComputable: true,
       loaded: 100,
       total: 100,
     }))
     FakeWebSocket.instances[0].emitMessage({
-      uploadId: getFormValue(FakeXMLHttpRequest.instances[0], 'uploadId'),
+      uploadId: 'other-client-upload',
+      receivedBytes: 100,
+      totalBytes: 100,
+      state: 'InProgress',
+      succeeded: false,
+      error: null,
+    })
+    FakeWebSocket.instances[0].emitMessage({
+      uploadId: subscribedUploadId,
       receivedBytes: 20,
       totalBytes: 100,
       state: 'InProgress',
@@ -1125,7 +1192,7 @@ describe('ReceiveSharePage', () => {
     })
     vi.setSystemTime(2000)
     FakeWebSocket.instances[0].emitMessage({
-      uploadId: getFormValue(FakeXMLHttpRequest.instances[0], 'uploadId'),
+      uploadId: subscribedUploadId,
       receivedBytes: 40,
       totalBytes: 100,
       state: 'InProgress',
@@ -1142,7 +1209,7 @@ describe('ReceiveSharePage', () => {
     expect(progressBar.attributes('aria-label')).toBe('Upload progress')
     expect(progressBar.attributes('aria-valuenow')).toBe('40')
     expect(wrapper.text()).toContain('40%')
-    expect(wrapper.text()).toContain('16 B/s')
+    expect(wrapper.text()).toContain('128 b/s')
     expect(progressBar.get('.progress-fill--client').attributes('style')).toContain('width: 100%')
     expect(progressBar.get('.progress-fill--receive').attributes('style')).toContain('width: 40%')
   })

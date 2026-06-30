@@ -65,6 +65,15 @@ function buildFolderUrl(mode: 'folder-events' | 'folder-list', websocket: boolea
 
   return url.toString()
 }
+
+function buildDirectDownloadHref(href: string) {
+  const url = new URL(href, window.location.href)
+  url.searchParams.set('download', 'raw')
+
+  return url.origin === window.location.origin
+    ? `${url.pathname}${url.search}${url.hash}`
+    : url.toString()
+}
 </script>
 
 <template>
@@ -93,6 +102,7 @@ function buildFolderUrl(mode: 'folder-events' | 'folder-list', websocket: boolea
           <th>Name</th>
           <th>Size</th>
           <th>Modified</th>
+          <th>Actions</th>
         </tr>
       </thead>
       <tbody>
@@ -107,6 +117,22 @@ function buildFolderUrl(mode: 'folder-events' | 'folder-list', websocket: boolea
           </td>
           <td>{{ entry.sizeLabel ?? '' }}</td>
           <td>{{ entry.modifiedAtLabel }}</td>
+          <td>
+            <a
+              v-if="!entry.isDirectory"
+              :href="buildDirectDownloadHref(entry.href)"
+              :download="entry.name"
+              class="folder-download-button"
+              :aria-label="`Download ${entry.name}`"
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16">
+                <path
+                  d="M8 1.75a.75.75 0 0 1 .75.75v5.18l1.72-1.72a.75.75 0 1 1 1.06 1.06l-3 3a.75.75 0 0 1-1.06 0l-3-3a.75.75 0 1 1 1.06-1.06l1.72 1.72V2.5A.75.75 0 0 1 8 1.75Zm-4.5 8a.75.75 0 0 1 .75.75v1.25c0 .41.34.75.75.75h6c.41 0 .75-.34.75-.75V10.5a.75.75 0 0 1 1.5 0v1.25A2.25 2.25 0 0 1 11 14H5a2.25 2.25 0 0 1-2.25-2.25V10.5a.75.75 0 0 1 .75-.75Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </a>
+          </td>
         </tr>
       </tbody>
     </table>

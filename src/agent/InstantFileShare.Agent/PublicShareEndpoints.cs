@@ -44,6 +44,8 @@ internal static class PublicShareEndpoints
     private const string ChunkCountHeaderName = "X-IFS-Chunk-Count";
     private const string ChunkStartHeaderName = "X-IFS-Chunk-Start";
     private const string ChunkSizeHeaderName = "X-IFS-Chunk-Size";
+    private const string UploadEventSubscribeMessageType = "subscribe";
+    private const int MaximumUploadEventSubscriptionIdLength = 256;
     private const double AdaptiveChunkSmoothingFactor = 0.35;
     private const int AdaptiveChunkGrowthFactor = 2;
     private const long MaximumAdaptiveChunkSizeBytes = 64L * 1024 * 1024;
@@ -1038,28 +1040,152 @@ internal static class PublicShareEndpoints
         }
 
         using var socket = await context.WebSockets.AcceptWebSocketAsync();
+        var subscribedUploadIds = new ConcurrentDictionary<string, byte>(StringComparer.Ordinal);
+        AddReceiveUploadEventSubscriptionsFromQuery(context, subscribedUploadIds);
+        using var eventsCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var subscriptionTask = ReadReceiveUploadEventSubscriptionsAsync(socket, subscribedUploadIds, eventsCancellation);
         var settings = await coordinator.GetSettingsAsync(cancellationToken);
-        await foreach (var runtimeEvent in runtimeEvents.ListenAsync(cancellationToken))
+
+        try
         {
-            if (socket.State != WebSocketState.Open)
+            await foreach (var runtimeEvent in runtimeEvents.ListenAsync(eventsCancellation.Token))
             {
-                break;
-            }
+                if (socket.State != WebSocketState.Open)
+                {
+                    break;
+                }
 
-            if (!TryCreateReceiveUploadProgressEvent(
-                receiveLink.Id,
-                runtimeEvent,
-                settings.ReceiveUploadChunkSizingMode,
-                settings.ReceiveUploadChunkSizeBytes,
-                settings.ReceiveUploadMaxBodySizeBytes,
-                settings.ReceiveUploadChunkTargetSeconds,
-                out var progressEvent) || progressEvent is null)
+                if (!TryCreateReceiveUploadProgressEvent(
+                    receiveLink.Id,
+                    runtimeEvent,
+                    settings.ReceiveUploadChunkSizingMode,
+                    settings.ReceiveUploadChunkSizeBytes,
+                    settings.ReceiveUploadMaxBodySizeBytes,
+                    settings.ReceiveUploadChunkTargetSeconds,
+                    out var progressEvent) ||
+                    progressEvent is null ||
+                    !subscribedUploadIds.ContainsKey(progressEvent.UploadId))
+                {
+                    continue;
+                }
+
+                var payload = JsonSerializer.SerializeToUtf8Bytes(progressEvent, WebSocketJsonOptions);
+                await socket.SendAsync(payload, WebSocketMessageType.Text, true, eventsCancellation.Token);
+            }
+        }
+        catch (OperationCanceledException) when (eventsCancellation.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            await eventsCancellation.CancelAsync();
+            try
             {
-                continue;
+                await subscriptionTask;
             }
+            catch (OperationCanceledException) when (eventsCancellation.IsCancellationRequested)
+            {
+            }
+        }
+    }
 
-            var payload = JsonSerializer.SerializeToUtf8Bytes(progressEvent, WebSocketJsonOptions);
-            await socket.SendAsync(payload, WebSocketMessageType.Text, true, cancellationToken);
+    private static async Task ReadReceiveUploadEventSubscriptionsAsync(
+        WebSocket socket,
+        ConcurrentDictionary<string, byte> subscribedUploadIds,
+        CancellationTokenSource eventsCancellation)
+    {
+        try
+        {
+            while (socket.State == WebSocketState.Open && !eventsCancellation.IsCancellationRequested)
+            {
+                var message = await ReadWebSocketTextMessageAsync(socket, eventsCancellation.Token);
+                if (message is null)
+                {
+                    break;
+                }
+
+                AddReceiveUploadEventSubscriptions(message, subscribedUploadIds);
+            }
+        }
+        catch (InvalidDataException)
+        {
+        }
+        catch (JsonException)
+        {
+        }
+        catch (OperationCanceledException) when (eventsCancellation.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            await eventsCancellation.CancelAsync();
+        }
+    }
+
+    private static void AddReceiveUploadEventSubscriptionsFromQuery(
+        HttpContext context,
+        ConcurrentDictionary<string, byte> subscribedUploadIds)
+    {
+        foreach (var value in context.Request.Query["uploadId"])
+        {
+            AddReceiveUploadEventSubscriptionValue(value, subscribedUploadIds);
+        }
+
+        foreach (var value in context.Request.Query["uploadIds"])
+        {
+            AddReceiveUploadEventSubscriptionValue(value, subscribedUploadIds);
+        }
+    }
+
+    private static void AddReceiveUploadEventSubscriptions(
+        string message,
+        ConcurrentDictionary<string, byte> subscribedUploadIds)
+    {
+        using var document = JsonDocument.Parse(message);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object ||
+            !root.TryGetProperty("type", out var typeProperty) ||
+            !string.Equals(typeProperty.GetString(), UploadEventSubscribeMessageType, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (root.TryGetProperty("uploadId", out var uploadIdProperty) &&
+            uploadIdProperty.ValueKind == JsonValueKind.String)
+        {
+            AddReceiveUploadEventSubscriptionValue(uploadIdProperty.GetString(), subscribedUploadIds);
+        }
+
+        if (!root.TryGetProperty("uploadIds", out var uploadIdsProperty) ||
+            uploadIdsProperty.ValueKind != JsonValueKind.Array)
+        {
+            return;
+        }
+
+        foreach (var uploadIdElement in uploadIdsProperty.EnumerateArray())
+        {
+            if (uploadIdElement.ValueKind == JsonValueKind.String)
+            {
+                AddReceiveUploadEventSubscriptionValue(uploadIdElement.GetString(), subscribedUploadIds);
+            }
+        }
+    }
+
+    private static void AddReceiveUploadEventSubscriptionValue(
+        string? rawValue,
+        ConcurrentDictionary<string, byte> subscribedUploadIds)
+    {
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return;
+        }
+
+        foreach (var uploadId in rawValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (uploadId.Length is > 0 and <= MaximumUploadEventSubscriptionIdLength)
+            {
+                subscribedUploadIds.TryAdd(uploadId, 0);
+            }
         }
     }
 
@@ -1441,7 +1567,11 @@ internal static class PublicShareEndpoints
         }
 
         ReceiveUploadChunkSession? session = null;
-        if (chunkMetadata.ChunkIndex == 0)
+        if (chunkMetadata.ChunkIndex == 0 && chunkSessionStore.TryGet(chunkMetadata.UploadId, out var existingSession) && existingSession is not null)
+        {
+            session = existingSession;
+        }
+        else if (chunkMetadata.ChunkIndex == 0)
         {
             var candidate = new ReceiveUploadCandidate(fileName, expectedFileSize, clientRelativePath);
             var (plannedUploads, rejectedUploads) = ReceiveUploadPlanner.Plan(receiveLink.TargetDirectoryPath, [candidate], uploadPlanState);
@@ -1516,23 +1646,48 @@ internal static class PublicShareEndpoints
                 throw new ReceiveUploadCanceledException();
             }
 
+            var chunkEnd = chunkMetadata.ChunkStart + chunkMetadata.ChunkSize;
             if (!string.Equals(session.ReceiveLinkId, receiveLink.Id, StringComparison.Ordinal) ||
-                session.ExpectedTotalBytes != expectedFileSize ||
-                chunkMetadata.ChunkStart != session.BytesWritten)
+                !string.Equals(session.FileName, fileName, StringComparison.Ordinal) ||
+                !string.Equals(session.ClientRelativePath, clientRelativePath, StringComparison.Ordinal) ||
+                session.ExpectedTotalBytes != expectedFileSize)
+            {
+                throw new InvalidOperationException("The upload chunk metadata does not match the existing upload session.");
+            }
+
+            if (chunkMetadata.ChunkStart > session.BytesWritten)
             {
                 throw new ReceiveUploadIncompleteException();
+            }
+
+            if (chunkEnd <= session.BytesWritten)
+            {
+                await sourceStream.CopyToAsync(Stream.Null, sessionCancellationToken);
+                return new ReceiveUploadStreamResult(receiveLink, null);
+            }
+
+            if (session.BytesWritten > chunkMetadata.ChunkStart)
+            {
+                var alreadyWrittenBytes = session.BytesWritten - chunkMetadata.ChunkStart;
+                var discardedBytes = await DiscardExactlyAsync(sourceStream, alreadyWrittenBytes, sessionCancellationToken);
+                if (discardedBytes != alreadyWrittenBytes)
+                {
+                    throw new ReceiveUploadIncompleteException();
+                }
+
+                chunkBytesWritten = alreadyWrittenBytes;
             }
 
             await using var destinationStream = new FileStream(
                 session.PartialDestinationPath,
                 new FileStreamOptions
                 {
-                    Mode = chunkMetadata.ChunkIndex == 0 ? FileMode.CreateNew : FileMode.Open,
+                    Mode = session.BytesWritten == 0 && chunkMetadata.ChunkIndex == 0 ? FileMode.CreateNew : FileMode.Open,
                     Access = FileAccess.Write,
                     Share = FileShare.None,
                     Options = FileOptions.Asynchronous,
                 });
-            destinationStream.Seek(chunkMetadata.ChunkStart, SeekOrigin.Begin);
+            destinationStream.Seek(session.BytesWritten, SeekOrigin.Begin);
 
             var buffer = new byte[ReceiveUploadBufferSizeBytes];
             int bytesRead;
@@ -1610,6 +1765,12 @@ internal static class PublicShareEndpoints
             return new ReceiveUploadStreamResult(
                 receiveLink,
                 new ReceiveUploadFileResult(session.FileName, session.ClientRelativePath, null, false, "Upload stopped.", session.BytesWritten));
+        }
+        catch (ReceiveUploadIncompleteException) when (!session.CancellationToken.IsCancellationRequested && !chunkSessionStore.IsCanceled(session.UploadId))
+        {
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(session.FileName, session.ClientRelativePath, null, false, "The upload did not complete.", session.BytesWritten));
         }
         catch (Exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -3326,6 +3487,34 @@ internal static class PublicShareEndpoints
             await destinationStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
             remainingBytes -= bytesRead;
         }
+    }
+
+    private static async Task<long> DiscardExactlyAsync(
+        Stream sourceStream,
+        long bytesToDiscard,
+        CancellationToken cancellationToken)
+    {
+        if (bytesToDiscard <= 0)
+        {
+            return 0;
+        }
+
+        var buffer = new byte[81920];
+        var remainingBytes = bytesToDiscard;
+        while (remainingBytes > 0)
+        {
+            var bytesRead = await sourceStream.ReadAsync(
+                buffer.AsMemory(0, (int)Math.Min(buffer.Length, remainingBytes)),
+                cancellationToken);
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            remainingBytes -= bytesRead;
+        }
+
+        return bytesToDiscard - remainingBytes;
     }
 
     private static long ResolveRangeStartOffset(long fileLength, RangeItemHeaderValue? requestedRange)

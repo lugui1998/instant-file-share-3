@@ -1,5 +1,6 @@
 import { mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { nextTick } from 'vue'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import TransfersView from './TransfersView.vue'
 
 function mountTransfersView(transfers: unknown[]) {
@@ -12,7 +13,10 @@ function mountTransfersView(transfers: unknown[]) {
     },
     global: {
       stubs: {
-        HelpTooltip: true,
+        HelpTooltip: {
+          props: ['text'],
+          template: '<span class="help-tooltip">{{ text }}</span>',
+        },
         PanelHeader: {
           template: '<div><slot /></div>',
         },
@@ -40,6 +44,10 @@ const baseTransfer = {
 } as const
 
 describe('TransfersView', () => {
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('shows estimated progress for streamed ZIP downloads when source progress is available', () => {
     const wrapper = mountTransfersView([
       {
@@ -89,6 +97,8 @@ describe('TransfersView', () => {
     ])
 
     expect(wrapper.text()).toContain('100%')
+    expect(wrapper.text()).toContain('Completed')
+    expect(wrapper.text()).not.toContain('Stopped')
     expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
   })
 
@@ -109,7 +119,7 @@ describe('TransfersView', () => {
     ])
 
     expect(wrapper.text()).toContain('2 KB / ?')
-    expect(wrapper.text()).toContain('1 KB/s')
+    expect(wrapper.text()).toContain('8 Kb/s')
     expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
   })
 
@@ -130,5 +140,49 @@ describe('TransfersView', () => {
 
     expect(wrapper.text()).toContain('100% estimated')
     expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
+  })
+
+  it('marks likely gateway addresses as unresolved router or proxy peers', () => {
+    const wrapper = mountTransfersView([
+      {
+        ...baseTransfer,
+        transferKind: 'FileUpload',
+        remoteAddress: '192.168.1.1',
+      },
+    ])
+
+    expect(wrapper.text()).toContain('Router/proxy')
+    expect(wrapper.text()).toContain('192.168.1.1 reported by TCP peer')
+    expect(wrapper.text()).toContain('without a forwarded client-IP header')
+  })
+
+  it('freezes the speed label when an in-progress transfer has stopped updating', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-04-06T12:00:04Z'))
+
+    const wrapper = mountTransfersView([
+      {
+        ...baseTransfer,
+        transferKind: 'FileDownload',
+        fileName: 'report.pdf',
+        bytesSent: 2048,
+        totalBytes: 0,
+        progressBytes: null,
+        progressTotalBytes: null,
+        lastUpdatedAtUtc: '2026-04-06T12:00:02Z',
+        state: 'InProgress',
+        isActive: true,
+      },
+    ])
+
+    expect(wrapper.text()).toContain('Stopped')
+    expect(wrapper.text()).toContain('2 KB / ?')
+    expect(wrapper.text()).toContain('8 Kb/s')
+
+    await vi.advanceTimersByTimeAsync(30_000)
+    await nextTick()
+
+    expect(wrapper.text()).toContain('2 KB / ?')
+    expect(wrapper.text()).toContain('8 Kb/s')
   })
 })

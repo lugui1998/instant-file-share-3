@@ -24,6 +24,7 @@ class IdentityDecompressionStream {
 
 describe('FileSharePage', () => {
   afterEach(() => {
+    vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
@@ -155,6 +156,120 @@ describe('FileSharePage', () => {
     }))
     expect(wrapper.text()).toContain('3 B wire / 3 B logical (100%)')
     expect(wrapper.text()).toContain('raw - gzip saved less than')
+  })
+
+  it('automatically retries transient managed download plan failures', async () => {
+    vi.useFakeTimers()
+    const bytes = new TextEncoder().encode('abc')
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:download')
+      static revokeObjectURL = vi.fn()
+    })
+    vi.stubGlobal('fetch', vi.fn()
+      .mockRejectedValueOnce(new TypeError('network lost'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => createPlan({
+          fileSizeBytes: bytes.byteLength,
+          chunks: [{
+            index: 0,
+            start: 0,
+            end: bytes.byteLength - 1,
+            sizeBytes: bytes.byteLength,
+            sha256: await sha256Hex(bytes.buffer),
+          }],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 206,
+        arrayBuffer: async () => bytes.buffer,
+      }))
+
+    const wrapper = mount(FileSharePage, {
+      props: {
+        page: createPage(),
+        file: createFile({
+          displaySize: '3 B',
+          sizeBytes: bytes.byteLength,
+          managedDownload: {
+            ...createSmallManagedDownload(),
+            fileSizeBytes: bytes.byteLength,
+          },
+        }),
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(wrapper.get('button.button--primary').attributes('disabled')).toBeUndefined()
+    })
+    await wrapper.get('button.button--primary').trigger('click')
+    await vi.dynamicImportSettled()
+    await vi.advanceTimersByTimeAsync(1000)
+    await vi.dynamicImportSettled()
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('Complete')
+    })
+    expect(fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('automatically retries transient managed download chunk failures', async () => {
+    vi.useFakeTimers()
+    const bytes = new TextEncoder().encode('abc')
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    vi.stubGlobal('URL', class extends URL {
+      static createObjectURL = vi.fn(() => 'blob:download')
+      static revokeObjectURL = vi.fn()
+    })
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => createPlan({
+          fileSizeBytes: bytes.byteLength,
+          chunks: [{
+            index: 0,
+            start: 0,
+            end: bytes.byteLength - 1,
+            sizeBytes: bytes.byteLength,
+            sha256: await sha256Hex(bytes.buffer),
+          }],
+        }),
+      })
+      .mockRejectedValueOnce(new TypeError('network lost'))
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 206,
+        arrayBuffer: async () => bytes.buffer,
+      }))
+
+    const wrapper = mount(FileSharePage, {
+      props: {
+        page: createPage(),
+        file: createFile({
+          displaySize: '3 B',
+          sizeBytes: bytes.byteLength,
+          managedDownload: {
+            ...createSmallManagedDownload(),
+            fileSizeBytes: bytes.byteLength,
+          },
+        }),
+      },
+    })
+
+    await vi.waitFor(() => {
+      expect(wrapper.get('button.button--primary').attributes('disabled')).toBeUndefined()
+    })
+    await wrapper.get('button.button--primary').trigger('click')
+    await vi.dynamicImportSettled()
+    await vi.advanceTimersByTimeAsync(1000)
+    await vi.dynamicImportSettled()
+
+    await vi.waitFor(() => {
+      expect(wrapper.text()).toContain('Complete')
+    })
+    expect(fetch).toHaveBeenCalledTimes(3)
   })
 
   it('hides transfer diagnostics unless the host enables them', async () => {

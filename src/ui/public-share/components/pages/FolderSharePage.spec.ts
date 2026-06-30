@@ -78,12 +78,41 @@ describe('FolderSharePage', () => {
       'Name',
       'Size',
       'Modified',
+      'Actions',
     ])
     expect(wrapper.findAll('tbody tr:first-child td').map((cell) => cell.text())).toEqual([
       'report.pdf',
       '1 B',
       '6/29/2026 2:00 PM',
+      '',
     ])
+  })
+
+  it('renders direct download buttons for files without changing directory navigation', () => {
+    const folder = createFolder(['report.pdf'])
+    folder.entries.push({
+      name: 'archive',
+      href: '/s/folder-token/docs/archive',
+      isDirectory: true,
+      modifiedAtLabel: '6/29/2026 2:00 PM',
+      sizeLabel: null,
+      isParentDirectory: false,
+    })
+
+    const wrapper = mount(FolderSharePage, {
+      props: {
+        page: createPage(),
+        folder,
+      },
+    })
+
+    const fileDownload = wrapper.get('a[aria-label="Download report.pdf"]')
+    expect(fileDownload.attributes('href')).toBe('/s/folder-token/docs/report.pdf?download=raw')
+    expect(fileDownload.attributes('download')).toBe('report.pdf')
+    expect(fileDownload.text()).toBe('')
+    expect(fileDownload.find('svg').exists()).toBe(true)
+    expect(wrapper.find('a[aria-label="Download archive"]').exists()).toBe(false)
+    expect(wrapper.get('a[href="/s/folder-token/docs/archive"]').text()).toBe('archive/')
   })
 })
 

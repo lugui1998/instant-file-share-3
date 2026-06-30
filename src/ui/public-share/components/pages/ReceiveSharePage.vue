@@ -74,6 +74,9 @@ const defaultUploadChunkSizeBytes = 16 * 1024 * 1024
 const defaultUploadMaxBodySizeBytes = 95 * 1024 * 1024
 const minimumUploadChunkSizeBytes = 1024 * 1024
 const receiveProgressUpdateIntervalMs = 250
+const maxAutomaticUploadRetries = 8
+const baseAutomaticUploadRetryDelayMs = 1000
+const maxAutomaticUploadRetryDelayMs = 30000
 const autoUploadTransports: ReceiveUploadTransport[] = ['BinaryChunks', 'WebSocket', 'MultipartChunks']
 
 const emit = defineEmits<{
@@ -90,6 +93,7 @@ const currentBatchId = ref<string | null>(null)
 const completedBatchIds = ref<Set<string>>(new Set())
 const dragDepth = ref(0)
 const pendingReceiveProgressEvents = new Map<string, ReceiveUploadProgressEvent>()
+const pendingUploadEventSubscriptions = new Set<string>()
 let uploadEventsSocket: WebSocket | null = null
 let receiveProgressFlushTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -101,6 +105,17 @@ type ReceiveUploadProgressEvent = {
   succeeded: boolean
   error?: string | null
   recommendedChunkSizeBytes?: number | null
+}
+
+class UploadRequestError extends Error {
+  constructor(
+    message: string,
+    readonly transient: boolean,
+    readonly status?: number,
+  ) {
+    super(message)
+    this.name = 'UploadRequestError'
+  }
 }
 
 const totalBytes = computed(() => uploadEntries.value.reduce((sum, entry) => sum + entry.file.size, 0))
@@ -188,7 +203,9 @@ function addUploadEntries(files: Array<{ file: File; relativePath: string }>) {
   }
 
   const batchId = resolveCurrentBatchId()
-  uploadEntries.value.push(...createUploadEntries(files, batchId))
+  const entries = createUploadEntries(files, batchId)
+  uploadEntries.value.push(...entries)
+  subscribeToUploadEventIds(entries.map((entry) => entry.uploadId))
   summaryMessage.value = ''
   void startUploadQueue()
 }
@@ -274,7 +291,7 @@ function startUploadQueue() {
 }
 
 async function uploadEntry(entry: UploadEntry) {
-  entry.uploadId = createUploadId()
+  subscribeToUploadEventIds([entry.uploadId])
   entry.progress = 0
   entry.receiveProgress = null
   entry.receivedBytes = 0
@@ -425,17 +442,18 @@ function sendChunkWithTransport(
 ) {
   if (transport === 'BinaryChunks') {
     const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
-    return sendBinaryChunkUploadRequest(entry, entry.file.slice(chunkStart, chunkEnd), chunkIndex, chunkCount, chunkStart)
+    return sendBinaryChunkUploadRequest(entry, entry.file.slice(chunkStart, chunkEnd), chunkIndex, chunkCount, chunkStart, false)
   }
 
   if (transport === 'WebSocket') {
-    return sendWebSocketChunkUploadRequest(entry, chunkIndex, chunkCount, chunkStart, chunkSizeBytes)
+    return sendWebSocketChunkUploadRequest(entry, chunkIndex, chunkCount, chunkStart, chunkSizeBytes, false)
   }
 
   return sendUploadRequest(
     entry,
     createChunkUploadFormData(entry, entry.uploadId, chunkIndex, chunkCount, chunkStart, chunkSizeBytes),
     chunkStart,
+    false,
   )
 }
 
@@ -589,7 +607,7 @@ function sendEncryptedBinaryUploadRequest(
   ciphertext: Blob,
   iv: Uint8Array,
 ) {
-  return new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
+  return withAutomaticUploadRetry(entry, () => new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
     const request = new XMLHttpRequest()
     entry.request = request
     request.open('POST', props.receive.uploadUrl, true)
@@ -622,7 +640,7 @@ function sendEncryptedBinaryUploadRequest(
       const response = request.response as PublicReceiveUploadResponse | null
 
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error(getUploadFailureMessage(response) || `Upload failed with status ${request.status}.`))
+        reject(createUploadHttpError(request.status, getUploadFailureMessage(response)))
         return
       }
 
@@ -635,15 +653,15 @@ function sendEncryptedBinaryUploadRequest(
     })
 
     request.addEventListener('abort', () => {
-      reject(new Error('Upload stopped.'))
+      reject(new UploadRequestError('Upload stopped.', false))
     })
 
     request.addEventListener('error', () => {
-      reject(new Error('Upload failed.'))
+      reject(createTransientUploadError('Upload connection lost.'))
     })
 
     request.send(ciphertext)
-  })
+  }))
 }
 
 function createUploadFormData(entry: UploadEntry, file: Blob) {
@@ -685,6 +703,12 @@ async function sendChunkedUploadRequest(entry: UploadEntry) {
   let chunkIndex = 0
 
   while (chunkStart < entry.file.size) {
+    const confirmedStart = resolveConfirmedChunkStart(entry, chunkStart)
+    if (confirmedStart > chunkStart) {
+      updateEntryUploadProgress(entry, confirmedStart)
+      chunkStart = confirmedStart
+    }
+
     const chunkSizeBytes = resolveNextChunkSizeBytes(entry)
     const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
     finalResponse = await sendUploadRequest(
@@ -701,8 +725,9 @@ async function sendChunkedUploadRequest(entry: UploadEntry) {
     )
     assertUploadResponseSucceeded(finalResponse)
 
-    updateEntryUploadProgress(entry, chunkEnd)
-    chunkStart = chunkEnd
+    const nextChunkStart = Math.max(chunkEnd, resolveConfirmedChunkStart(entry, chunkEnd))
+    updateEntryUploadProgress(entry, nextChunkStart)
+    chunkStart = nextChunkStart
     chunkIndex += 1
   }
 
@@ -719,6 +744,12 @@ async function sendBinaryChunkedUploadRequest(entry: UploadEntry) {
   let chunkIndex = 0
 
   while (chunkStart < entry.file.size) {
+    const confirmedStart = resolveConfirmedChunkStart(entry, chunkStart)
+    if (confirmedStart > chunkStart) {
+      updateEntryUploadProgress(entry, confirmedStart)
+      chunkStart = confirmedStart
+    }
+
     const chunkSizeBytes = resolveNextChunkSizeBytes(entry)
     const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
     const chunk = entry.file.slice(chunkStart, chunkEnd)
@@ -730,8 +761,9 @@ async function sendBinaryChunkedUploadRequest(entry: UploadEntry) {
       chunkStart,
     )
     assertUploadResponseSucceeded(finalResponse)
-    updateEntryUploadProgress(entry, chunkEnd)
-    chunkStart = chunkEnd
+    const nextChunkStart = Math.max(chunkEnd, resolveConfirmedChunkStart(entry, chunkEnd))
+    updateEntryUploadProgress(entry, nextChunkStart)
+    chunkStart = nextChunkStart
     chunkIndex += 1
   }
 
@@ -757,40 +789,31 @@ async function createGzipBlob(file: File) {
 }
 
 async function sendWebSocketChunkedUploadRequest(entry: UploadEntry) {
-  const socket = await openUploadSocket(entry)
   let finalResponse: PublicReceiveUploadResponse | null = null
   let chunkStart = 0
   let chunkIndex = 0
 
-  try {
-    while (chunkStart < entry.file.size) {
-      const chunkSizeBytes = resolveNextChunkSizeBytes(entry)
-      const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
-      const chunk = entry.file.slice(chunkStart, chunkEnd)
-      socket.send(JSON.stringify({
-        type: 'chunk',
-        uploadId: entry.uploadId,
-        batchId: entry.batchId,
-        relativePath: entry.relativePath,
-        fileName: entry.file.name,
-        fileSize: entry.file.size,
-        chunkIndex,
-        chunkCount: resolveChunkCountForRequest(entry.file.size, chunkStart, chunk.size, chunkSizeBytes, chunkIndex),
-        chunkStart,
-        chunkSize: chunk.size,
-      }))
-      socket.send(chunk)
-      finalResponse = await waitForUploadSocketResponse(socket)
-      assertUploadResponseSucceeded(finalResponse)
-      updateEntryUploadProgress(entry, chunkEnd)
-      chunkStart = chunkEnd
-      chunkIndex += 1
+  while (chunkStart < entry.file.size) {
+    const confirmedStart = resolveConfirmedChunkStart(entry, chunkStart)
+    if (confirmedStart > chunkStart) {
+      updateEntryUploadProgress(entry, confirmedStart)
+      chunkStart = confirmedStart
     }
-  } finally {
-    socket.close()
-    if (entry.socket === socket) {
-      entry.socket = null
-    }
+
+    const chunkSizeBytes = resolveNextChunkSizeBytes(entry)
+    const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
+    finalResponse = await sendWebSocketChunkUploadRequest(
+      entry,
+      chunkIndex,
+      resolveChunkCountForRequest(entry.file.size, chunkStart, chunkEnd - chunkStart, chunkSizeBytes, chunkIndex),
+      chunkStart,
+      chunkSizeBytes,
+    )
+    assertUploadResponseSucceeded(finalResponse)
+    const nextChunkStart = Math.max(chunkEnd, resolveConfirmedChunkStart(entry, chunkEnd))
+    updateEntryUploadProgress(entry, nextChunkStart)
+    chunkStart = nextChunkStart
+    chunkIndex += 1
   }
 
   if (!finalResponse) {
@@ -801,6 +824,21 @@ async function sendWebSocketChunkedUploadRequest(entry: UploadEntry) {
 }
 
 async function sendWebSocketChunkUploadRequest(
+  entry: UploadEntry,
+  chunkIndex: number,
+  chunkCount: number,
+  chunkStart: number,
+  chunkSizeBytes: number,
+  automaticRetry = true,
+) {
+  return withOptionalAutomaticUploadRetry(
+    entry,
+    automaticRetry,
+    () => sendWebSocketChunkUploadOnce(entry, chunkIndex, chunkCount, chunkStart, chunkSizeBytes),
+  )
+}
+
+async function sendWebSocketChunkUploadOnce(
   entry: UploadEntry,
   chunkIndex: number,
   chunkCount: number,
@@ -846,6 +884,109 @@ function getUploadFailureMessage(response: PublicReceiveUploadResponse | null | 
   return message ? message : null
 }
 
+async function withAutomaticUploadRetry(
+  entry: UploadEntry,
+  operation: () => Promise<PublicReceiveUploadResponse>,
+) {
+  for (let attempt = 0; attempt <= maxAutomaticUploadRetries; attempt += 1) {
+    try {
+      const response = await operation()
+      clearAutomaticUploadRetryMessage(entry)
+      return response
+    } catch (cause) {
+      if (isCanceled(entry)) {
+        throw cause
+      }
+
+      if (isHostConfirmedUploadComplete(entry)) {
+        return createConfirmedUploadResponse(entry)
+      }
+
+      if (!shouldRetryUploadError(cause, attempt)) {
+        throw cause
+      }
+
+      entry.state = 'uploading'
+      entry.message = `Connection lost. Retrying ${attempt + 1}/${maxAutomaticUploadRetries}...`
+      entry.speedBytesPerSecond = null
+      await waitForAutomaticUploadRetryDelay(entry, attempt)
+    }
+  }
+
+  throw new Error('Upload failed.')
+}
+
+function clearAutomaticUploadRetryMessage(entry: UploadEntry) {
+  if (!entry.message.startsWith('Connection lost. Retrying ')) {
+    return
+  }
+
+  entry.message = entry.state === 'saving' ? 'Saving...' : 'Uploading...'
+}
+
+function withOptionalAutomaticUploadRetry(
+  entry: UploadEntry,
+  automaticRetry: boolean,
+  operation: () => Promise<PublicReceiveUploadResponse>,
+) {
+  return automaticRetry ? withAutomaticUploadRetry(entry, operation) : operation()
+}
+
+function shouldRetryUploadError(cause: unknown, attempt: number) {
+  return attempt < maxAutomaticUploadRetries &&
+    cause instanceof UploadRequestError &&
+    cause.transient
+}
+
+function isHostConfirmedUploadComplete(entry: UploadEntry) {
+  return entry.receiveTotalBytes > 0 &&
+    entry.receivedBytes >= entry.receiveTotalBytes &&
+    entry.receiveProgress !== null &&
+    entry.receiveProgress >= 100
+}
+
+function waitForAutomaticUploadRetryDelay(entry: UploadEntry, attempt: number) {
+  const delayMs = Math.min(maxAutomaticUploadRetryDelayMs, baseAutomaticUploadRetryDelayMs * 2 ** Math.min(attempt, 5))
+  return new Promise<void>((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      if (isCanceled(entry)) {
+        reject(new UploadRequestError('Upload stopped.', false))
+        return
+      }
+
+      resolve()
+    }, delayMs)
+
+    if (isCanceled(entry)) {
+      window.clearTimeout(timeout)
+      reject(new UploadRequestError('Upload stopped.', false))
+    }
+  })
+}
+
+function createTransientUploadError(message: string) {
+  return new UploadRequestError(message, true)
+}
+
+function createUploadHttpError(status: number, message: string | null) {
+  const fallbackMessage = `Upload failed with status ${status}.`
+  return new UploadRequestError(message || fallbackMessage, isTransientUploadStatus(status, message), status)
+}
+
+function isTransientUploadStatus(status: number, message: string | null) {
+  if (message === 'The upload did not complete.' || message === 'The upload was interrupted.') {
+    return true
+  }
+
+  return status === 408 ||
+    status === 425 ||
+    status === 429 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504 ||
+    status >= 520
+}
+
 function resolveNextChunkSizeBytes(entry: UploadEntry) {
   if (props.receive.uploadChunkSizingMode !== 'Auto' && props.receive.uploadMode !== 'AdaptiveBinaryChunks') {
     return uploadPacketSizeBytes.value
@@ -888,7 +1029,7 @@ function openUploadSocket(entry: UploadEntry) {
     const socket = new WebSocket(eventsUrl.toString())
     entry.socket = socket
     socket.addEventListener('open', () => resolve(socket), { once: true })
-    socket.addEventListener('error', () => reject(new Error('Upload failed.')), { once: true })
+    socket.addEventListener('error', () => reject(createTransientUploadError('Upload connection lost.')), { once: true })
   })
 }
 
@@ -909,11 +1050,11 @@ function waitForUploadSocketResponse(socket: WebSocket) {
     }
     const handleError = () => {
       cleanup()
-      reject(new Error('Upload failed.'))
+      reject(createTransientUploadError('Upload connection lost.'))
     }
     const handleClose = () => {
       cleanup()
-      reject(new Error('Upload stopped.'))
+      reject(createTransientUploadError('Upload connection lost.'))
     }
 
     socket.addEventListener('message', handleMessage)
@@ -922,8 +1063,8 @@ function waitForUploadSocketResponse(socket: WebSocket) {
   })
 }
 
-function sendUploadRequest(entry: UploadEntry, formData: FormData, uploadedBytesOffset = 0) {
-  return new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
+function sendUploadRequest(entry: UploadEntry, formData: FormData, uploadedBytesOffset = 0, automaticRetry = true) {
+  return withOptionalAutomaticUploadRetry(entry, automaticRetry, () => new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
     const request = new XMLHttpRequest()
     entry.request = request
     request.open('POST', props.receive.uploadUrl, true)
@@ -942,7 +1083,7 @@ function sendUploadRequest(entry: UploadEntry, formData: FormData, uploadedBytes
       const response = request.response as PublicReceiveUploadResponse | null
 
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error(getUploadFailureMessage(response) || `Upload failed with status ${request.status}.`))
+        reject(createUploadHttpError(request.status, getUploadFailureMessage(response)))
         return
       }
 
@@ -955,15 +1096,15 @@ function sendUploadRequest(entry: UploadEntry, formData: FormData, uploadedBytes
     })
 
     request.addEventListener('abort', () => {
-      reject(new Error('Upload stopped.'))
+      reject(new UploadRequestError('Upload stopped.', false))
     })
 
     request.addEventListener('error', () => {
-      reject(new Error('Upload failed.'))
+      reject(createTransientUploadError('Upload connection lost.'))
     })
 
     request.send(formData)
-  })
+  }))
 }
 
 function sendBinaryChunkUploadRequest(
@@ -972,8 +1113,9 @@ function sendBinaryChunkUploadRequest(
   chunkIndex: number,
   chunkCount: number,
   chunkStart: number,
+  automaticRetry = true,
 ) {
-  return new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
+  return withOptionalAutomaticUploadRetry(entry, automaticRetry, () => new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
     const request = new XMLHttpRequest()
     entry.request = request
     request.open('POST', props.receive.uploadUrl, true)
@@ -1002,7 +1144,7 @@ function sendBinaryChunkUploadRequest(
       const response = request.response as PublicReceiveUploadResponse | null
 
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error(getUploadFailureMessage(response) || `Upload failed with status ${request.status}.`))
+        reject(createUploadHttpError(request.status, getUploadFailureMessage(response)))
         return
       }
 
@@ -1015,19 +1157,19 @@ function sendBinaryChunkUploadRequest(
     })
 
     request.addEventListener('abort', () => {
-      reject(new Error('Upload stopped.'))
+      reject(new UploadRequestError('Upload stopped.', false))
     })
 
     request.addEventListener('error', () => {
-      reject(new Error('Upload failed.'))
+      reject(createTransientUploadError('Upload connection lost.'))
     })
 
     request.send(chunk)
-  })
+  }))
 }
 
 function sendCompressedStreamRequest(entry: UploadEntry, compressedBlob: Blob) {
-  return new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
+  return withAutomaticUploadRetry(entry, () => new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
     const request = new XMLHttpRequest()
     entry.request = request
     request.open('POST', props.receive.uploadUrl, true)
@@ -1053,7 +1195,7 @@ function sendCompressedStreamRequest(entry: UploadEntry, compressedBlob: Blob) {
       const response = request.response as PublicReceiveUploadResponse | null
 
       if (request.status < 200 || request.status >= 300) {
-        reject(new Error(getUploadFailureMessage(response) || `Upload failed with status ${request.status}.`))
+        reject(createUploadHttpError(request.status, getUploadFailureMessage(response)))
         return
       }
 
@@ -1066,15 +1208,15 @@ function sendCompressedStreamRequest(entry: UploadEntry, compressedBlob: Blob) {
     })
 
     request.addEventListener('abort', () => {
-      reject(new Error('Upload stopped.'))
+      reject(new UploadRequestError('Upload stopped.', false))
     })
 
     request.addEventListener('error', () => {
-      reject(new Error('Upload failed.'))
+      reject(createTransientUploadError('Upload connection lost.'))
     })
 
     request.send(compressedBlob)
-  })
+  }))
 }
 
 function updateEntryUploadProgress(entry: UploadEntry, uploadedBytes: number) {
@@ -1137,6 +1279,7 @@ function restartEntry(entry: UploadEntry) {
 
   entry.progress = 0
   entry.uploadId = createUploadId()
+  subscribeToUploadEventIds([entry.uploadId])
   entry.receiveProgress = null
   entry.receivedBytes = 0
   entry.receiveTotalBytes = entry.file.size
@@ -1317,7 +1460,17 @@ function formatBytes(value: number) {
 }
 
 function formatUploadSpeed(bytesPerSecond: number) {
-  return `${formatBytes(bytesPerSecond)}/s`
+  const bitsPerSecond = Math.max(0, bytesPerSecond * 8)
+  const units = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s']
+  let normalized = bitsPerSecond
+  let unitIndex = 0
+
+  while (normalized >= 1024 && unitIndex < units.length - 1) {
+    normalized /= 1024
+    unitIndex++
+  }
+
+  return unitIndex === 0 ? `${Math.round(normalized)} ${units[unitIndex]}` : `${normalized.toFixed(1).replace(/\.0$/, '')} ${units[unitIndex]}`
 }
 
 function normalizeParallelUploadLimit(value: number | null | undefined) {
@@ -1550,6 +1703,10 @@ function connectUploadEvents() {
     const eventsUrl = new URL(props.receive.uploadEventsUrl, window.location.href)
     eventsUrl.protocol = eventsUrl.protocol === 'https:' ? 'wss:' : 'ws:'
     uploadEventsSocket = new WebSocket(eventsUrl.toString())
+    uploadEventsSocket.addEventListener('open', () => {
+      subscribeToUploadEventIds(uploadEntries.value.map((entry) => entry.uploadId))
+      flushUploadEventSubscriptions()
+    })
     uploadEventsSocket.addEventListener('message', (event) => {
       if (typeof event.data !== 'string') {
         return
@@ -1564,14 +1721,42 @@ function connectUploadEvents() {
   }
 }
 
-function queueReceiveProgress(event: ReceiveUploadProgressEvent) {
-  const entry = uploadEntries.value.find((candidate) => candidate.uploadId === event.uploadId)
-  applyReceiveProgressRecommendation(entry, event)
-  if (entry?.state === 'canceled') {
+function subscribeToUploadEventIds(uploadIds: string[]) {
+  for (const uploadId of uploadIds) {
+    if (uploadId) {
+      pendingUploadEventSubscriptions.add(uploadId)
+    }
+  }
+
+  flushUploadEventSubscriptions()
+}
+
+function flushUploadEventSubscriptions() {
+  if (!uploadEventsSocket ||
+    uploadEventsSocket.readyState !== WebSocket.OPEN ||
+    pendingUploadEventSubscriptions.size === 0) {
     return
   }
 
-  if (entry?.receiveLastUpdatedAtMs === null && !pendingReceiveProgressEvents.has(event.uploadId)) {
+  uploadEventsSocket.send(JSON.stringify({
+    type: 'subscribe',
+    uploadIds: Array.from(pendingUploadEventSubscriptions),
+  }))
+  pendingUploadEventSubscriptions.clear()
+}
+
+function queueReceiveProgress(event: ReceiveUploadProgressEvent) {
+  const entry = uploadEntries.value.find((candidate) => candidate.uploadId === event.uploadId)
+  if (!entry) {
+    return
+  }
+
+  applyReceiveProgressRecommendation(entry, event)
+  if (entry.state === 'canceled') {
+    return
+  }
+
+  if (entry.receiveLastUpdatedAtMs === null && !pendingReceiveProgressEvents.has(event.uploadId)) {
     applyReceiveProgress(event)
     return
   }
@@ -1633,6 +1818,16 @@ function applyReceiveProgress(event: ReceiveUploadProgressEvent) {
     applyReceiveProgressRecommendation(entry, event)
   }
 
+  if ((event.succeeded || event.state === 'Completed') && entry.state !== 'success') {
+    entry.progress = 100
+    entry.uploadedBytes = entry.file.size
+    entry.speedBytesPerSecond = null
+    entry.receiveSpeedBytesPerSecond = null
+    entry.state = 'success'
+    entry.message = ''
+    return
+  }
+
   if (event.state === 'Failed' && entry.state !== 'success' && entry.state !== 'error') {
     entry.state = 'error'
     entry.message = event.error || 'Upload failed.'
@@ -1659,6 +1854,7 @@ onMounted(() => {
 onUnmounted(() => {
   uploadEventsSocket?.close()
   uploadEventsSocket = null
+  pendingUploadEventSubscriptions.clear()
   if (receiveProgressFlushTimer) {
     clearTimeout(receiveProgressFlushTimer)
     receiveProgressFlushTimer = null

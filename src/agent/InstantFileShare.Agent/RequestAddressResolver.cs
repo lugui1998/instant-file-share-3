@@ -6,6 +6,24 @@ namespace InstantFileShare.Agent;
 
 internal static class RequestAddressResolver
 {
+    private static readonly string[] DirectClientIpHeaderNames =
+    [
+        "CF-Connecting-IP",
+        "True-Client-IP",
+        "X-Real-IP",
+        "X-Client-IP",
+        "Client-IP",
+        "X-Cluster-Client-IP",
+        "WL-Proxy-Client-IP",
+        "Proxy-Client-IP",
+    ];
+
+    private static readonly string[] ForwardedForHeaderNames =
+    [
+        "X-Forwarded-For",
+        "X-Original-Forwarded-For",
+    ];
+
     public static string? ResolveClientIpAddress(HttpContext context)
     {
         var remoteIpAddress = context.Connection.RemoteIpAddress;
@@ -35,37 +53,26 @@ internal static class RequestAddressResolver
 
     public static string? TryResolveForwardedClientIp(IHeaderDictionary headers)
     {
-        if (TryResolveHeaderIp(headers, "CF-Connecting-IP", out var cloudflareIp))
+        foreach (var headerName in DirectClientIpHeaderNames)
         {
-            return cloudflareIp;
+            if (TryResolveHeaderIp(headers, headerName, out var headerIp))
+            {
+                return headerIp;
+            }
         }
 
-        if (TryResolveHeaderIp(headers, "True-Client-IP", out var trueClientIp))
+        foreach (var headerName in ForwardedForHeaderNames)
         {
-            return trueClientIp;
-        }
+            if (!headers.TryGetValue(headerName, out var forwardedForValues))
+            {
+                continue;
+            }
 
-        if (TryResolveHeaderIp(headers, "X-Real-IP", out var realIp))
-        {
-            return realIp;
-        }
-
-        if (headers.TryGetValue("X-Forwarded-For", out var forwardedForValues))
-        {
             foreach (var forwardedForValue in forwardedForValues)
             {
-                if (string.IsNullOrWhiteSpace(forwardedForValue))
+                if (TryResolveFirstForwardedForIp(forwardedForValue, out var forwardedIp))
                 {
-                    continue;
-                }
-
-                var segments = forwardedForValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-                foreach (var segment in segments)
-                {
-                    if (TryNormalizeIpAddress(segment, out var forwardedIp))
-                    {
-                        return forwardedIp;
-                    }
+                    return forwardedIp;
                 }
             }
         }
@@ -114,6 +121,26 @@ internal static class RequestAddressResolver
         foreach (var headerValue in headerValues)
         {
             if (TryNormalizeIpAddress(headerValue, out ipAddress))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryResolveFirstForwardedForIp(string? rawValue, out string? ipAddress)
+    {
+        ipAddress = null;
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return false;
+        }
+
+        var segments = rawValue.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var segment in segments)
+        {
+            if (TryNormalizeIpAddress(segment, out ipAddress))
             {
                 return true;
             }

@@ -13,7 +13,7 @@ public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger)
 
     public Task OpenDashboardAsync(CancellationToken cancellationToken)
     {
-        return Launch(ResolveRepositoryRoot());
+        return Launch(AgentPaths.GetRepositoryRoot());
     }
 
     public Task Launch(string repositoryRoot)
@@ -31,6 +31,7 @@ public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger)
             var startInfo = CreateStartInfo(repositoryRoot);
             if (startInfo is null)
             {
+                logger.LogWarning("Skipping dashboard launch because no installed dashboard executable or UI package.json was found under {RepositoryRoot}.", repositoryRoot);
                 return Task.CompletedTask;
             }
 
@@ -39,8 +40,11 @@ public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger)
                 var process = Process.Start(startInfo);
                 if (process is null)
                 {
+                    logger.LogWarning("Skipping dashboard launch because the dashboard process did not start.");
                     return Task.CompletedTask;
                 }
+
+                RegisterOutputLogging(process, startInfo);
 
                 process.EnableRaisingEvents = true;
                 process.Exited += (_, _) =>
@@ -69,7 +73,7 @@ public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger)
         return Task.CompletedTask;
     }
 
-    private static ProcessStartInfo? CreateStartInfo(string repositoryRoot)
+    internal static ProcessStartInfo? CreateStartInfo(string repositoryRoot)
     {
         var installedUiExe = ResolveInstalledUiExecutable();
         if (installedUiExe is not null)
@@ -96,7 +100,34 @@ public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger)
             WorkingDirectory = uiPath,
             UseShellExecute = false,
             CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
         };
+    }
+
+    private void RegisterOutputLogging(Process process, ProcessStartInfo startInfo)
+    {
+        if (startInfo.RedirectStandardOutput)
+        {
+            process.OutputDataReceived += (_, args) => LogDashboardOutput(args.Data, LogLevel.Information);
+            process.BeginOutputReadLine();
+        }
+
+        if (startInfo.RedirectStandardError)
+        {
+            process.ErrorDataReceived += (_, args) => LogDashboardOutput(args.Data, LogLevel.Warning);
+            process.BeginErrorReadLine();
+        }
+    }
+
+    private void LogDashboardOutput(string? line, LogLevel logLevel)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return;
+        }
+
+        logger.Log(logLevel, "Dashboard process: {Line}", line);
     }
 
     private static string? ResolveInstalledUiExecutable()
@@ -181,11 +212,6 @@ public sealed partial class DashboardLauncher(ILogger<DashboardLauncher> logger)
 
         CloseHandle(_jobHandle);
         _jobHandle = nint.Zero;
-    }
-
-    private static string ResolveRepositoryRoot()
-    {
-        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
     }
 
     private const uint JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000;

@@ -31,6 +31,46 @@ public sealed class PublicShareHelpersTests
         Assert.Equal("198.51.100.42", resolvedAddress);
     }
 
+    [Theory]
+    [InlineData("X-Client-IP")]
+    [InlineData("Client-IP")]
+    [InlineData("X-Cluster-Client-IP")]
+    [InlineData("WL-Proxy-Client-IP")]
+    [InlineData("Proxy-Client-IP")]
+    public void ResolveClientIpAddress_PrefersAdditionalForwardingHeadersWhenRemoteIsPrivateProxy(string headerName)
+    {
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse("192.168.1.1");
+        context.Request.Headers[headerName] = "198.51.100.42";
+
+        var resolvedAddress = RequestAddressResolver.ResolveClientIpAddress(context);
+
+        Assert.Equal("198.51.100.42", resolvedAddress);
+    }
+
+    [Fact]
+    public void ResolveClientIpAddress_PrefersOriginalForwardedForWhenRemoteIsPrivateProxy()
+    {
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse("192.168.1.1");
+        context.Request.Headers["X-Original-Forwarded-For"] = "198.51.100.42, 192.168.1.1";
+
+        var resolvedAddress = RequestAddressResolver.ResolveClientIpAddress(context);
+
+        Assert.Equal("198.51.100.42", resolvedAddress);
+    }
+
+    [Fact]
+    public void ResolveClientIpAddress_FallsBackToPrivatePeerWhenProxyDoesNotForwardClientIp()
+    {
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse("192.168.1.1");
+
+        var resolvedAddress = RequestAddressResolver.ResolveClientIpAddress(context);
+
+        Assert.Equal("192.168.1.1", resolvedAddress);
+    }
+
     [Fact]
     public void ResolveClientIpAddress_IgnoresForwardedHeadersWhenRemoteIsPublicPeer()
     {
@@ -223,6 +263,23 @@ public sealed class PublicShareHelpersTests
         Assert.Contains(page.Folder.Entries, entry => entry.IsParentDirectory);
         Assert.Contains(page.Folder.Entries, entry => entry.Name == "guide.txt");
         Assert.Equal("/s/folder-token/docs/guide.txt", page.Folder.Entries.Single(entry => entry.Name == "guide.txt").Href);
+    }
+
+    [Fact]
+    public void ListDirectory_ExcludesPartialDownloadFiles()
+    {
+        using var tempDirectory = new TemporaryDirectory();
+        var rootPath = tempDirectory.CreateDirectory("share-root");
+        File.WriteAllText(Path.Combine(rootPath, "complete.txt"), "complete");
+        File.WriteAllText(Path.Combine(rootPath, "large.bin.downloadpart"), "partial");
+
+        Assert.True(FolderSharePathResolver.TryResolveEntry(rootPath, null, out var resolvedRoot));
+        Assert.NotNull(resolvedRoot);
+
+        var entries = FolderSharePathResolver.ListDirectory(resolvedRoot!);
+
+        Assert.Contains(entries, entry => entry.Name == "complete.txt");
+        Assert.DoesNotContain(entries, entry => entry.Name == "large.bin.downloadpart");
     }
 
     [Fact]

@@ -6,6 +6,7 @@ import {
   createRawCompressionSample,
   downloadFileWithCompressionFallback,
   estimateBlobFallbackMemoryCost,
+  formatTransferBitsPerSecond,
   readManagedGzipResponseAsBuffer,
   recordManagedCompressionSample,
   supportsGzipDecompression,
@@ -153,6 +154,12 @@ describe('compressionDownload', () => {
       decodedBytesBuffered: 4096,
       minimumTransientBytes: 4096,
     })
+  })
+
+  it('formats transfer speeds in bits per second', () => {
+    expect(formatTransferBitsPerSecond(16)).toBe('128 b/s')
+    expect(formatTransferBitsPerSecond(2048)).toBe('16 Kb/s')
+    expect(formatTransferBitsPerSecond(1024 * 1024)).toBe('8 Mb/s')
   })
 
   it('adds managed gzip to signed raw chunk URLs without dropping plan query parameters', () => {
