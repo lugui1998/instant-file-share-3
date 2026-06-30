@@ -137,6 +137,7 @@ describe('SettingsView', () => {
       'MultipartChunks',
       'BinaryChunks',
       'WebSocket',
+      'CompressedStream',
     ])
   })
 
