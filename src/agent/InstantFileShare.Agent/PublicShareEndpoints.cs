@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Globalization;
 using System.IO.Compression;
 using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using InstantFileShare.Core;
@@ -18,6 +19,9 @@ internal static class PublicShareEndpoints
 {
     private const string FolderListQueryValue = "folder-list";
     private const string FolderEventsQueryValue = "folder-events";
+    private const string DownloadPlanQueryValue = "download-plan";
+    private const string ManagedDownloadQueryValue = "managed";
+    private const string RawDownloadQueryValue = "raw";
     private const string PartialUploadSuffix = ".downloadpart";
     private const string BinaryChunkContentType = "application/octet-stream";
     private const string UploadIdHeaderName = "X-IFS-Upload-Id";
@@ -35,6 +39,25 @@ internal static class PublicShareEndpoints
     private const int ReceiveUploadBufferSizeBytes = 1024 * 1024;
     private static readonly JsonSerializerOptions WebSocketJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly ConcurrentDictionary<string, ReceiveUploadSpeedState> ReceiveUploadSpeedStates = new(StringComparer.Ordinal);
+
+    private sealed record BrowserManagedDownloadPlan(
+        string FileName,
+        long FileSizeBytes,
+        string ContentType,
+        string RawDownloadUrl,
+        string RangeUnit,
+        string IntegrityAlgorithm,
+        int ChunkSizeBytes,
+        int MaxRetriesPerChunk,
+        IReadOnlyList<BrowserManagedDownloadChunk> Chunks,
+        string SaveLimitationNote);
+
+    private sealed record BrowserManagedDownloadChunk(
+        int Index,
+        long Start,
+        long End,
+        long SizeBytes,
+        string Sha256);
 
     public static IEndpointRouteBuilder MapPublicShareEndpoints(this IEndpointRouteBuilder endpoints)
     {
@@ -2019,38 +2042,48 @@ internal static class PublicShareEndpoints
         var fileResponseMetadata = ShareFileResponsePolicy.Resolve(responseFileName, settings);
         var remoteAddress = RequestAddressResolver.ResolveClientIpAddress(context);
         var userAgent = context.Request.Headers.UserAgent.ToString();
+        var isManagedDownloadCandidate = !fileResponseMetadata.PreferInline;
 
-        if (crawlerName is not null && settings.SendMetadataToCrawlers)
+        if (isManagedDownloadCandidate && IsDownloadPlanRequest(context.Request))
         {
-            var previewTransfer = await coordinator.StartTransferAsync(
-                share.Id,
-                share.Token,
-                transferFileName,
-                TransferKind.MetadataPreview,
-                null,
-                RequestAddressResolver.BuildClientFingerprint(remoteAddress, userAgent),
-                remoteAddress,
-                0,
-                0,
-                crawlerName,
-                cancellationToken);
+            return await HandleBrowserManagedDownloadPlanAsync(context, file, responseFileName, fileResponseMetadata, cancellationToken);
+        }
 
-            await coordinator.MarkTransferCompletedAsync(
-                previewTransfer.Id,
-                share.Id,
-                share.Token,
-                transferFileName,
-                TransferKind.MetadataPreview,
-                remoteAddress,
-                0,
-                0,
-                paused: false,
-                succeeded: true,
-                countsTowardUsage: false,
-                usageSessionKey: null,
-                error: null,
-                requesterName: crawlerName,
-                cancellationToken);
+        if ((crawlerName is not null && settings.SendMetadataToCrawlers) ||
+            (isManagedDownloadCandidate && IsBrowserManagedDownloadPageRequest(context.Request)))
+        {
+            if (crawlerName is not null && settings.SendMetadataToCrawlers)
+            {
+                var previewTransfer = await coordinator.StartTransferAsync(
+                    share.Id,
+                    share.Token,
+                    transferFileName,
+                    TransferKind.MetadataPreview,
+                    null,
+                    RequestAddressResolver.BuildClientFingerprint(remoteAddress, userAgent),
+                    remoteAddress,
+                    0,
+                    0,
+                    crawlerName,
+                    cancellationToken);
+
+                await coordinator.MarkTransferCompletedAsync(
+                    previewTransfer.Id,
+                    share.Id,
+                    share.Token,
+                    transferFileName,
+                    TransferKind.MetadataPreview,
+                    remoteAddress,
+                    0,
+                    0,
+                    paused: false,
+                    succeeded: true,
+                    countsTowardUsage: false,
+                    usageSessionKey: null,
+                    error: null,
+                    requesterName: crawlerName,
+                    cancellationToken);
+            }
 
             var pageModel = pageModelFactory.BuildFileMetadataPage(context, share, responseFileName, file, fileResponseMetadata);
             if (!htmlRenderer.TryRender(pageModel, out var metadataHtml, out var renderError))
@@ -2175,6 +2208,140 @@ internal static class PublicShareEndpoints
 
         ResponseHeaderWriter.ApplyFileResponseHeaders(context.Response, responseFileName, fileResponseMetadata);
         return Results.File(meteredStream, contentType: fileResponseMetadata.ContentType, enableRangeProcessing: allowRangeRequests);
+    }
+
+    private static async Task<IResult> HandleBrowserManagedDownloadPlanAsync(
+        HttpContext context,
+        FileInfo file,
+        string responseFileName,
+        ShareFileResponseMetadata fileResponseMetadata,
+        CancellationToken cancellationToken)
+    {
+        if (fileResponseMetadata.PreferInline)
+        {
+            return Results.NotFound();
+        }
+
+        var chunkSizeBytes = ResolveBrowserManagedDownloadChunkSize(context.Request);
+        var chunks = await BuildBrowserManagedDownloadChunksAsync(file, chunkSizeBytes, cancellationToken);
+        var payload = new BrowserManagedDownloadPlan(
+            responseFileName,
+            file.Length,
+            fileResponseMetadata.ContentType,
+            BuildCurrentUrl(context, [("download", RawDownloadQueryValue)]),
+            "bytes",
+            "sha-256",
+            chunkSizeBytes,
+            PublicSharePageModelFactory.BrowserManagedDownloadMaxRetriesPerChunk,
+            chunks,
+            "The browser-managed downloader fetches byte ranges, verifies every chunk hash, retries failed chunks, and assembles a Blob before saving. Direct raw download remains available.");
+
+        context.Response.Headers.CacheControl = "no-store";
+        return Results.Json(payload);
+    }
+
+    private static async Task<IReadOnlyList<BrowserManagedDownloadChunk>> BuildBrowserManagedDownloadChunksAsync(
+        FileInfo file,
+        int chunkSizeBytes,
+        CancellationToken cancellationToken)
+    {
+        var chunks = new List<BrowserManagedDownloadChunk>();
+
+        if (file.Length == 0)
+        {
+            chunks.Add(new BrowserManagedDownloadChunk(0, 0, -1, 0, Convert.ToHexString(SHA256.HashData(Array.Empty<byte>())).ToLowerInvariant()));
+            return chunks;
+        }
+
+        var buffer = new byte[chunkSizeBytes];
+        await using var stream = new FileStream(file.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        var offset = 0L;
+        var index = 0;
+
+        while (offset < file.Length)
+        {
+            var expectedSize = (int)Math.Min(chunkSizeBytes, file.Length - offset);
+            var read = 0;
+            while (read < expectedSize)
+            {
+                var count = await stream.ReadAsync(buffer.AsMemory(read, expectedSize - read), cancellationToken);
+                if (count == 0)
+                {
+                    throw new IOException("The shared file changed while the download plan was being generated.");
+                }
+
+                read += count;
+            }
+
+            var end = offset + expectedSize - 1;
+            var hashBytes = SHA256.HashData(buffer.AsSpan(0, expectedSize));
+            chunks.Add(new BrowserManagedDownloadChunk(
+                index,
+                offset,
+                end,
+                expectedSize,
+                Convert.ToHexString(hashBytes).ToLowerInvariant()));
+            offset += expectedSize;
+            index++;
+        }
+
+        return chunks;
+    }
+
+    private static int ResolveBrowserManagedDownloadChunkSize(HttpRequest request)
+    {
+        if (!int.TryParse(request.Query["chunkSize"], NumberStyles.Integer, CultureInfo.InvariantCulture, out var requestedChunkSize))
+        {
+            return PublicSharePageModelFactory.BrowserManagedDownloadChunkSizeBytes;
+        }
+
+        return Math.Clamp(requestedChunkSize, 64 * 1024, 16 * 1024 * 1024);
+    }
+
+    private static bool IsDownloadPlanRequest(HttpRequest request)
+    {
+        return string.Equals(request.Query["ifs"], DownloadPlanQueryValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsRawDownloadRequest(HttpRequest request)
+    {
+        return string.Equals(request.Query["download"], RawDownloadQueryValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBrowserManagedDownloadPageRequest(HttpRequest request)
+    {
+        if (HttpMethods.IsHead(request.Method) || IsRawDownloadRequest(request) || request.GetTypedHeaders().Range is not null)
+        {
+            return false;
+        }
+
+        if (string.Equals(request.Query["download"], ManagedDownloadQueryValue, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        var accept = request.Headers.Accept.ToString();
+        return accept.Contains("text/html", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string BuildCurrentUrl(HttpContext context, IReadOnlyList<(string Name, string Value)> queryValues)
+    {
+        var builder = new StringBuilder();
+        builder.Append(context.Request.Scheme)
+            .Append("://")
+            .Append(context.Request.Host)
+            .Append(context.Request.PathBase)
+            .Append(context.Request.Path);
+
+        for (var index = 0; index < queryValues.Count; index++)
+        {
+            builder.Append(index == 0 ? '?' : '&')
+                .Append(Uri.EscapeDataString(queryValues[index].Name))
+                .Append('=')
+                .Append(Uri.EscapeDataString(queryValues[index].Value));
+        }
+
+        return builder.ToString();
     }
 
     private static async Task<IResult> HandleFolderBrowseDirectoryAsync(

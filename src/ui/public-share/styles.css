@@ -186,6 +186,86 @@ a {
   line-height: 1.6;
 }
 
+.download-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--surface-strong);
+}
+
+.download-panel__header,
+.download-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.download-panel__header strong {
+  display: block;
+  font-size: 1.05rem;
+}
+
+.download-progress {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.download-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(92, 219, 149, 0.9), rgba(76, 196, 255, 0.85));
+  transition: width 180ms ease-out;
+}
+
+.download-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 181, 125, 0.24);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.button--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, rgba(255, 138, 84, 0.9), rgba(255, 186, 69, 0.82));
+  color: var(--action-text);
+}
+
+.button--ghost {
+  color: var(--muted);
+}
+
+.download-error {
+  margin: 0;
+  line-height: 1.5;
+  font-size: 0.92rem;
+}
+
+.download-error {
+  color: #ffb57d;
+  font-weight: 700;
+}
+
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -524,6 +604,7 @@ a {
 
   .public-shell__header,
   .hero-panel,
+  .download-panel__header,
   .upload-item__row,
   .upload-folder__header,
   .upload-child-row,
