@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   canPauseManagedDownload,
   canResumeManagedDownload,
+  canUseBlobManagedDownload,
   createManagedDownloadState,
+  blobManagedDownloadMaxBytes,
   reduceManagedDownloadState,
+  requiresStreamingManagedDownload,
 } from './downloadState'
 
 describe('managed download state', () => {
@@ -55,5 +58,12 @@ describe('managed download state', () => {
     expect(state.retryCount).toBe(3)
     expect(state.error).toBe('Chunk 0 failed integrity verification.')
     expect(canResumeManagedDownload(state)).toBe(true)
+  })
+
+  it('requires streaming above the documented Blob assembly limit', () => {
+    expect(canUseBlobManagedDownload(blobManagedDownloadMaxBytes)).toBe(true)
+    expect(requiresStreamingManagedDownload(blobManagedDownloadMaxBytes)).toBe(false)
+    expect(canUseBlobManagedDownload(blobManagedDownloadMaxBytes + 1)).toBe(false)
+    expect(requiresStreamingManagedDownload(blobManagedDownloadMaxBytes + 1)).toBe(true)
   })
 })

@@ -44,6 +44,9 @@ export type BrowserManagedDownloadPlan = {
   rawDownloadUrl: string
   rangeUnit: 'bytes'
   integrityAlgorithm: 'sha-256'
+  lastModifiedUtc: string
+  lastModifiedUtcTicks: number
+  planHash: string
   chunkSizeBytes: number
   maxRetriesPerChunk: number
   chunks: BrowserManagedDownloadChunk[]
