@@ -13,6 +13,13 @@ public enum ShareKind
     Folder = 1,
 }
 
+public enum ShareListItemKind
+{
+    File = 0,
+    Folder = 1,
+    Receive = 2,
+}
+
 public enum FolderShareEntryPoint
 {
     Browse = 0,
@@ -31,6 +38,20 @@ public enum FolderZipCompressionLevel
     Fastest = 1,
     NoCompression = 2,
     SmallestSize = 3,
+}
+
+public enum ReceiveUploadMode
+{
+    MultipartChunks = 0,
+    BinaryChunks = 1,
+    AdaptiveBinaryChunks = 2,
+    WebSocket = 3,
+}
+
+public enum ReceiveUploadChunkSizingMode
+{
+    Fixed = 0,
+    Auto = 1,
 }
 
 public enum ShareState

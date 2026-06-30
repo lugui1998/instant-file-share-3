@@ -20,6 +20,30 @@ public sealed class PublicShareHelpersTests
     }
 
     [Fact]
+    public void ResolveClientIpAddress_PrefersForwardedHeadersWhenRemoteIsPrivateProxy()
+    {
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse("192.168.1.1");
+        context.Request.Headers["X-Forwarded-For"] = "198.51.100.42, 192.168.1.1";
+
+        var resolvedAddress = RequestAddressResolver.ResolveClientIpAddress(context);
+
+        Assert.Equal("198.51.100.42", resolvedAddress);
+    }
+
+    [Fact]
+    public void ResolveClientIpAddress_IgnoresForwardedHeadersWhenRemoteIsPublicPeer()
+    {
+        var context = new DefaultHttpContext();
+        context.Connection.RemoteIpAddress = IPAddress.Parse("198.51.100.10");
+        context.Request.Headers["X-Forwarded-For"] = "203.0.113.10";
+
+        var resolvedAddress = RequestAddressResolver.ResolveClientIpAddress(context);
+
+        Assert.Equal("198.51.100.10", resolvedAddress);
+    }
+
+    [Fact]
     public void BuildClientFingerprint_ReturnsStableHash()
     {
         var left = RequestAddressResolver.BuildClientFingerprint("203.0.113.10", "UnitTestAgent/1.0");
@@ -48,8 +72,23 @@ public sealed class PublicShareHelpersTests
         var header = ResponseHeaderWriter.BuildContentDispositionHeader("attachment", "Quarterly Report ü.pdf");
 
         Assert.Contains("attachment;", header);
-        Assert.Contains("filename=", header);
+        Assert.Contains("filename=\"Quarterly Report _.pdf\"", header);
         Assert.Contains("filename*=UTF-8''Quarterly%20Report%20%C3%BC.pdf", header);
+        Assert.All(header, ch => Assert.True(ch <= 0x7F, $"Header contains non-ASCII character U+{(int)ch:X4}."));
+    }
+
+    [Fact]
+    public void BuildContentDispositionHeader_UsesAsciiFallbackForLegacyFilename()
+    {
+        var header = ResponseHeaderWriter.BuildContentDispositionHeader(
+            "attachment",
+            "a-fuga-das-galinhas-a-ameaça-dos-nuggets-2023-10.mkv");
+
+        Assert.Contains("filename=\"a-fuga-das-galinhas-a-amea_a-dos-nuggets-2023-10.mkv\"", header);
+        Assert.Contains(
+            "filename*=UTF-8''a-fuga-das-galinhas-a-amea%C3%A7a-dos-nuggets-2023-10.mkv",
+            header);
+        Assert.All(header, ch => Assert.True(ch <= 0x7F, $"Header contains non-ASCII character U+{(int)ch:X4}."));
     }
 
     [Fact]
@@ -148,7 +187,7 @@ public sealed class PublicShareHelpersTests
         var context = new DefaultHttpContext();
         context.Request.Scheme = "http";
         context.Request.Host = new HostString("127.0.0.1:46431");
-        context.Request.Path = "/s/folder-token/team-files/docs";
+        context.Request.Path = "/s/folder-token/docs";
 
         var share = new ShareRecord
         {
@@ -183,7 +222,7 @@ public sealed class PublicShareHelpersTests
         Assert.Equal(2, page.Folder!.Breadcrumbs.Count);
         Assert.Contains(page.Folder.Entries, entry => entry.IsParentDirectory);
         Assert.Contains(page.Folder.Entries, entry => entry.Name == "guide.txt");
-        Assert.Equal("/s/folder-token/team-files/docs/guide.txt", page.Folder.Entries.Single(entry => entry.Name == "guide.txt").Href);
+        Assert.Equal("/s/folder-token/docs/guide.txt", page.Folder.Entries.Single(entry => entry.Name == "guide.txt").Href);
     }
 
     [Fact]
@@ -254,7 +293,7 @@ public sealed class PublicShareHelpersTests
         var page = new PublicSharePageModelFactory().BuildReceivePage(
             context,
             receiveLink,
-            new AppSettings { ReceivePageTitle = "Send files to Lu" });
+            new AppSettings { ReceivePageTitle = "Send files to Lu", ReceiveParallelUploadLimit = 5 });
 
         Assert.Equal("receive", page.Kind);
         Assert.Equal("Send files to Lu", page.Title);
@@ -262,8 +301,80 @@ public sealed class PublicShareHelpersTests
         Assert.DoesNotContain("drop", page.Description);
         Assert.NotNull(page.Receive);
         Assert.Equal("drop", page.Receive!.TargetName);
-        Assert.Equal("https://share.example.test/r/receive-token", page.Receive.UploadUrl);
+        Assert.Equal("/r/receive-token", page.Receive.UploadUrl);
         Assert.Equal(768, page.Receive.RemainingQuotaBytes);
+        Assert.Equal(5, page.Receive.ParallelUploadLimit);
+        Assert.Equal(ReceiveUploadMode.MultipartChunks.ToString(), page.Receive.UploadMode);
+        Assert.Equal(ReceiveUploadChunkSizingMode.Fixed.ToString(), page.Receive.UploadChunkSizingMode);
+        Assert.Equal(Defaults.DefaultReceiveUploadChunkSizeBytes, page.Receive.UploadChunkSizeBytes);
+        Assert.Equal(Defaults.DefaultReceiveUploadMaxBodySizeBytes, page.Receive.UploadMaxBodySizeBytes);
+        Assert.Equal(Defaults.DefaultReceiveUploadChunkTargetSeconds, page.Receive.UploadChunkTargetSeconds);
+    }
+
+    [Fact]
+    public void BuildReceivePage_UsesRelativeUploadUrl_WhenProxyTerminatesHttps()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "http";
+        context.Request.Host = new HostString("share.example.test");
+        context.Request.PathBase = "/dropbox";
+        context.Request.Path = "/r/receive-token";
+
+        var receiveLink = new ReceiveLinkRecord
+        {
+            Id = "receive-1",
+            Token = "receive-token",
+            TargetDirectoryPath = @"C:\Uploads\drop",
+            TargetDisplayName = "drop",
+            PublicBaseUrl = "https://share.example.test/dropbox",
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(6),
+            MaxTotalBytes = 1024,
+            BytesReceived = 0,
+            PublishMode = PublishMode.Manual,
+            State = ReceiveLinkState.Active,
+        };
+
+        var page = new PublicSharePageModelFactory().BuildReceivePage(
+            context,
+            receiveLink,
+            new AppSettings());
+
+        Assert.NotNull(page.Receive);
+        Assert.Equal("http://share.example.test/dropbox/r/receive-token", page.CanonicalUrl);
+        Assert.Equal("/dropbox/r/receive-token", page.Receive!.UploadUrl);
+    }
+
+    [Fact]
+    public void BuildReceivePage_PreservesUnlimitedParallelUploadLimit()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("share.example.test");
+        context.Request.Path = "/r/receive-token";
+
+        var receiveLink = new ReceiveLinkRecord
+        {
+            Id = "receive-1",
+            Token = "receive-token",
+            TargetDirectoryPath = @"C:\Uploads\drop",
+            TargetDisplayName = "drop",
+            PublicBaseUrl = "https://share.example.test",
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(6),
+            MaxTotalBytes = 1024,
+            BytesReceived = 0,
+            PublishMode = PublishMode.Manual,
+            State = ReceiveLinkState.Active,
+        };
+
+        var page = new PublicSharePageModelFactory().BuildReceivePage(
+            context,
+            receiveLink,
+            new AppSettings { ReceiveParallelUploadLimit = 0 });
+
+        Assert.NotNull(page.Receive);
+        Assert.Equal(0, page.Receive!.ParallelUploadLimit);
     }
 
     [Fact]
@@ -273,13 +384,11 @@ public sealed class PublicShareHelpersTests
         var targetPath = tempDirectory.CreateDirectory("drop");
         Directory.CreateDirectory(Path.Combine(targetPath, "Photos"));
 
-        var first = CreateFormFile("a.txt", 1);
-        var second = CreateFormFile("b.txt", 1);
         var (planned, rejected) = ReceiveUploadPlanner.Plan(
             targetPath,
             [
-                new ReceiveUploadCandidate(first, "Photos/2026/a.txt"),
-                new ReceiveUploadCandidate(second, "Photos/2026/b.txt"),
+                new ReceiveUploadCandidate("a.txt", 1, "Photos/2026/a.txt"),
+                new ReceiveUploadCandidate("b.txt", 1, "Photos/2026/b.txt"),
             ]);
 
         Assert.Empty(rejected);
@@ -292,11 +401,9 @@ public sealed class PublicShareHelpersTests
     {
         using var tempDirectory = new TemporaryDirectory();
         var targetPath = tempDirectory.CreateDirectory("drop");
-        var formFile = CreateFormFile("evil.txt", 1);
-
         var (_, rejected) = ReceiveUploadPlanner.Plan(
             targetPath,
-            [new ReceiveUploadCandidate(formFile, "../evil.txt")]);
+            [new ReceiveUploadCandidate("evil.txt", 1, "../evil.txt")]);
 
         Assert.Single(rejected);
         Assert.False(rejected[0].Success);
@@ -315,21 +422,29 @@ public sealed class PublicShareHelpersTests
             return;
         }
 
-        var formFile = CreateFormFile("safe.txt", 1);
         var (_, rejected) = ReceiveUploadPlanner.Plan(
             targetPath,
-            [new ReceiveUploadCandidate(formFile, "linked/safe.txt")]);
+            [new ReceiveUploadCandidate("safe.txt", 1, "linked/safe.txt")]);
 
         Assert.Single(rejected);
         Assert.False(rejected[0].Success);
         Assert.Equal("The uploaded path traverses a linked folder, which is not allowed.", rejected[0].Message);
     }
 
-    private static IFormFile CreateFormFile(string fileName, int byteCount)
+    [Fact]
+    public void ReceiveUploadBatchNotificationTracker_NotifiesOncePerCompletedBatch()
     {
-        var content = new byte[byteCount];
-        var stream = new MemoryStream(content);
-        return new FormFile(stream, 0, byteCount, "files", fileName);
+        var notifications = new RecordingNotificationService();
+        var tracker = new ReceiveUploadBatchNotificationTracker(notifications);
+
+        tracker.RecordSuccessfulUploads("receive-1", "batch-1", "drop", 1);
+        tracker.RecordSuccessfulUploads("receive-1", "batch-1", "drop", 2);
+
+        Assert.True(tracker.TryNotifyCompletedBatch("receive-1", "batch-1"));
+        Assert.False(tracker.TryNotifyCompletedBatch("receive-1", "batch-1"));
+        var notification = Assert.Single(notifications.Messages);
+        Assert.Equal("Files received", notification.Title);
+        Assert.Equal("3 files received in drop", notification.Message);
     }
 
     private static bool TryCreateDirectorySymbolicLink(string linkPath, string targetPath)
@@ -408,6 +523,21 @@ public sealed class PublicShareHelpersTests
             }
 
             // Temp cleanup should not fail the test when Windows still holds a short-lived handle.
+        }
+    }
+
+    private sealed class RecordingNotificationService : INotificationService
+    {
+        public List<(string Title, string Message)> Messages { get; } = [];
+
+        public void ShowInfo(string title, string message)
+        {
+            Messages.Add((title, message));
+        }
+
+        public void ShowError(string title, string message)
+        {
+            Messages.Add((title, message));
         }
     }
 }

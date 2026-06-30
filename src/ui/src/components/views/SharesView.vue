@@ -38,7 +38,11 @@ function formatTimestamp(value: string) {
 }
 
 function getShareTypeLabel(share: AgentShareRecord) {
-  if (share.shareKind !== 'Folder') {
+  if (share.itemKind === 'Receive') {
+    return 'Receive link'
+  }
+
+  if (share.shareKind !== 'Folder' && share.itemKind !== 'Folder') {
     return 'File share'
   }
 
@@ -87,6 +91,15 @@ watch([activeShares, () => props.itemsPerPage], () => {
             <td>{{ formatTimestamp(share.createdAtUtc) }}</td>
             <td class="actions-cell">
               <button
+                aria-label="Copy link"
+                class="secondary compact-icon-button"
+                title="Copy link"
+                type="button"
+                @click="emit('copyShare', share)"
+              >
+                <span aria-hidden="true">⧉</span>
+              </button>
+              <button
                 aria-label="Show in Explorer"
                 class="secondary compact-icon-button"
                 title="Show in Explorer"
@@ -100,16 +113,15 @@ watch([activeShares, () => props.itemsPerPage], () => {
                   />
                 </svg>
               </button>
-              <button
-                aria-label="Copy link"
-                class="secondary compact-icon-button"
-                title="Copy link"
-                type="button"
-                @click="emit('copyShare', share)"
-              >
-                <span aria-hidden="true">⧉</span>
+              <button class="danger compact-button revoke-button" type="button" @click="emit('revokeShare', share.id)">
+                <svg aria-hidden="true" class="trash-icon" viewBox="0 0 16 16">
+                  <path
+                    d="M6 2.25h4a1 1 0 0 1 1 1V4h2a.75.75 0 0 1 0 1.5h-.54l-.63 7.31A1.75 1.75 0 0 1 10.08 14H5.92a1.75 1.75 0 0 1-1.74-1.19L3.54 5.5H3A.75.75 0 0 1 3 4h2v-.75a1 1 0 0 1 1-1Zm3.5 1.75V3.75h-3V4h3Zm-3.18 7.25a.75.75 0 1 0 1.5 0V7.25a.75.75 0 0 0-1.5 0v4Zm3.36 0a.75.75 0 1 0 1.5 0V7.25a.75.75 0 0 0-1.5 0v4Z"
+                    fill="currentColor"
+                  />
+                </svg>
+                <span>Revoke</span>
               </button>
-              <button class="danger compact-button" type="button" @click="emit('revokeShare', share.id)">Revoke</button>
             </td>
           </tr>
           <tr v-if="!pagedShares.length">

@@ -72,7 +72,7 @@ internal sealed class PublicSharePageModelFactory
         AppSettings settings)
     {
         var description = $"Browse {share.FileName}. Shared via Instant File Share.";
-        var browseRootPath = $"/s/{share.Token}/{Uri.EscapeDataString(share.Slug ?? string.Empty)}";
+        var browseRootPath = $"/s/{share.Token}";
         var currentRelativePath = directoryEntry.RelativePath;
         var showDownloadAll = share.CanBrowseFolderContents && share.CanDownloadFolderAsZip;
         var downloadAllUrl = showDownloadAll ? $"{BuildCurrentUrl(context)}?download=zip" : null;
@@ -106,6 +106,12 @@ internal sealed class PublicSharePageModelFactory
         var remainingBytes = receiveLink.MaxTotalBytes > 0
             ? Math.Max(0, receiveLink.MaxTotalBytes - receiveLink.BytesReceived)
             : 0;
+        var uploadMode = settings.ReceiveUploadMode == ReceiveUploadMode.AdaptiveBinaryChunks
+            ? ReceiveUploadMode.BinaryChunks
+            : settings.ReceiveUploadMode;
+        var uploadChunkSizingMode = settings.ReceiveUploadMode == ReceiveUploadMode.AdaptiveBinaryChunks
+            ? ReceiveUploadChunkSizingMode.Auto
+            : settings.ReceiveUploadChunkSizingMode;
         return new PublicSharePageModel(
             Kind: "receive",
             Title: ResolveReceivePageTitle(settings),
@@ -120,9 +126,19 @@ internal sealed class PublicSharePageModelFactory
             Zip: null,
             Receive: new PublicShareReceiveModel(
                 receiveLink.TargetDisplayName,
-                BuildCurrentUrl(context),
+                BuildCurrentPath(context),
+                $"{BuildCurrentPath(context)}/upload-socket",
+                $"{BuildCurrentPath(context)}/events",
                 remainingBytes,
                 receiveLink.MaxTotalBytes > 0 ? FormatFileSize(remainingBytes) : "Unlimited",
+                Math.Max(0, settings.ReceiveParallelUploadLimit),
+                uploadMode.ToString(),
+                uploadChunkSizingMode.ToString(),
+                Math.Max(Defaults.MinimumReceiveUploadChunkSizeBytes, settings.ReceiveUploadChunkSizeBytes),
+                Math.Max(Defaults.MinimumReceiveUploadChunkSizeBytes, settings.ReceiveUploadMaxBodySizeBytes),
+                Math.Max(
+                    Defaults.MinimumReceiveUploadChunkTargetSeconds,
+                    settings.ReceiveUploadChunkTargetSeconds <= 0 ? Defaults.DefaultReceiveUploadChunkTargetSeconds : settings.ReceiveUploadChunkTargetSeconds),
                 receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
     }
 
@@ -196,6 +212,12 @@ internal sealed class PublicSharePageModelFactory
     private static string BuildCurrentUrl(HttpContext context)
     {
         return $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{context.Request.Path}";
+    }
+
+    private static string BuildCurrentPath(HttpContext context)
+    {
+        var path = $"{context.Request.PathBase}{context.Request.Path}";
+        return string.IsNullOrEmpty(path) ? "/" : path;
     }
 
     private static string EncodeRelativePath(string relativePath)

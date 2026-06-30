@@ -206,6 +206,17 @@ button.danger {
   width: 120px;
 }
 
+.unit-suffix {
+  display: inline-flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 0 0.9rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(10, 12, 16, 0.85);
+  color: var(--muted);
+}
+
 input,
 select {
   width: 100%;
@@ -361,6 +372,12 @@ td {
   display: inline-grid;
   place-items: center;
   font-size: 1rem;
+}
+
+.revoke-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
 }
 
 .trash-icon {

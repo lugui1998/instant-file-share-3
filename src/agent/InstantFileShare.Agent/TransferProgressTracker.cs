@@ -22,12 +22,19 @@ internal static class TransferProgressTracker
         IShareCoordinator coordinator,
         string transferId,
         MeteredWriteStream meteredStream,
+        Func<long>? progressBytes,
+        long progressTotalBytes,
         CancellationToken cancellationToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
-            await coordinator.UpdateTransferProgressAsync(transferId, meteredStream.BytesWritten, cancellationToken);
+            await coordinator.UpdateTransferProgressAsync(
+                transferId,
+                meteredStream.BytesWritten,
+                cancellationToken,
+                progressBytes?.Invoke(),
+                progressTotalBytes);
         }
     }
 }

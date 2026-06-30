@@ -57,19 +57,27 @@ public sealed class ShareUtilitiesTests
     }
 
     [Fact]
-    public void BuildFolderBrowse_ShouldAppendFolderSlug()
+    public void BuildFolderBrowse_ShouldUseTokenAsFolderRoot()
     {
         var url = ShareUrlBuilder.BuildFolderBrowse("https://example.com/", "abc123", "team-photos");
 
-        Assert.Equal("https://example.com/s/abc123/team-photos", url);
+        Assert.Equal("https://example.com/s/abc123", url);
     }
 
     [Fact]
-    public void BuildFolderZip_ShouldAppendZipExtension()
+    public void BuildFolderZip_ShouldUseDownloadQueryOnFolderRoot()
     {
         var url = ShareUrlBuilder.BuildFolderZip("https://example.com/", "abc123", "team-photos");
 
-        Assert.Equal("https://example.com/s/abc123/team-photos.zip", url);
+        Assert.Equal("https://example.com/s/abc123?download=zip", url);
+    }
+
+    [Fact]
+    public void BuildFolderChild_ShouldAppendOnlyRelativePath()
+    {
+        var url = ShareUrlBuilder.BuildFolderChild("https://example.com/", "abc123", "team-photos", "docs/Guide.pdf");
+
+        Assert.Equal("https://example.com/s/abc123/docs/Guide.pdf", url);
     }
 
     [Theory]

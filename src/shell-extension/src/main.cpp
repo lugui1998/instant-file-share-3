@@ -12,6 +12,16 @@ namespace
     constexpr wchar_t kPipeName[] = LR"(\\.\pipe\InstantFileShare.Agent)";
     constexpr wchar_t kFileVerbKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare)";
     constexpr wchar_t kFileCommandKeyPath[] = LR"(Software\Classes\*\shell\InstantFileShare\command)";
+    constexpr wchar_t kContextMenuGroupLabel[] = L"Instant File Share";
+    constexpr wchar_t kFolderGroupVerbKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShare)";
+    constexpr wchar_t kFolderGroupSubCommandsValue[] = LR"(Directory\ContextMenus\InstantFileShare)";
+    constexpr wchar_t kFolderGroupSubCommandsKeyPath[] = LR"(Software\Classes\Directory\ContextMenus\InstantFileShare)";
+    constexpr wchar_t kFolderBackgroundGroupVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShare)";
+    constexpr wchar_t kFolderBackgroundGroupSubCommandsValue[] = LR"(Directory\Background\ContextMenus\InstantFileShare)";
+    constexpr wchar_t kFolderBackgroundGroupSubCommandsKeyPath[] = LR"(Software\Classes\Directory\Background\ContextMenus\InstantFileShare)";
+    constexpr wchar_t kDesktopFolderBackgroundGroupVerbKeyPath[] = LR"(Software\Classes\DesktopBackground\Shell\InstantFileShare)";
+    constexpr wchar_t kDesktopFolderBackgroundGroupSubCommandsValue[] = LR"(DesktopBackground\ContextMenus\InstantFileShare)";
+    constexpr wchar_t kDesktopFolderBackgroundGroupSubCommandsKeyPath[] = LR"(Software\Classes\DesktopBackground\ContextMenus\InstantFileShare)";
     constexpr wchar_t kFolderZipVerbKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderZip)";
     constexpr wchar_t kFolderZipCommandKeyPath[] = LR"(Software\Classes\Directory\shell\InstantFileShareFolderZip\command)";
     constexpr wchar_t kFolderZipBackgroundVerbKeyPath[] = LR"(Software\Classes\Directory\Background\shell\InstantFileShareFolderZip)";
@@ -391,17 +401,252 @@ namespace
         return true;
     }
 
-    bool UnregisterContextMenu(const wchar_t* verbKeyPath, std::wstring& errorMessage)
+    bool DeleteRegistryTree(const wchar_t* keyPath, std::wstring& errorMessage)
     {
-        const auto result = SHDeleteKeyW(HKEY_CURRENT_USER, verbKeyPath);
+        const auto result = SHDeleteKeyW(HKEY_CURRENT_USER, keyPath);
         if (result != ERROR_SUCCESS && result != ERROR_FILE_NOT_FOUND)
         {
             errorMessage = L"Failed to remove the Explorer context menu entry.";
             return false;
         }
 
+        return true;
+    }
+
+    bool UnregisterContextMenu(const wchar_t* verbKeyPath, std::wstring& errorMessage)
+    {
+        if (!DeleteRegistryTree(verbKeyPath, errorMessage))
+        {
+            return false;
+        }
+
         SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
         return true;
+    }
+
+    bool RegistryKeyExists(const std::wstring& keyPath)
+    {
+        HKEY key = nullptr;
+        const auto result = RegOpenKeyExW(HKEY_CURRENT_USER, keyPath.c_str(), 0, KEY_READ, &key);
+        if (result != ERROR_SUCCESS)
+        {
+            return false;
+        }
+
+        RegCloseKey(key);
+        return true;
+    }
+
+    struct FolderContextMenuItem
+    {
+        bool enabled;
+        const wchar_t* legacyVerbKeyPath;
+        const wchar_t* legacyCommandKeyPath;
+        const wchar_t* childKeyName;
+        const wchar_t* label;
+        const wchar_t* commandArgument;
+        std::wstring targetToken;
+    };
+
+    bool IsFolderContextMenuItemRegistered(const wchar_t* subCommandsKeyPath, const wchar_t* childKeyName, const wchar_t* legacyVerbKeyPath)
+    {
+        return RegistryKeyExists(legacyVerbKeyPath)
+            || RegistryKeyExists(std::wstring(subCommandsKeyPath) + LR"(\shell\)" + childKeyName);
+    }
+
+    bool ShouldUseCascadingContextMenu(const std::vector<FolderContextMenuItem>& items)
+    {
+        auto enabledCount = 0;
+        for (const auto& item : items)
+        {
+            if (item.enabled)
+            {
+                ++enabledCount;
+            }
+        }
+
+        return enabledCount > 1;
+    }
+
+    bool RegisterCascadingContextMenu(
+        const wchar_t* groupVerbKeyPath,
+        const wchar_t* subCommandsValue,
+        const wchar_t* subCommandsKeyPath,
+        const std::vector<FolderContextMenuItem>& items,
+        std::wstring& errorMessage)
+    {
+        const auto executablePath = GetExecutablePath();
+        if (!SetRegistryString(HKEY_CURRENT_USER, groupVerbKeyPath, L"MUIVerb", kContextMenuGroupLabel) ||
+            !SetRegistryString(HKEY_CURRENT_USER, groupVerbKeyPath, L"Icon", executablePath) ||
+            !SetRegistryString(HKEY_CURRENT_USER, groupVerbKeyPath, L"ExtendedSubCommandsKey", subCommandsValue))
+        {
+            errorMessage = L"Failed to register the Explorer context menu entry.";
+            return false;
+        }
+
+        for (const auto& item : items)
+        {
+            if (!item.enabled)
+            {
+                continue;
+            }
+
+            const auto childVerbKeyPath = std::wstring(subCommandsKeyPath) + LR"(\shell\)" + item.childKeyName;
+            const auto childCommandKeyPath = childVerbKeyPath + LR"(\command)";
+            if (!RegisterContextMenu(childVerbKeyPath.c_str(), childCommandKeyPath.c_str(), item.label, item.commandArgument, item.targetToken, errorMessage))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool RebuildFolderContextMenu(
+        const wchar_t* groupVerbKeyPath,
+        const wchar_t* subCommandsValue,
+        const wchar_t* subCommandsKeyPath,
+        const std::vector<FolderContextMenuItem>& items,
+        std::wstring& errorMessage)
+    {
+        if (!DeleteRegistryTree(groupVerbKeyPath, errorMessage))
+        {
+            return false;
+        }
+
+        if (!DeleteRegistryTree(subCommandsKeyPath, errorMessage))
+        {
+            return false;
+        }
+
+        for (const auto& item : items)
+        {
+            if (!DeleteRegistryTree(item.legacyVerbKeyPath, errorMessage))
+            {
+                return false;
+            }
+        }
+
+        if (ShouldUseCascadingContextMenu(items))
+        {
+            if (!RegisterCascadingContextMenu(groupVerbKeyPath, subCommandsValue, subCommandsKeyPath, items, errorMessage))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            for (const auto& item : items)
+            {
+                if (item.enabled &&
+                    !RegisterContextMenu(item.legacyVerbKeyPath, item.legacyCommandKeyPath, item.label, item.commandArgument, item.targetToken, errorMessage))
+                {
+                    return false;
+                }
+            }
+        }
+
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+        return true;
+    }
+
+    std::vector<FolderContextMenuItem> BuildFolderContextMenuItems(
+        bool zipEnabled,
+        bool browseEnabled,
+        bool receiveEnabled,
+        const wchar_t* zipVerbKeyPath,
+        const wchar_t* zipCommandKeyPath,
+        const wchar_t* browseVerbKeyPath,
+        const wchar_t* browseCommandKeyPath,
+        const wchar_t* receiveVerbKeyPath,
+        const wchar_t* receiveCommandKeyPath,
+        const std::wstring& targetToken)
+    {
+        return {
+            { browseEnabled, browseVerbKeyPath, browseCommandKeyPath, L"ShareFolderBrowse", L"Share Folder for Browsing", L"--share-folder-browse", targetToken },
+            { receiveEnabled, receiveVerbKeyPath, receiveCommandKeyPath, L"ReceiveHere", L"Receive files here", L"--receive-here", targetToken },
+            { zipEnabled, zipVerbKeyPath, zipCommandKeyPath, L"ShareFolderZip", L"Share Folder as ZIP", L"--share-folder-zip", targetToken },
+        };
+    }
+
+    bool RebuildFolderContextMenus(
+        const wchar_t* changedLegacyVerbKeyPath,
+        bool changedEnabled,
+        std::wstring& errorMessage)
+    {
+        const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
+
+        auto zipEnabled = IsFolderContextMenuItemRegistered(kFolderGroupSubCommandsKeyPath, L"ShareFolderZip", kFolderZipVerbKeyPath);
+        auto browseEnabled = IsFolderContextMenuItemRegistered(kFolderGroupSubCommandsKeyPath, L"ShareFolderBrowse", kFolderBrowseVerbKeyPath);
+        auto receiveEnabled = IsFolderContextMenuItemRegistered(kFolderGroupSubCommandsKeyPath, L"ReceiveHere", kFolderReceiveVerbKeyPath);
+        auto backgroundZipEnabled = IsFolderContextMenuItemRegistered(kFolderBackgroundGroupSubCommandsKeyPath, L"ShareFolderZip", kFolderZipBackgroundVerbKeyPath);
+        auto backgroundBrowseEnabled = IsFolderContextMenuItemRegistered(kFolderBackgroundGroupSubCommandsKeyPath, L"ShareFolderBrowse", kFolderBrowseBackgroundVerbKeyPath);
+        auto backgroundReceiveEnabled = IsFolderContextMenuItemRegistered(kFolderBackgroundGroupSubCommandsKeyPath, L"ReceiveHere", kFolderReceiveBackgroundVerbKeyPath);
+        auto desktopZipEnabled = IsFolderContextMenuItemRegistered(kDesktopFolderBackgroundGroupSubCommandsKeyPath, L"ShareFolderZip", kDesktopFolderZipBackgroundVerbKeyPath);
+        auto desktopBrowseEnabled = IsFolderContextMenuItemRegistered(kDesktopFolderBackgroundGroupSubCommandsKeyPath, L"ShareFolderBrowse", kDesktopFolderBrowseBackgroundVerbKeyPath);
+        auto desktopReceiveEnabled = IsFolderContextMenuItemRegistered(kDesktopFolderBackgroundGroupSubCommandsKeyPath, L"ReceiveHere", kDesktopFolderReceiveBackgroundVerbKeyPath);
+
+        if (changedLegacyVerbKeyPath == kFolderZipVerbKeyPath)
+        {
+            zipEnabled = backgroundZipEnabled = desktopZipEnabled = changedEnabled;
+        }
+        else if (changedLegacyVerbKeyPath == kFolderBrowseVerbKeyPath)
+        {
+            browseEnabled = backgroundBrowseEnabled = desktopBrowseEnabled = changedEnabled;
+        }
+        else if (changedLegacyVerbKeyPath == kFolderReceiveVerbKeyPath)
+        {
+            receiveEnabled = backgroundReceiveEnabled = desktopReceiveEnabled = changedEnabled;
+        }
+
+        return RebuildFolderContextMenu(
+                kFolderGroupVerbKeyPath,
+                kFolderGroupSubCommandsValue,
+                kFolderGroupSubCommandsKeyPath,
+                BuildFolderContextMenuItems(
+                    zipEnabled,
+                    browseEnabled,
+                    receiveEnabled,
+                    kFolderZipVerbKeyPath,
+                    kFolderZipCommandKeyPath,
+                    kFolderBrowseVerbKeyPath,
+                    kFolderBrowseCommandKeyPath,
+                    kFolderReceiveVerbKeyPath,
+                    kFolderReceiveCommandKeyPath,
+                    L"%1"),
+                errorMessage) &&
+            RebuildFolderContextMenu(
+                kFolderBackgroundGroupVerbKeyPath,
+                kFolderBackgroundGroupSubCommandsValue,
+                kFolderBackgroundGroupSubCommandsKeyPath,
+                BuildFolderContextMenuItems(
+                    backgroundZipEnabled,
+                    backgroundBrowseEnabled,
+                    backgroundReceiveEnabled,
+                    kFolderZipBackgroundVerbKeyPath,
+                    kFolderZipBackgroundCommandKeyPath,
+                    kFolderBrowseBackgroundVerbKeyPath,
+                    kFolderBrowseBackgroundCommandKeyPath,
+                    kFolderReceiveBackgroundVerbKeyPath,
+                    kFolderReceiveBackgroundCommandKeyPath,
+                    L"%V"),
+                errorMessage) &&
+            RebuildFolderContextMenu(
+                kDesktopFolderBackgroundGroupVerbKeyPath,
+                kDesktopFolderBackgroundGroupSubCommandsValue,
+                kDesktopFolderBackgroundGroupSubCommandsKeyPath,
+                BuildFolderContextMenuItems(
+                    desktopZipEnabled,
+                    desktopBrowseEnabled,
+                    desktopReceiveEnabled,
+                    kDesktopFolderZipBackgroundVerbKeyPath,
+                    kDesktopFolderZipBackgroundCommandKeyPath,
+                    kDesktopFolderBrowseBackgroundVerbKeyPath,
+                    kDesktopFolderBrowseBackgroundCommandKeyPath,
+                    kDesktopFolderReceiveBackgroundVerbKeyPath,
+                    kDesktopFolderReceiveBackgroundCommandKeyPath,
+                    desktopBackgroundTargetToken),
+                errorMessage);
     }
 
     bool SendCreateShareCommand(const std::wstring& command, const std::wstring& filePath, std::wstring& errorMessage)
@@ -504,10 +749,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--register-folder-zip-context-menu")
     {
-        const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
-        if (!RegisterContextMenu(kFolderZipVerbKeyPath, kFolderZipCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%1", errorMessage) ||
-            !RegisterContextMenu(kFolderZipBackgroundVerbKeyPath, kFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", L"%V", errorMessage) ||
-            !RegisterContextMenu(kDesktopFolderZipBackgroundVerbKeyPath, kDesktopFolderZipBackgroundCommandKeyPath, L"Share Folder as ZIP", L"--share-folder-zip", desktopBackgroundTargetToken, errorMessage))
+        if (!RebuildFolderContextMenus(kFolderZipVerbKeyPath, true, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -517,9 +759,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--unregister-folder-zip-context-menu")
     {
-        if (!UnregisterContextMenu(kFolderZipVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kFolderZipBackgroundVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kDesktopFolderZipBackgroundVerbKeyPath, errorMessage))
+        if (!RebuildFolderContextMenus(kFolderZipVerbKeyPath, false, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -529,10 +769,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--register-folder-browse-context-menu")
     {
-        const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
-        if (!RegisterContextMenu(kFolderBrowseVerbKeyPath, kFolderBrowseCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%1", errorMessage) ||
-            !RegisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, kFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", L"%V", errorMessage) ||
-            !RegisterContextMenu(kDesktopFolderBrowseBackgroundVerbKeyPath, kDesktopFolderBrowseBackgroundCommandKeyPath, L"Share Folder for Browsing", L"--share-folder-browse", desktopBackgroundTargetToken, errorMessage))
+        if (!RebuildFolderContextMenus(kFolderBrowseVerbKeyPath, true, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -542,9 +779,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--unregister-folder-browse-context-menu")
     {
-        if (!UnregisterContextMenu(kFolderBrowseVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kFolderBrowseBackgroundVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kDesktopFolderBrowseBackgroundVerbKeyPath, errorMessage))
+        if (!RebuildFolderContextMenus(kFolderBrowseVerbKeyPath, false, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -554,10 +789,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--register-folder-receive-context-menu")
     {
-        const auto desktopBackgroundTargetToken = ResolveDesktopBackgroundTargetToken();
-        if (!RegisterContextMenu(kFolderReceiveVerbKeyPath, kFolderReceiveCommandKeyPath, L"Receive files here", L"--receive-here", L"%1", errorMessage) ||
-            !RegisterContextMenu(kFolderReceiveBackgroundVerbKeyPath, kFolderReceiveBackgroundCommandKeyPath, L"Receive files here", L"--receive-here", L"%V", errorMessage) ||
-            !RegisterContextMenu(kDesktopFolderReceiveBackgroundVerbKeyPath, kDesktopFolderReceiveBackgroundCommandKeyPath, L"Receive files here", L"--receive-here", desktopBackgroundTargetToken, errorMessage))
+        if (!RebuildFolderContextMenus(kFolderReceiveVerbKeyPath, true, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;
@@ -567,9 +799,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
 
     if (command == L"--unregister-folder-receive-context-menu")
     {
-        if (!UnregisterContextMenu(kFolderReceiveVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kFolderReceiveBackgroundVerbKeyPath, errorMessage) ||
-            !UnregisterContextMenu(kDesktopFolderReceiveBackgroundVerbKeyPath, errorMessage))
+        if (!RebuildFolderContextMenus(kFolderReceiveVerbKeyPath, false, errorMessage))
         {
             MessageBoxW(nullptr, errorMessage.c_str(), L"Instant File Share", MB_OK | MB_ICONERROR);
             return 1;

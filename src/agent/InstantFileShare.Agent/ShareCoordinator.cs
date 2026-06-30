@@ -1,6 +1,7 @@
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using InstantFileShare.Core;
 using InstantFileShare.Infrastructure;
@@ -119,6 +120,7 @@ internal sealed class ShareCoordinator(
         };
 
         await shareStore.AddReceiveLinkAsync(receiveLink, cancellationToken);
+        await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareCreated, DateTimeOffset.UtcNow, ShareListItem.FromReceiveLink(receiveLink)), cancellationToken);
         return (receiveLink, ShareUrlBuilder.BuildReceiveLink(receiveLink.PublicBaseUrl, receiveLink.Token));
     }
 
@@ -168,12 +170,31 @@ internal sealed class ShareCoordinator(
 
     public Task<IReadOnlyList<ShareRecord>> ListSharesAsync(CancellationToken cancellationToken) => shareStore.ListSharesAsync(cancellationToken);
 
+    public async Task<IReadOnlyList<ShareListItem>> ListShareItemsAsync(CancellationToken cancellationToken)
+    {
+        var shares = await shareStore.ListSharesAsync(cancellationToken);
+        var receiveLinks = await shareStore.ListReceiveLinksAsync(cancellationToken);
+
+        return shares
+            .Select(ShareListItem.FromShare)
+            .Concat(receiveLinks.Select(ShareListItem.FromReceiveLink))
+            .OrderByDescending(item => item.CreatedAtUtc)
+            .ToList();
+    }
+
     public async Task ShowShareInExplorerAsync(string shareId, CancellationToken cancellationToken)
     {
-        var share = await shareStore.GetShareByIdAsync(shareId, cancellationToken)
+        var share = await shareStore.GetShareByIdAsync(shareId, cancellationToken);
+        if (share is not null)
+        {
+            await explorerLauncher.OpenDirectoryAsync(GetShareDirectoryPath(share), cancellationToken);
+            return;
+        }
+
+        var receiveLink = await shareStore.GetReceiveLinkByIdAsync(shareId, cancellationToken)
             ?? throw new KeyNotFoundException("The selected share no longer exists.");
 
-        await explorerLauncher.OpenDirectoryAsync(GetShareDirectoryPath(share), cancellationToken);
+        await explorerLauncher.OpenDirectoryAsync(receiveLink.TargetDirectoryPath, cancellationToken);
     }
 
     public async Task<ShareRecord?> ResolveDownloadAsync(string token, CancellationToken cancellationToken)
@@ -362,14 +383,23 @@ internal sealed class ShareCoordinator(
     public async Task RevokeShareAsync(string shareId, CancellationToken cancellationToken)
     {
         var share = await shareStore.GetShareByIdAsync(shareId, cancellationToken);
-        if (share is null)
+        if (share is not null)
+        {
+            share = share with { State = ShareState.Revoked };
+            await shareStore.UpdateShareAsync(share, cancellationToken);
+            await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareRevoked, DateTimeOffset.UtcNow, share), cancellationToken);
+            return;
+        }
+
+        var receiveLink = await shareStore.GetReceiveLinkByIdAsync(shareId, cancellationToken);
+        if (receiveLink is null)
         {
             return;
         }
 
-        share = share with { State = ShareState.Revoked };
-        await shareStore.UpdateShareAsync(share, cancellationToken);
-        await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareRevoked, DateTimeOffset.UtcNow, share), cancellationToken);
+        receiveLink = receiveLink with { State = ReceiveLinkState.Revoked };
+        await shareStore.UpdateReceiveLinkAsync(receiveLink, cancellationToken);
+        await runtimeEventStream.PublishAsync(new RuntimeEvent(RuntimeEventType.ShareRevoked, DateTimeOffset.UtcNow, ShareListItem.FromReceiveLink(receiveLink)), cancellationToken);
     }
 
     public Task<AppSettings> GetSettingsAsync(CancellationToken cancellationToken) => shareStore.GetSettingsAsync(cancellationToken);
@@ -383,6 +413,12 @@ internal sealed class ShareCoordinator(
             FolderZipCompressionLevel = NormalizeFolderZipCompressionLevel(settings.FolderZipCompressionLevel),
             DefaultReceiveExpiryValue = Math.Max(0, settings.DefaultReceiveExpiryValue),
             DefaultReceiveMaxTotalBytes = NormalizeReceiveMaxTotalBytes(settings.DefaultReceiveMaxTotalBytes),
+            ReceiveParallelUploadLimit = NormalizeReceiveParallelUploadLimit(settings.ReceiveParallelUploadLimit),
+            ReceiveUploadMode = NormalizeReceiveUploadMode(settings.ReceiveUploadMode),
+            ReceiveUploadChunkSizingMode = NormalizeReceiveUploadChunkSizingMode(settings.ReceiveUploadChunkSizingMode),
+            ReceiveUploadChunkSizeBytes = NormalizeReceiveUploadChunkSizeBytes(settings.ReceiveUploadChunkSizeBytes),
+            ReceiveUploadMaxBodySizeBytes = NormalizeReceiveUploadMaxBodySizeBytes(settings.ReceiveUploadMaxBodySizeBytes),
+            ReceiveUploadChunkTargetSeconds = NormalizeReceiveUploadChunkTargetSeconds(settings.ReceiveUploadChunkTargetSeconds),
             FolderBrowsePageTitle = NormalizeFolderBrowsePageTitle(settings.FolderBrowsePageTitle),
             ReceivePageTitle = NormalizeReceivePageTitle(settings.ReceivePageTitle),
             HistoryRetentionValue = Math.Max(0, settings.HistoryRetentionValue),
@@ -519,6 +555,8 @@ internal sealed class ShareCoordinator(
                 transfer = resumedTransfer with
                 {
                     BytesSent = Math.Max(resumedTransfer.BytesSent, bytesSent),
+                    ProgressBytes = totalBytes > 0 ? Math.Max(resumedTransfer.ProgressBytes, bytesSent) : resumedTransfer.ProgressBytes,
+                    ProgressTotalBytes = totalBytes > 0 ? totalBytes : resumedTransfer.ProgressTotalBytes,
                     LastUpdatedAtUtc = DateTimeOffset.UtcNow,
                     CompletedAtUtc = null,
                     State = TransferState.InProgress,
@@ -542,6 +580,8 @@ internal sealed class ShareCoordinator(
                     RemoteAddress = remoteAddress,
                     BytesSent = bytesSent,
                     TotalBytes = totalBytes,
+                    ProgressBytes = totalBytes > 0 ? bytesSent : 0,
+                    ProgressTotalBytes = totalBytes,
                     StartedAtUtc = DateTimeOffset.UtcNow,
                     LastUpdatedAtUtc = DateTimeOffset.UtcNow,
                     CompletedAtUtc = null,
@@ -564,12 +604,12 @@ internal sealed class ShareCoordinator(
         return transfer;
     }
 
-    public Task UpdateTransferProgressAsync(string transferId, long bytesSent, CancellationToken cancellationToken)
+    public Task UpdateTransferProgressAsync(string transferId, long bytesSent, CancellationToken cancellationToken, long? progressBytes = null, long? progressTotalBytes = null)
     {
-        return UpdateTransferProgressCoreAsync(transferId, bytesSent, cancellationToken);
+        return UpdateTransferProgressCoreAsync(transferId, bytesSent, cancellationToken, progressBytes, progressTotalBytes);
     }
 
-    private async Task UpdateTransferProgressCoreAsync(string transferId, long bytesSent, CancellationToken cancellationToken)
+    private async Task UpdateTransferProgressCoreAsync(string transferId, long bytesSent, CancellationToken cancellationToken, long? progressBytes, long? progressTotalBytes)
     {
         await EnsureTransfersLoadedAsync(cancellationToken);
         TransferSnapshot? updatedTransfer = null;
@@ -580,6 +620,14 @@ internal sealed class ShareCoordinator(
                 updatedTransfer = transfer with
                 {
                     BytesSent = Math.Max(transfer.BytesSent, bytesSent),
+                    ProgressBytes = progressBytes.HasValue
+                        ? Math.Max(transfer.ProgressBytes, progressBytes.Value)
+                        : transfer.ProgressTotalBytes > 0
+                            ? Math.Max(transfer.ProgressBytes, bytesSent)
+                            : transfer.ProgressBytes,
+                    ProgressTotalBytes = progressTotalBytes.HasValue
+                        ? Math.Max(transfer.ProgressTotalBytes, progressTotalBytes.Value)
+                        : transfer.ProgressTotalBytes,
                     LastUpdatedAtUtc = DateTimeOffset.UtcNow,
                     State = TransferState.InProgress,
                 };
@@ -615,6 +663,13 @@ internal sealed class ShareCoordinator(
                 bytesSent = Math.Max(bytesSent, activeTransfer.BytesSent);
             }
 
+            var progressTotalBytes = activeTransfer?.ProgressTotalBytes ?? totalBytes;
+            var progressBytes = activeTransfer?.ProgressBytes ?? bytesSent;
+            if (succeeded && progressTotalBytes > 0)
+            {
+                progressBytes = progressTotalBytes;
+            }
+
             completedTransfer = new TransferSnapshot
             {
                 Id = transferId,
@@ -628,6 +683,8 @@ internal sealed class ShareCoordinator(
                 RemoteAddress = remoteAddress,
                 BytesSent = bytesSent,
                 TotalBytes = totalBytes,
+                ProgressBytes = progressBytes,
+                ProgressTotalBytes = progressTotalBytes,
                 StartedAtUtc = startedAt,
                 LastUpdatedAtUtc = DateTimeOffset.UtcNow,
                 CompletedAtUtc = DateTimeOffset.UtcNow,
@@ -833,17 +890,19 @@ internal sealed class ShareCoordinator(
                 ConfiguredTunnelName: profile?.CloudflareTunnelName);
         }
 
-        var zoneName = await TryResolveZoneNameAsync(certToken, cancellationToken);
-        var domains = zoneName is null
+        var zoneDetails = await TryResolveZoneDetailsAsync(certToken, cancellationToken);
+        var domains = zoneDetails?.Name is null
             ? Array.Empty<CloudflareDomainOption>()
-            : [new CloudflareDomainOption(certToken.ZoneId, zoneName)];
+            : [new CloudflareDomainOption(certToken.ZoneId, zoneDetails.Name)];
 
         return new CloudflareManagedStatus(
             true,
-            zoneName is null ? "Logged in, but the zone name could not be resolved." : $"Logged in for zone {zoneName}.",
+            zoneDetails?.Name is null ? "Logged in, but the zone name could not be resolved." : $"Logged in for zone {zoneDetails.Name}.",
             certToken.AccountId,
             certToken.ZoneId,
-            zoneName,
+            zoneDetails?.Name,
+            zoneDetails?.PlanLegacyId,
+            zoneDetails?.PlanName,
             domains,
             profile?.CloudflareHostname,
             profile?.CloudflareTunnelName);
@@ -975,7 +1034,7 @@ internal sealed class ShareCoordinator(
     {
         return new RuntimeSnapshot
         {
-            Shares = await shareStore.ListSharesAsync(cancellationToken),
+            Shares = await ListShareItemsAsync(cancellationToken),
             Transfers = await GetTransfersCoreAsync(cancellationToken),
             Settings = await shareStore.GetSettingsAsync(cancellationToken),
             Cloudflared = await shareStore.GetCloudflaredStateAsync(cancellationToken),
@@ -1317,6 +1376,42 @@ internal sealed class ShareCoordinator(
         return Math.Max(0, maxTotalBytes);
     }
 
+    private static int NormalizeReceiveParallelUploadLimit(int uploadLimit)
+    {
+        return Math.Max(0, uploadLimit);
+    }
+
+    private static ReceiveUploadMode NormalizeReceiveUploadMode(ReceiveUploadMode uploadMode)
+    {
+        return Enum.IsDefined(uploadMode)
+            ? uploadMode
+            : Defaults.DefaultReceiveUploadMode;
+    }
+
+    private static ReceiveUploadChunkSizingMode NormalizeReceiveUploadChunkSizingMode(ReceiveUploadChunkSizingMode uploadChunkSizingMode)
+    {
+        return Enum.IsDefined(uploadChunkSizingMode)
+            ? uploadChunkSizingMode
+            : Defaults.DefaultReceiveUploadChunkSizingMode;
+    }
+
+    private static long NormalizeReceiveUploadChunkSizeBytes(long chunkSizeBytes)
+    {
+        return Math.Max(Defaults.MinimumReceiveUploadChunkSizeBytes, chunkSizeBytes);
+    }
+
+    private static long NormalizeReceiveUploadMaxBodySizeBytes(long maxBodySizeBytes)
+    {
+        return Math.Max(Defaults.MinimumReceiveUploadChunkSizeBytes, maxBodySizeBytes);
+    }
+
+    private static int NormalizeReceiveUploadChunkTargetSeconds(int chunkTargetSeconds)
+    {
+        return Math.Max(
+            Defaults.MinimumReceiveUploadChunkTargetSeconds,
+            chunkTargetSeconds <= 0 ? Defaults.DefaultReceiveUploadChunkTargetSeconds : chunkTargetSeconds);
+    }
+
     private static string NormalizeReceivePageTitle(string? title)
     {
         return string.IsNullOrWhiteSpace(title)
@@ -1459,7 +1554,7 @@ internal sealed class ShareCoordinator(
         }
     }
 
-    private async Task<string?> TryResolveZoneNameAsync(CloudflareLoginToken token, CancellationToken cancellationToken)
+    private async Task<CloudflareZoneDetails?> TryResolveZoneDetailsAsync(CloudflareLoginToken token, CancellationToken cancellationToken)
     {
         var httpClient = httpClientFactory.CreateClient();
         using var request = new HttpRequestMessage(HttpMethod.Get, $"https://api.cloudflare.com/client/v4/zones/{token.ZoneId}");
@@ -1470,16 +1565,27 @@ internal sealed class ShareCoordinator(
             using var response = await httpClient.SendAsync(request, cancellationToken);
             if (!response.IsSuccessStatusCode)
             {
-                return await TryResolveZoneNameWithPowerShellAsync(token, cancellationToken);
+                var fallbackName = await TryResolveZoneNameWithPowerShellAsync(token, cancellationToken);
+                return fallbackName is null ? null : new CloudflareZoneDetails(fallbackName, null, null);
             }
 
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
             var payload = await JsonSerializer.DeserializeAsync<CloudflareZoneResponse>(stream, JsonOptions, cancellationToken);
-            return payload?.Result?.Name ?? await TryResolveZoneNameWithPowerShellAsync(token, cancellationToken);
+            if (payload?.Result?.Name is { Length: > 0 } zoneName)
+            {
+                return new CloudflareZoneDetails(
+                    zoneName,
+                    payload.Result.Plan?.LegacyId,
+                    payload.Result.Plan?.Name);
+            }
+
+            var fallbackZoneName = await TryResolveZoneNameWithPowerShellAsync(token, cancellationToken);
+            return fallbackZoneName is null ? null : new CloudflareZoneDetails(fallbackZoneName, null, null);
         }
         catch
         {
-            return await TryResolveZoneNameWithPowerShellAsync(token, cancellationToken);
+            var fallbackZoneName = await TryResolveZoneNameWithPowerShellAsync(token, cancellationToken);
+            return fallbackZoneName is null ? null : new CloudflareZoneDetails(fallbackZoneName, null, null);
         }
     }
 
@@ -1637,9 +1743,13 @@ internal sealed class ShareCoordinator(
 
     private sealed record CloudflareLoginToken(string ZoneId, string AccountId, string ApiToken);
 
+    private sealed record CloudflareZoneDetails(string Name, string? PlanLegacyId, string? PlanName);
+
     private sealed record CloudflareZoneResponse(CloudflareZoneResult? Result);
 
-    private sealed record CloudflareZoneResult(string Id, string Name);
+    private sealed record CloudflareZoneResult(string Id, string Name, CloudflareZonePlan? Plan);
+
+    private sealed record CloudflareZonePlan([property: JsonPropertyName("legacy_id")] string? LegacyId, string? Name);
 
     private sealed record CloudflareDnsListResponse(IReadOnlyList<CloudflareDnsRecord>? Result);
 

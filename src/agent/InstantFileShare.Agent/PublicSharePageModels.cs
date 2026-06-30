@@ -37,8 +37,16 @@ internal sealed record PublicShareZipModel(
 internal sealed record PublicShareReceiveModel(
     string TargetName,
     string UploadUrl,
+    string UploadSocketUrl,
+    string UploadEventsUrl,
     long RemainingQuotaBytes,
     string RemainingQuotaLabel,
+    int ParallelUploadLimit,
+    string UploadMode,
+    string UploadChunkSizingMode,
+    long UploadChunkSizeBytes,
+    long UploadMaxBodySizeBytes,
+    int UploadChunkTargetSeconds,
     string? ExpiresAtLabel);
 
 internal sealed record PublicShareBreadcrumb(string Label, string Href);

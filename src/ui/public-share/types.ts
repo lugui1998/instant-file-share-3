@@ -45,8 +45,16 @@ export type PublicShareZipModel = {
 export type PublicShareReceiveModel = {
   targetName: string
   uploadUrl: string
+  uploadSocketUrl: string
+  uploadEventsUrl: string
   remainingQuotaBytes: number
   remainingQuotaLabel: string
+  parallelUploadLimit: number
+  uploadMode: 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket'
+  uploadChunkSizingMode: 'Fixed' | 'Auto'
+  uploadChunkSizeBytes: number
+  uploadMaxBodySizeBytes: number
+  uploadChunkTargetSeconds: number
   expiresAtLabel?: string | null
 }
 
@@ -65,9 +73,6 @@ export type PublicShareFolderEntryModel = {
 }
 
 export type PublicReceiveUploadResult = {
-  fileName: string
-  relativePath: string
-  storedRelativePath?: string | null
   success: boolean
   message?: string | null
   sizeBytes: number

@@ -109,6 +109,24 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         return receiveLink;
     }
 
+    public async Task<IReadOnlyList<ReceiveLinkRecord>> ListReceiveLinksAsync(CancellationToken cancellationToken)
+    {
+        await using var connection = OpenConnection();
+        await connection.OpenAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "SELECT * FROM receive_links ORDER BY created_at_utc DESC;";
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+
+        var receiveLinks = new List<ReceiveLinkRecord>();
+        while (await reader.ReadAsync(cancellationToken))
+        {
+            receiveLinks.Add(MapReceiveLink(reader));
+        }
+
+        return receiveLinks;
+    }
+
     public Task<ReceiveLinkRecord?> GetReceiveLinkByIdAsync(string receiveLinkId, CancellationToken cancellationToken)
     {
         return GetReceiveLinkByAsync("id", receiveLinkId, cancellationToken);
@@ -367,10 +385,10 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             """
             INSERT INTO transfers (
                 id, share_id, token, file_name, transfer_kind, requester_name, client_session_id, client_fingerprint, remote_address, bytes_sent, total_bytes,
-                started_at_utc, last_updated_at_utc, completed_at_utc, state, is_active, succeeded, error
+                progress_bytes, progress_total_bytes, started_at_utc, last_updated_at_utc, completed_at_utc, state, is_active, succeeded, error
             ) VALUES (
                 $id, $shareId, $token, $fileName, $transferKind, $requesterName, $clientSessionId, $clientFingerprint, $remoteAddress, $bytesSent, $totalBytes,
-                $startedAtUtc, $lastUpdatedAtUtc, $completedAtUtc, $state, $isActive, $succeeded, $error
+                $progressBytes, $progressTotalBytes, $startedAtUtc, $lastUpdatedAtUtc, $completedAtUtc, $state, $isActive, $succeeded, $error
             )
             ON CONFLICT(id) DO UPDATE SET
                 share_id = excluded.share_id,
@@ -383,6 +401,8 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
                 remote_address = excluded.remote_address,
                 bytes_sent = excluded.bytes_sent,
                 total_bytes = excluded.total_bytes,
+                progress_bytes = excluded.progress_bytes,
+                progress_total_bytes = excluded.progress_total_bytes,
                 started_at_utc = excluded.started_at_utc,
                 last_updated_at_utc = excluded.last_updated_at_utc,
                 completed_at_utc = excluded.completed_at_utc,
@@ -402,6 +422,8 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         command.Parameters.AddWithValue("$remoteAddress", (object?)transfer.RemoteAddress ?? DBNull.Value);
         command.Parameters.AddWithValue("$bytesSent", transfer.BytesSent);
         command.Parameters.AddWithValue("$totalBytes", transfer.TotalBytes);
+        command.Parameters.AddWithValue("$progressBytes", transfer.ProgressBytes);
+        command.Parameters.AddWithValue("$progressTotalBytes", transfer.ProgressTotalBytes);
         command.Parameters.AddWithValue("$startedAtUtc", transfer.StartedAtUtc.UtcDateTime.ToString("O"));
         command.Parameters.AddWithValue("$lastUpdatedAtUtc", transfer.LastUpdatedAtUtc.UtcDateTime.ToString("O"));
         command.Parameters.AddWithValue("$completedAtUtc", transfer.CompletedAtUtc?.UtcDateTime.ToString("O") ?? (object)DBNull.Value);
@@ -535,6 +557,8 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             RemoteAddress = reader.IsDBNull(reader.GetOrdinal("remote_address")) ? null : reader.GetString(reader.GetOrdinal("remote_address")),
             BytesSent = reader.GetInt64(reader.GetOrdinal("bytes_sent")),
             TotalBytes = reader.GetInt64(reader.GetOrdinal("total_bytes")),
+            ProgressBytes = reader.GetInt64(reader.GetOrdinal("progress_bytes")),
+            ProgressTotalBytes = reader.GetInt64(reader.GetOrdinal("progress_total_bytes")),
             StartedAtUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("started_at_utc"))),
             LastUpdatedAtUtc = DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("last_updated_at_utc"))),
             CompletedAtUtc = reader.IsDBNull(reader.GetOrdinal("completed_at_utc")) ? null : DateTimeOffset.Parse(reader.GetString(reader.GetOrdinal("completed_at_utc"))),
@@ -591,6 +615,20 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         {
             await using var alterCommand = connection.CreateCommand();
             alterCommand.CommandText = "ALTER TABLE transfers ADD COLUMN transfer_kind INTEGER NOT NULL DEFAULT 0;";
+            await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!columnNames.Contains("progress_bytes"))
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE transfers ADD COLUMN progress_bytes INTEGER NOT NULL DEFAULT 0;";
+            await alterCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        if (!columnNames.Contains("progress_total_bytes"))
+        {
+            await using var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE transfers ADD COLUMN progress_total_bytes INTEGER NOT NULL DEFAULT 0;";
             await alterCommand.ExecuteNonQueryAsync(cancellationToken);
         }
     }
@@ -695,6 +733,8 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
             remote_address TEXT NULL,
             bytes_sent INTEGER NOT NULL,
             total_bytes INTEGER NOT NULL,
+            progress_bytes INTEGER NOT NULL DEFAULT 0,
+            progress_total_bytes INTEGER NOT NULL DEFAULT 0,
             started_at_utc TEXT NOT NULL,
             last_updated_at_utc TEXT NOT NULL,
             completed_at_utc TEXT NULL,

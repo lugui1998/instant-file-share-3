@@ -17,10 +17,17 @@ public sealed class ShareCoordinatorTests
         {
             DefaultPublishMode = PublishMode.Manual,
             ManualBaseUrl = "http://127.0.0.1:46431",
+            ManualBindAddress = "127.0.0.1",
             PublicTokenLength = 1,
             FolderZipCompressionLevel = (FolderZipCompressionLevel)999,
+            ReceiveUploadMode = (ReceiveUploadMode)999,
+            ReceiveUploadChunkSizingMode = (ReceiveUploadChunkSizingMode)999,
             DefaultReceiveExpiryValue = -1,
             DefaultReceiveMaxTotalBytes = 0,
+            ReceiveParallelUploadLimit = -1,
+            ReceiveUploadChunkSizeBytes = 1024,
+            ReceiveUploadMaxBodySizeBytes = 1024,
+            ReceiveUploadChunkTargetSeconds = 1,
             FolderBrowsePageTitle = "  ",
             ReceivePageTitle = "  ",
             HistoryRetentionValue = -5,
@@ -34,8 +41,14 @@ public sealed class ShareCoordinatorTests
 
         Assert.Equal(ShareTokenGenerator.MinLength, savedSettings.PublicTokenLength);
         Assert.Equal(FolderZipCompressionLevel.Optimal, savedSettings.FolderZipCompressionLevel);
+        Assert.Equal(Defaults.DefaultReceiveUploadMode, savedSettings.ReceiveUploadMode);
+        Assert.Equal(Defaults.DefaultReceiveUploadChunkSizingMode, savedSettings.ReceiveUploadChunkSizingMode);
         Assert.Equal(0, savedSettings.DefaultReceiveExpiryValue);
         Assert.Equal(0, savedSettings.DefaultReceiveMaxTotalBytes);
+        Assert.Equal(0, savedSettings.ReceiveParallelUploadLimit);
+        Assert.Equal(Defaults.MinimumReceiveUploadChunkSizeBytes, savedSettings.ReceiveUploadChunkSizeBytes);
+        Assert.Equal(Defaults.MinimumReceiveUploadChunkSizeBytes, savedSettings.ReceiveUploadMaxBodySizeBytes);
+        Assert.Equal(Defaults.MinimumReceiveUploadChunkTargetSeconds, savedSettings.ReceiveUploadChunkTargetSeconds);
         Assert.Equal(Defaults.CreateDefaultFolderBrowsePageTitle(), savedSettings.FolderBrowsePageTitle);
         Assert.Equal(Defaults.CreateDefaultReceivePageTitle(), savedSettings.ReceivePageTitle);
         Assert.Equal(0, savedSettings.HistoryRetentionValue);
@@ -47,6 +60,18 @@ public sealed class ShareCoordinatorTests
         Assert.Equal(savedSettings.LocalApiPort, context.BootstrapSettingsSnapshot.LastWrittenSettings!.LocalApiPort);
         Assert.False(context.AgentLifecycleManager.RestartScheduled);
         Assert.Contains(context.RuntimeEvents, entry => entry.Type == RuntimeEventType.SettingsUpdated);
+    }
+
+    [Fact]
+    public async Task SaveSettingsAsync_PreservesHighParallelUploadLimit()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var settings = await context.Store.GetSettingsAsync(CancellationToken.None);
+
+        await context.Coordinator.SaveSettingsAsync(settings with { ReceiveParallelUploadLimit = 99 }, CancellationToken.None);
+
+        var savedSettings = await context.Store.GetSettingsAsync(CancellationToken.None);
+        Assert.Equal(99, savedSettings.ReceiveParallelUploadLimit);
     }
 
     [Fact]
@@ -125,6 +150,66 @@ public sealed class ShareCoordinatorTests
         Assert.NotNull(rolledBack);
         Assert.Equal(6, rolledBack!.BytesReceived);
         Assert.Equal(ReceiveLinkState.Active, rolledBack.State);
+    }
+
+    [Fact]
+    public async Task ListShareItemsAsync_IncludesReceiveLinksAndDownloadShares()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var filePath = Path.Combine(context.FilesDirectory, "guide.txt");
+        await File.WriteAllTextAsync(filePath, "guide");
+        var folderPath = Path.Combine(context.FilesDirectory, "drop");
+        Directory.CreateDirectory(folderPath);
+
+        var share = context.CreateFileShare("share-token", filePath) with
+        {
+            CreatedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-5),
+        };
+        var receiveLink = context.CreateReceiveLink("receive-token", folderPath);
+        await context.Store.AddShareAsync(share, CancellationToken.None);
+        await context.Store.AddReceiveLinkAsync(receiveLink, CancellationToken.None);
+
+        var items = await context.Coordinator.ListShareItemsAsync(CancellationToken.None);
+
+        Assert.Equal(new[] { receiveLink.Id, share.Id }, items.Select(item => item.Id));
+        var receiveItem = Assert.Single(items, item => item.ItemKind == ShareListItemKind.Receive);
+        Assert.Equal("Receive", receiveItem.ItemKind.ToString());
+        Assert.Equal("drop", receiveItem.FileName);
+        Assert.Equal(folderPath, receiveItem.FilePath);
+        Assert.Equal("http://127.0.0.1:46431/r/receive-token", receiveItem.Url);
+        Assert.Equal(receiveLink.MaxTotalBytes, receiveItem.MaxTotalBytes);
+        Assert.Equal(receiveLink.BytesReceived, receiveItem.BytesReceived);
+    }
+
+    [Fact]
+    public async Task RevokeShareAsync_RevokesReceiveLinks()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var folderPath = Path.Combine(context.FilesDirectory, "drop");
+        Directory.CreateDirectory(folderPath);
+        var receiveLink = context.CreateReceiveLink("receive-token", folderPath);
+        await context.Store.AddReceiveLinkAsync(receiveLink, CancellationToken.None);
+
+        await context.Coordinator.RevokeShareAsync(receiveLink.Id, CancellationToken.None);
+
+        var persisted = await context.Store.GetReceiveLinkByIdAsync(receiveLink.Id, CancellationToken.None);
+        Assert.NotNull(persisted);
+        Assert.Equal(ReceiveLinkState.Revoked, persisted!.State);
+        Assert.Contains(context.RuntimeEvents, entry => entry.Type == RuntimeEventType.ShareRevoked);
+    }
+
+    [Fact]
+    public async Task ShowShareInExplorerAsync_OpensReceiveLinkTargetDirectory()
+    {
+        await using var context = await ShareCoordinatorTestContext.CreateAsync();
+        var folderPath = Path.Combine(context.FilesDirectory, "drop");
+        Directory.CreateDirectory(folderPath);
+        var receiveLink = context.CreateReceiveLink("receive-token", folderPath);
+        await context.Store.AddReceiveLinkAsync(receiveLink, CancellationToken.None);
+
+        await context.Coordinator.ShowShareInExplorerAsync(receiveLink.Id, CancellationToken.None);
+
+        Assert.Equal(folderPath, context.ExplorerLauncher.LastOpenedDirectoryPath);
     }
 
     [Fact]

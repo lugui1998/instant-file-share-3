@@ -46,6 +46,8 @@ public sealed record CloudflareManagedStatus(
     string? AccountId = null,
     string? ZoneId = null,
     string? ZoneName = null,
+    string? ZonePlanLegacyId = null,
+    string? ZonePlanName = null,
     IReadOnlyList<CloudflareDomainOption>? Domains = null,
     string? ConfiguredHostname = null,
     string? ConfiguredTunnelName = null);

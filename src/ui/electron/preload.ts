@@ -3,6 +3,7 @@ import { createAgentEndpointState } from '../shared/agentEndpoint.js'
 import { readBootstrapLocalApiPort } from './bootstrapSettings.js'
 
 type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
+type ShareListItemKind = 'File' | 'Folder' | 'Receive'
 type ShareKind = 'File' | 'Folder'
 type FolderShareEntryPoint = 'Browse' | 'Zip'
 
@@ -13,8 +14,10 @@ type ShareRecord = {
   filePath: string
   slug?: string | null
   publicBaseUrl: string
+  url?: string | null
   fileSize: number
-  shareKind: ShareKind
+  itemKind?: ShareListItemKind | null
+  shareKind?: ShareKind | null
   canBrowseFolderContents: boolean
   canDownloadFolderAsZip: boolean
   primaryFolderEntryPoint?: FolderShareEntryPoint | null
@@ -22,6 +25,8 @@ type ShareRecord = {
   expiresAtUtc?: string | null
   maxUses?: number | null
   useCount: number
+  maxTotalBytes?: number | null
+  bytesReceived?: number | null
   state: string
   publishMode: PublishMode
   brokenReason?: string | null

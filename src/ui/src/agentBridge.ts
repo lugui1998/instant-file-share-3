@@ -8,8 +8,10 @@ type AgentShareRecord = {
   filePath: string
   slug?: string | null
   publicBaseUrl: string
+  url?: string | null
   fileSize: number
-  shareKind: ShareKind
+  itemKind?: ShareListItemKind | null
+  shareKind?: ShareKind | null
   canBrowseFolderContents: boolean
   canDownloadFolderAsZip: boolean
   primaryFolderEntryPoint?: FolderShareEntryPoint | null
@@ -17,6 +19,8 @@ type AgentShareRecord = {
   expiresAtUtc?: string | null
   maxUses?: number | null
   useCount: number
+  maxTotalBytes?: number | null
+  bytesReceived?: number | null
   state: string
   publishMode: string
   brokenReason?: string | null
@@ -31,10 +35,13 @@ type AgentRuntimeSnapshot = {
 }
 
 type PublishMode = 'QuickTunnel' | 'ManagedCloudflare' | 'Manual'
+type ShareListItemKind = 'File' | 'Folder' | 'Receive'
 type ShareKind = 'File' | 'Folder'
 type FolderShareEntryPoint = 'Browse' | 'Zip'
 type FolderShareCapabilityPolicy = 'Exclusive' | 'AllowBoth'
 type FolderZipCompressionLevel = 'Optimal' | 'Fastest' | 'NoCompression' | 'SmallestSize'
+type ReceiveUploadMode = 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket'
+type ReceiveUploadChunkSizingMode = 'Fixed' | 'Auto'
 type FileChangeBehavior = 'Strict' | 'Lenient'
 type ExpiryUnit = 'Minutes' | 'Hours' | 'Days'
 type HistoryRetentionUnit = 'Minutes' | 'Hours' | 'Days' | 'Months' | 'Years'
@@ -49,6 +56,8 @@ type TransferRecord = Record<string, unknown> & {
   remoteAddress?: string | null
   bytesSent: number
   totalBytes: number
+  progressBytes?: number
+  progressTotalBytes?: number
   startedAtUtc: string
   lastUpdatedAtUtc: string
   completedAtUtc?: string | null
@@ -73,6 +82,12 @@ type AppSettings = {
   defaultReceiveExpiryValue: number
   defaultReceiveExpiryUnit: ExpiryUnit
   defaultReceiveMaxTotalBytes: number
+  receiveParallelUploadLimit: number
+  receiveUploadMode: ReceiveUploadMode
+  receiveUploadChunkSizingMode: ReceiveUploadChunkSizingMode
+  receiveUploadChunkSizeBytes: number
+  receiveUploadMaxBodySizeBytes: number
+  receiveUploadChunkTargetSeconds: number
   folderBrowsePageTitle: string
   receivePageTitle: string
   friendlyUrlsEnabled: boolean
@@ -115,6 +130,8 @@ type CloudflareManagedStatus = {
   accountId?: string | null
   zoneId?: string | null
   zoneName?: string | null
+  zonePlanLegacyId?: string | null
+  zonePlanName?: string | null
   domains?: CloudflareDomainOption[] | null
   configuredHostname?: string | null
   configuredTunnelName?: string | null
@@ -327,6 +344,7 @@ export type {
   CloudflareManagedAvailability,
   CloudflareManagedStatus,
   PublishMode,
+  ReceiveUploadMode,
   ExpiryUnit,
   RuntimeEvent,
   TransferRecord,

@@ -11,7 +11,7 @@ internal static class ControlApiEndpoints
             Results.Ok(await coordinator.GetRuntimeSnapshotAsync(cancellationToken)));
 
         endpoints.MapGet("/api/shares", async (IShareCoordinator coordinator, CancellationToken cancellationToken) =>
-            Results.Ok(await coordinator.ListSharesAsync(cancellationToken)));
+            Results.Ok(await coordinator.ListShareItemsAsync(cancellationToken)));
 
         endpoints.MapPost("/api/shares", async (CreateShareRequest request, IShareCoordinator coordinator, CancellationToken cancellationToken) =>
         {

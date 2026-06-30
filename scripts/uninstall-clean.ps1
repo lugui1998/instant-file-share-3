@@ -10,8 +10,15 @@ $appName = 'Instant File Share'
 $agentExe = 'InstantFileShare.Agent.exe'
 $dashboardExe = 'Instant File Share.exe'
 $runKeyPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+$environmentKeyPath = 'HKCU:\Environment'
 $contextMenuKeyPaths = @(
   'HKCU:\Software\Classes\*\shell\InstantFileShare',
+  'HKCU:\Software\Classes\Directory\shell\InstantFileShare',
+  'HKCU:\Software\Classes\Directory\ContextMenus\InstantFileShare',
+  'HKCU:\Software\Classes\Directory\Background\shell\InstantFileShare',
+  'HKCU:\Software\Classes\Directory\Background\ContextMenus\InstantFileShare',
+  'HKCU:\Software\Classes\DesktopBackground\Shell\InstantFileShare',
+  'HKCU:\Software\Classes\DesktopBackground\ContextMenus\InstantFileShare',
   'HKCU:\Software\Classes\Directory\shell\InstantFileShareFolderZip',
   'HKCU:\Software\Classes\Directory\Background\shell\InstantFileShareFolderZip',
   'HKCU:\Software\Classes\DesktopBackground\Shell\InstantFileShareFolderZip',
@@ -130,6 +137,52 @@ function Uninstall-CloudflaredWithWinget {
   }
 }
 
+function Normalize-UserPathEntry {
+  param([Parameter(Mandatory = $false)][string]$Value)
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return ''
+  }
+
+  $trimmedValue = $Value.Trim().Trim('"').TrimEnd([char[]]@('\', '/'))
+  try {
+    return ([System.IO.Path]::GetFullPath($trimmedValue).TrimEnd([char[]]@('\', '/'))).ToLowerInvariant()
+  } catch {
+    return $trimmedValue.ToLowerInvariant()
+  }
+}
+
+function Remove-InstallDirectoryFromUserPath {
+  param([Parameter(Mandatory = $false)][string]$InstallDirectory)
+
+  if ([string]::IsNullOrWhiteSpace($InstallDirectory)) {
+    return
+  }
+
+  $pathProperty = Get-ItemProperty -Path $environmentKeyPath -Name 'Path' -ErrorAction SilentlyContinue
+  if ($null -eq $pathProperty) {
+    return
+  }
+
+  $currentPath = [string]$pathProperty.Path
+  if ([string]::IsNullOrWhiteSpace($currentPath)) {
+    return
+  }
+
+  $normalizedInstallDirectory = Normalize-UserPathEntry -Value $InstallDirectory
+  $entries = $currentPath -split ';' | ForEach-Object { $_.Trim() } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+  $keptEntries = $entries | Where-Object { (Normalize-UserPathEntry -Value $_) -ne $normalizedInstallDirectory }
+
+  if (@($keptEntries).Count -eq @($entries).Count) {
+    return
+  }
+
+  $updatedPath = $keptEntries -join ';'
+  if ($PSCmdlet.ShouldProcess('User PATH', "Remove $InstallDirectory")) {
+    [Environment]::SetEnvironmentVariable('Path', $updatedPath, 'User')
+  }
+}
+
 Stop-AppProcess -Name $agentExe -ProcessTree
 Stop-AppProcess -Name $dashboardExe
 
@@ -148,6 +201,8 @@ if (-not [string]::IsNullOrWhiteSpace($installLocation) -and (Test-Path $install
     Remove-Item $installLocation -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
+
+Remove-InstallDirectoryFromUserPath -InstallDirectory $installLocation
 
 if (Test-Path $runKeyPath) {
   if ($PSCmdlet.ShouldProcess($runKeyPath, 'Remove startup registration')) {

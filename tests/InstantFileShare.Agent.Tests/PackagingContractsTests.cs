@@ -13,6 +13,12 @@ public sealed class PackagingContractsTests
         Assert.Contains("--unregister-folder-receive-context-menu", installerScript);
         Assert.Contains("InstantFileShare.Agent.exe", installerScript);
         Assert.Contains("/F /T", installerScript);
+        Assert.Contains("Software\\Classes\\Directory\\shell\\InstantFileShare", installerScript);
+        Assert.Contains("Software\\Classes\\Directory\\ContextMenus\\InstantFileShare", installerScript);
+        Assert.Contains("Software\\Classes\\Directory\\Background\\shell\\InstantFileShare", installerScript);
+        Assert.Contains("Software\\Classes\\Directory\\Background\\ContextMenus\\InstantFileShare", installerScript);
+        Assert.Contains("Software\\Classes\\DesktopBackground\\Shell\\InstantFileShare", installerScript);
+        Assert.Contains("Software\\Classes\\DesktopBackground\\ContextMenus\\InstantFileShare", installerScript);
         Assert.Contains("{localappdata}\\InstantFileShare", installerScript);
         Assert.Contains("{userappdata}\\{#AppName}", installerScript);
         Assert.Contains("{localappdata}\\{#AppName}", installerScript);
@@ -33,11 +39,32 @@ public sealed class PackagingContractsTests
     }
 
     [Fact]
+    public void Installer_OffersOptInUserPathRegistration_AndRemovesPathOnUninstall()
+    {
+        var installerScript = File.ReadAllText(Path.Combine(AgentPaths.GetRepositoryRoot(), "installer", "InstantFileShare.iss"));
+
+        Assert.Contains("ChangesEnvironment=yes", installerScript);
+        Assert.Contains("Name: \"addtopath\"", installerScript);
+        Assert.Contains("Add Instant File Share to the current user's PATH", installerScript);
+        Assert.Contains("Flags: unchecked", installerScript);
+        Assert.Contains("WizardIsTaskSelected('addtopath')", installerScript);
+        Assert.Contains("RegQueryStringValue(HKCU, UserEnvironmentKey, UserPathValueName", installerScript);
+        Assert.Contains("RegWriteExpandStringValue(HKCU, UserEnvironmentKey, UserPathValueName", installerScript);
+        Assert.Contains("RemoveInstallDirectoryFromUserPath", installerScript);
+    }
+
+    [Fact]
     public void CleanupScript_RemovesAllContextMenuKeys_AppDataPaths_AndStopsAgentTree()
     {
         var cleanupScript = File.ReadAllText(Path.Combine(AgentPaths.GetRepositoryRoot(), "scripts", "uninstall-clean.ps1"));
 
         Assert.Contains("Software\\Classes\\*\\shell\\InstantFileShare", cleanupScript);
+        Assert.Contains("Software\\Classes\\Directory\\shell\\InstantFileShare", cleanupScript);
+        Assert.Contains("Software\\Classes\\Directory\\ContextMenus\\InstantFileShare", cleanupScript);
+        Assert.Contains("Software\\Classes\\Directory\\Background\\shell\\InstantFileShare", cleanupScript);
+        Assert.Contains("Software\\Classes\\Directory\\Background\\ContextMenus\\InstantFileShare", cleanupScript);
+        Assert.Contains("Software\\Classes\\DesktopBackground\\Shell\\InstantFileShare", cleanupScript);
+        Assert.Contains("Software\\Classes\\DesktopBackground\\ContextMenus\\InstantFileShare", cleanupScript);
         Assert.Contains("Software\\Classes\\Directory\\shell\\InstantFileShareFolderZip", cleanupScript);
         Assert.Contains("Software\\Classes\\Directory\\Background\\shell\\InstantFileShareFolderZip", cleanupScript);
         Assert.Contains("Software\\Classes\\DesktopBackground\\Shell\\InstantFileShareFolderZip", cleanupScript);
@@ -51,6 +78,18 @@ public sealed class PackagingContractsTests
         Assert.Contains("GetFolderPath('LocalApplicationData')) 'InstantFileShare'", cleanupScript);
         Assert.Contains("GetFolderPath('ApplicationData')) $appName", cleanupScript);
         Assert.Contains("GetFolderPath('LocalApplicationData')) $appName", cleanupScript);
+    }
+
+    [Fact]
+    public void CleanupScript_RemovesInstallDirectoryFromUserPath()
+    {
+        var cleanupScript = File.ReadAllText(Path.Combine(AgentPaths.GetRepositoryRoot(), "scripts", "uninstall-clean.ps1"));
+
+        Assert.Contains("HKCU:\\Environment", cleanupScript);
+        Assert.Contains("function Remove-InstallDirectoryFromUserPath", cleanupScript);
+        Assert.Contains("Normalize-UserPathEntry", cleanupScript);
+        Assert.Contains("[Environment]::SetEnvironmentVariable('Path', $updatedPath, 'User')", cleanupScript);
+        Assert.Contains("Remove-InstallDirectoryFromUserPath -InstallDirectory $installLocation", cleanupScript);
     }
 
     [Fact]
