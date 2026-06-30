@@ -317,7 +317,7 @@ async function sendAutoChunkedUploadRequest(entry: UploadEntry) {
   entry.autoTransportScores = createAutoTransportScores()
   let finalResponse: PublicReceiveUploadResponse | null = null
   let chunkStart = 0
-  let chunkIndex = 0
+  let acceptedChunkCount = 0
   const failedTransportsAtBoundary = new Set<ReceiveUploadTransport>()
 
   while (chunkStart < entry.file.size) {
@@ -325,13 +325,14 @@ async function sendAutoChunkedUploadRequest(entry: UploadEntry) {
     if (confirmedStart > chunkStart) {
       updateEntryUploadProgress(entry, confirmedStart)
       chunkStart = confirmedStart
-      chunkIndex += 1
+      acceptedChunkCount += 1
       failedTransportsAtBoundary.clear()
     }
 
     const chunkSizeBytes = resolveNextChunkSizeBytes(entry)
     const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
     const chunkSize = chunkEnd - chunkStart
+    const chunkIndex = acceptedChunkCount
     const transport = chooseAutoUploadTransport(entry, chunkIndex, failedTransportsAtBoundary)
     const startedAtMs = Date.now()
     const receivedBytesAtStart = entry.receivedBytes
@@ -352,7 +353,7 @@ async function sendAutoChunkedUploadRequest(entry: UploadEntry) {
       const nextChunkStart = Math.max(chunkEnd, resolveConfirmedChunkStart(entry, chunkEnd))
       updateEntryUploadProgress(entry, nextChunkStart)
       chunkStart = nextChunkStart
-      chunkIndex += 1
+      acceptedChunkCount += 1
       failedTransportsAtBoundary.clear()
     } catch (cause) {
       recordAutoTransportFailure(entry, transport)
@@ -362,7 +363,7 @@ async function sendAutoChunkedUploadRequest(entry: UploadEntry) {
       if (confirmedBoundary > chunkStart) {
         updateEntryUploadProgress(entry, confirmedBoundary)
         chunkStart = confirmedBoundary
-        chunkIndex += 1
+        acceptedChunkCount += 1
         failedTransportsAtBoundary.clear()
         continue
       }
@@ -373,11 +374,26 @@ async function sendAutoChunkedUploadRequest(entry: UploadEntry) {
     }
   }
 
-  if (!finalResponse) {
-    throw new Error('Upload failed.')
+  if (!finalResponse || finalResponse.results.length === 0) {
+    finalResponse = createConfirmedUploadResponse(entry)
   }
 
   return finalResponse
+}
+
+function createConfirmedUploadResponse(entry: UploadEntry): PublicReceiveUploadResponse {
+  return {
+    uploadedCount: 1,
+    failedCount: 0,
+    remainingQuotaBytes: props.receive.remainingQuotaBytes,
+    results: [
+      {
+        success: true,
+        message: null,
+        sizeBytes: entry.file.size,
+      },
+    ],
+  }
 }
 
 function sendChunkWithTransport(
