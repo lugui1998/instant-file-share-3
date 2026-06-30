@@ -21,11 +21,22 @@ public sealed class SqliteShareStoreTests
         Assert.Equal(PublishMode.QuickTunnel, settings.DefaultPublishMode);
         Assert.Equal(Defaults.CreateDefaultFolderBrowsePageTitle(), settings.FolderBrowsePageTitle);
         Assert.Equal(Defaults.CreateDefaultReceivePageTitle(), settings.ReceivePageTitle);
+        Assert.Equal(Defaults.DefaultReceiveParallelUploadLimit, settings.ReceiveParallelUploadLimit);
+        Assert.Equal(Defaults.DefaultReceiveUploadMode, settings.ReceiveUploadMode);
+        Assert.Equal(Defaults.DefaultReceiveUploadChunkSizingMode, settings.ReceiveUploadChunkSizingMode);
+        Assert.Equal(Defaults.DefaultReceiveUploadChunkSizeBytes, settings.ReceiveUploadChunkSizeBytes);
+        Assert.Equal(Defaults.DefaultReceiveUploadMaxBodySizeBytes, settings.ReceiveUploadMaxBodySizeBytes);
+        Assert.Equal(Defaults.DefaultReceiveUploadChunkTargetSeconds, settings.ReceiveUploadChunkTargetSeconds);
+        Assert.Equal(Defaults.PublicBindAddress, settings.ManualBindAddress);
         Assert.Null(cloudflaredState.ExecutablePath);
         Assert.Equal(3, profiles.Count);
         Assert.Contains(profiles, profile => profile.Mode == PublishMode.QuickTunnel && profile.Enabled);
         Assert.Contains(profiles, profile => profile.Mode == PublishMode.ManagedCloudflare && !profile.Enabled);
-        Assert.Contains(profiles, profile => profile.Mode == PublishMode.Manual && profile.Enabled);
+        Assert.Contains(profiles, profile =>
+            profile.Mode == PublishMode.Manual &&
+            profile.Enabled &&
+            profile.BindAddress == Defaults.PublicBindAddress &&
+            profile.PublicPort == Defaults.PublicPort);
     }
 
     [Fact]
@@ -207,9 +218,12 @@ public sealed class SqliteShareStoreTests
 
         var byId = await store.GetReceiveLinkByIdAsync(receiveLink.Id, CancellationToken.None);
         var byToken = await store.GetReceiveLinkByTokenAsync(receiveLink.Token, CancellationToken.None);
+        var receiveLinks = await store.ListReceiveLinksAsync(CancellationToken.None);
 
         Assert.NotNull(byId);
         Assert.NotNull(byToken);
+        Assert.Single(receiveLinks);
+        Assert.Equal(receiveLink.Id, receiveLinks[0].Id);
         Assert.Equal(receiveLink.TargetDirectoryPath, byToken!.TargetDirectoryPath);
         Assert.Equal(receiveLink.MaxTotalBytes, byToken.MaxTotalBytes);
         Assert.Equal(receiveLink.BytesReceived, byToken.BytesReceived);

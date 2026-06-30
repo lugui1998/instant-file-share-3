@@ -34,6 +34,7 @@ internal static class AgentApplication
 
         builder.WebHost.ConfigureKestrel(kestrelOptions =>
         {
+            kestrelOptions.Limits.MaxRequestBodySize = null;
             kestrelOptions.ListenLocalhost(initialSettings.LocalApiPort);
 
             var bindAddress = IPAddress.TryParse(initialSettings.ManualBindAddress, out var parsedAddress)
@@ -57,6 +58,7 @@ internal static class AgentApplication
         app.MapGet("/", () => Results.Ok(new { name = "Instant File Share Agent", status = "ok" }));
         app.MapControlApiEndpoints();
         app.MapRuntimeEndpoints();
+        app.MapFaviconEndpoints();
         app.MapPublicShareAssetEndpoints();
         app.MapPublicShareEndpoints();
 

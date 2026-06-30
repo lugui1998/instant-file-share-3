@@ -91,17 +91,13 @@ public static class ShareUrlBuilder
     public static string BuildFolderBrowse(string baseUrl, string token, string? slug)
     {
         baseUrl = baseUrl.TrimEnd('/');
-        return string.IsNullOrWhiteSpace(slug)
-            ? $"{baseUrl}/s/{token}"
-            : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(slug)}";
+        return $"{baseUrl}/s/{token}";
     }
 
     public static string BuildFolderZip(string baseUrl, string token, string? slug)
     {
         baseUrl = baseUrl.TrimEnd('/');
-        return string.IsNullOrWhiteSpace(slug)
-            ? $"{baseUrl}/s/{token}.zip"
-            : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(slug)}.zip";
+        return $"{baseUrl}/s/{token}?download=zip";
     }
 
     public static string BuildFolderChild(string baseUrl, string token, string? slug, string relativePath)
@@ -113,9 +109,7 @@ public static class ShareUrlBuilder
                 .Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(Uri.EscapeDataString));
 
-        return string.IsNullOrWhiteSpace(slug)
-            ? $"{baseUrl}/s/{token}/{encodedPath}"
-            : $"{baseUrl}/s/{token}/{Uri.EscapeDataString(slug)}/{encodedPath}";
+        return $"{baseUrl}/s/{token}/{encodedPath}";
     }
 
     public static string BuildReceiveLink(string baseUrl, string token)

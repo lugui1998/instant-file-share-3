@@ -410,6 +410,17 @@ a {
   margin-bottom: 10px;
 }
 
+.dual-progress {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  border-radius: 999px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.045));
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
 .progress-track {
   width: 100%;
   height: 12px;
@@ -418,19 +429,77 @@ a {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.overall-progress-track {
+  margin-bottom: 16px;
+}
+
 .compact-track {
   margin-top: 10px;
   height: 9px;
 }
 
 .progress-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
   height: 100%;
-  background: linear-gradient(135deg, rgba(255, 138, 84, 0.9), rgba(255, 186, 69, 0.82));
+  border-radius: inherit;
+  transition: width 180ms ease-out;
+  will-change: width;
 }
 
-.small-badge {
-  min-height: 30px;
+.progress-fill--client {
+  top: 50%;
+  z-index: 2;
+  height: 5px;
+  transform: translateY(-50%);
+  background: linear-gradient(135deg, rgba(62, 142, 255, 0.95), rgba(76, 196, 255, 0.9));
+  box-shadow: 0 0 10px rgba(76, 196, 255, 0.24);
+}
+
+.progress-fill--receive {
+  z-index: 1;
+  background: linear-gradient(135deg, rgba(92, 219, 149, 0.82), rgba(32, 194, 137, 0.72));
+}
+
+.speed-label {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.progress-percent {
+  color: var(--text);
   font-size: 0.86rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.progress-percent--error,
+.progress-percent--canceled {
+  color: var(--accent);
+}
+
+.success-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  color: #8cf0d4;
+  background: rgba(140, 240, 212, 0.12);
+}
+
+.success-icon svg {
+  width: 17px;
+  height: 17px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .badge--success {

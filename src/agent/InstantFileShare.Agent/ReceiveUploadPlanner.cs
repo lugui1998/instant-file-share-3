@@ -1,20 +1,35 @@
-using Microsoft.AspNetCore.Http;
+using System.Text.Json.Serialization;
 
 namespace InstantFileShare.Agent;
 
 internal sealed record ReceiveUploadCandidate(
-    IFormFile File,
+    string FileName,
+    long Length,
     string ClientRelativePath);
 
 internal sealed record PlannedReceiveUpload(
-    IFormFile File,
+    string FileName,
+    long Length,
     string ClientRelativePath,
     string StoredRelativePath,
     string DestinationPath);
 
+internal sealed class ReceiveUploadPlanState(string targetDirectoryPath)
+{
+    public Dictionary<string, string> RootAliases { get; } = new(StringComparer.OrdinalIgnoreCase);
+    public HashSet<string> ReservedDirectories { get; } = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ReceiveUploadPlanner.NormalizePathForState(targetDirectoryPath),
+    };
+    public HashSet<string> ReservedFiles { get; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
 internal sealed record ReceiveUploadFileResult(
+    [property: JsonIgnore]
     string FileName,
+    [property: JsonIgnore]
     string RelativePath,
+    [property: JsonIgnore]
     string? StoredRelativePath,
     bool Success,
     string? Message,
@@ -30,26 +45,25 @@ internal static class ReceiveUploadPlanner
 {
     public static (IReadOnlyList<PlannedReceiveUpload> Planned, IReadOnlyList<ReceiveUploadFileResult> Rejected) Plan(
         string targetDirectoryPath,
-        IReadOnlyList<ReceiveUploadCandidate> candidates)
+        IReadOnlyList<ReceiveUploadCandidate> candidates,
+        ReceiveUploadPlanState? state = null)
     {
         var planned = new List<PlannedReceiveUpload>();
         var rejected = new List<ReceiveUploadFileResult>();
-        var rootAliases = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        var reservedDirectories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            NormalizePath(targetDirectoryPath),
-        };
-        var reservedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        state ??= new ReceiveUploadPlanState(targetDirectoryPath);
+        var rootAliases = state.RootAliases;
+        var reservedDirectories = state.ReservedDirectories;
+        var reservedFiles = state.ReservedFiles;
 
         foreach (var candidate in candidates)
         {
             var rawRelativePath = string.IsNullOrWhiteSpace(candidate.ClientRelativePath)
-                ? Path.GetFileName(candidate.File.FileName)
+                ? Path.GetFileName(candidate.FileName)
                 : candidate.ClientRelativePath;
 
             if (!ReceiveUploadPathResolver.TryNormalizeRelativePath(rawRelativePath, out var normalizedRelativePath, out var error))
             {
-                rejected.Add(new ReceiveUploadFileResult(candidate.File.FileName, rawRelativePath, null, false, error, candidate.File.Length));
+                rejected.Add(new ReceiveUploadFileResult(candidate.FileName, rawRelativePath, null, false, error, candidate.Length));
                 continue;
             }
 
@@ -61,7 +75,7 @@ internal static class ReceiveUploadPlanner
                 {
                     if (!ReceiveUploadPathResolver.TryResolveUnderRoot(targetDirectoryPath, originalRoot, out var rootPath, out error))
                     {
-                        rejected.Add(new ReceiveUploadFileResult(candidate.File.FileName, normalizedRelativePath, null, false, error, candidate.File.Length));
+                        rejected.Add(new ReceiveUploadFileResult(candidate.FileName, normalizedRelativePath, null, false, error, candidate.Length));
                         continue;
                     }
 
@@ -77,13 +91,13 @@ internal static class ReceiveUploadPlanner
             var aliasedRelativePath = string.Join('/', segments);
             if (!ReceiveUploadPathResolver.TryResolveUnderRoot(targetDirectoryPath, aliasedRelativePath, out var resolvedPath, out error))
             {
-                rejected.Add(new ReceiveUploadFileResult(candidate.File.FileName, normalizedRelativePath, null, false, error, candidate.File.Length));
+                rejected.Add(new ReceiveUploadFileResult(candidate.FileName, normalizedRelativePath, null, false, error, candidate.Length));
                 continue;
             }
 
             if (!TryReserveAncestors(targetDirectoryPath, resolvedPath, reservedDirectories, reservedFiles, out error))
             {
-                rejected.Add(new ReceiveUploadFileResult(candidate.File.FileName, normalizedRelativePath, null, false, error, candidate.File.Length));
+                rejected.Add(new ReceiveUploadFileResult(candidate.FileName, normalizedRelativePath, null, false, error, candidate.Length));
                 continue;
             }
 
@@ -91,7 +105,8 @@ internal static class ReceiveUploadPlanner
             reservedFiles.Add(NormalizePath(resolvedPath));
 
             planned.Add(new PlannedReceiveUpload(
-                candidate.File,
+                candidate.FileName,
+                candidate.Length,
                 normalizedRelativePath,
                 Path.GetRelativePath(targetDirectoryPath, resolvedPath).Replace('\\', '/'),
                 resolvedPath));
@@ -208,4 +223,6 @@ internal static class ReceiveUploadPlanner
             ? fullPath
             : fullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
     }
+
+    public static string NormalizePathForState(string path) => NormalizePath(path);
 }

@@ -15,6 +15,12 @@ public sealed class SqliteShareStoreTests
         var profiles = await fixture.Store.GetPublishProfilesAsync(CancellationToken.None);
 
         Assert.Equal(PublishMode.QuickTunnel, settings.DefaultPublishMode);
+        Assert.Equal(Defaults.DefaultReceiveParallelUploadLimit, settings.ReceiveParallelUploadLimit);
+        Assert.Equal(Defaults.DefaultReceiveUploadMode, settings.ReceiveUploadMode);
+        Assert.Equal(Defaults.DefaultReceiveUploadChunkSizingMode, settings.ReceiveUploadChunkSizingMode);
+        Assert.Equal(Defaults.DefaultReceiveUploadChunkSizeBytes, settings.ReceiveUploadChunkSizeBytes);
+        Assert.Equal(Defaults.DefaultReceiveUploadMaxBodySizeBytes, settings.ReceiveUploadMaxBodySizeBytes);
+        Assert.Equal(Defaults.DefaultReceiveUploadChunkTargetSeconds, settings.ReceiveUploadChunkTargetSeconds);
         Assert.False(cloudflaredState.ManagedTunnelRunning);
         Assert.Equal(3, profiles.Count);
         Assert.Contains(profiles, profile => profile.Mode == PublishMode.QuickTunnel && profile.Enabled);
@@ -102,6 +108,10 @@ public sealed class SqliteShareStoreTests
 
         var listedBeforePrune = await fixture.Store.ListTransfersAsync(CancellationToken.None);
         Assert.Equal(2, listedBeforePrune.Count);
+        Assert.Contains(listedBeforePrune, transfer =>
+            transfer.Id == "transfer-old" &&
+            transfer.ProgressBytes == 512 &&
+            transfer.ProgressTotalBytes == 1024);
 
         await fixture.Store.PruneCompletedTransfersAsync(DateTimeOffset.UtcNow.AddDays(-5), CancellationToken.None);
 
@@ -185,6 +195,8 @@ public sealed class SqliteShareStoreTests
             RemoteAddress = "203.0.113.10",
             BytesSent = 512,
             TotalBytes = 1024,
+            ProgressBytes = 512,
+            ProgressTotalBytes = 1024,
             StartedAtUtc = DateTimeOffset.UtcNow.AddMinutes(-30),
             LastUpdatedAtUtc = completedAtUtc ?? DateTimeOffset.UtcNow.AddMinutes(-1),
             CompletedAtUtc = completedAtUtc,

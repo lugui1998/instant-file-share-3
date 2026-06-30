@@ -59,6 +59,9 @@ internal static class AgentServiceCollectionExtensions
         services.AddSingleton<PublicShareAssetLocator>();
         services.AddSingleton<PublicSharePageModelFactory>();
         services.AddSingleton<PublicShareHtmlRenderer>();
+        services.AddSingleton<PublicFolderChangeNotifier>();
+        services.AddSingleton<ReceiveUploadBatchNotificationTracker>();
+        services.AddSingleton<ReceiveUploadChunkSessionStore>();
         services.AddSingleton<IHostedService, AgentStartupHostedService>();
 
         if (applicationOptions.EnableTrayIcon)

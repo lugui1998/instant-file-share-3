@@ -9,12 +9,17 @@ internal static class RequestAddressResolver
     public static string? ResolveClientIpAddress(HttpContext context)
     {
         var remoteIpAddress = context.Connection.RemoteIpAddress;
-        if (remoteIpAddress is not null && !IPAddress.IsLoopback(remoteIpAddress))
+        if (ShouldTrustForwardedHeaders(remoteIpAddress))
+        {
+            return TryResolveForwardedClientIp(context.Request.Headers) ?? remoteIpAddress?.ToString();
+        }
+
+        if (remoteIpAddress is not null)
         {
             return remoteIpAddress.ToString();
         }
 
-        return TryResolveForwardedClientIp(context.Request.Headers) ?? remoteIpAddress?.ToString();
+        return TryResolveForwardedClientIp(context.Request.Headers);
     }
 
     public static string? BuildClientFingerprint(string? remoteAddress, string? userAgent)
@@ -38,6 +43,11 @@ internal static class RequestAddressResolver
         if (TryResolveHeaderIp(headers, "True-Client-IP", out var trueClientIp))
         {
             return trueClientIp;
+        }
+
+        if (TryResolveHeaderIp(headers, "X-Real-IP", out var realIp))
+        {
+            return realIp;
         }
 
         if (headers.TryGetValue("X-Forwarded-For", out var forwardedForValues))
@@ -152,5 +162,46 @@ internal static class RequestAddressResolver
 
         ipAddress = parsedIpAddress.ToString();
         return true;
+    }
+
+    private static bool ShouldTrustForwardedHeaders(IPAddress? remoteIpAddress)
+    {
+        return remoteIpAddress is null || IsPrivateOrLocalAddress(remoteIpAddress);
+    }
+
+    private static bool IsPrivateOrLocalAddress(IPAddress ipAddress)
+    {
+        if (ipAddress.IsIPv4MappedToIPv6)
+        {
+            ipAddress = ipAddress.MapToIPv4();
+        }
+
+        if (IPAddress.IsLoopback(ipAddress))
+        {
+            return true;
+        }
+
+        var bytes = ipAddress.GetAddressBytes();
+        return ipAddress.AddressFamily switch
+        {
+            System.Net.Sockets.AddressFamily.InterNetwork => IsPrivateOrLocalIpv4(bytes),
+            System.Net.Sockets.AddressFamily.InterNetworkV6 => IsPrivateOrLocalIpv6(bytes),
+            _ => false,
+        };
+    }
+
+    private static bool IsPrivateOrLocalIpv4(byte[] bytes)
+    {
+        return bytes[0] == 10
+            || bytes[0] == 127
+            || (bytes[0] == 172 && bytes[1] >= 16 && bytes[1] <= 31)
+            || (bytes[0] == 192 && bytes[1] == 168)
+            || (bytes[0] == 169 && bytes[1] == 254);
+    }
+
+    private static bool IsPrivateOrLocalIpv6(byte[] bytes)
+    {
+        return (bytes[0] & 0xFE) == 0xFC
+            || (bytes[0] == 0xFE && (bytes[1] & 0xC0) == 0x80);
     }
 }

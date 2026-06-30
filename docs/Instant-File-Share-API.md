@@ -6,10 +6,10 @@ This document describes the API exposed by the Instant File Share agent in this 
 
 The agent owns two HTTP listeners:
 
-| Listener | Default base URL | Purpose |
+| Listener | Default bind/base URL | Purpose |
 | --- | --- | --- |
 | Local control API | `http://127.0.0.1:46430` | Desktop UI, runtime WebSocket, local settings, shares, transfers, and Cloudflare actions |
-| Public share API | `http://127.0.0.1:46431` | Download pages, file downloads, folder browsing, ZIP downloads, receive pages, and receive uploads |
+| Public share API | binds to `0.0.0.0:46431`; share URLs resolve from the selected publish mode | Download pages, file downloads, folder browsing, ZIP downloads, receive pages, and receive uploads |
 
 `/api/*` and `/ws/*` only work on the local control listener. The agent returns `403 Forbidden` when a client calls those routes through the public listener.
 
@@ -108,6 +108,8 @@ type TransferSnapshot = {
   remoteAddress?: string | null
   bytesSent: number
   totalBytes: number
+  progressBytes: number
+  progressTotalBytes: number
   startedAtUtc: string
   lastUpdatedAtUtc: string
   completedAtUtc?: string | null
@@ -117,6 +119,8 @@ type TransferSnapshot = {
   error?: string | null
 }
 ```
+
+`bytesSent` and `totalBytes` describe response bytes when the final size is known. Streamed ZIP downloads do not know their final compressed size ahead of time, so `progressBytes` and `progressTotalBytes` expose an estimated progress basis from source bytes compressed into the ZIP archive.
 
 ### CloudflaredState
 
@@ -679,7 +683,7 @@ Payloads:
 
 ## Public Share API
 
-Use the public API through the selected share base URL. In manual mode the default local base URL is `http://127.0.0.1:46431`.
+Use the public API through the selected share base URL. In manual mode, the listener binds to `0.0.0.0:46431` by default and generated URLs prefer the configured manual base URL, then the detected public IP, then the detected LAN IP.
 
 ### Public File Response Rules
 

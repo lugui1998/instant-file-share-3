@@ -53,16 +53,41 @@ function isUploadTransfer(transfer: TransferRecord) {
   return transfer.transferKind === 'FileUpload'
 }
 
+function hasEstimatedProgress(transfer: TransferRecord) {
+  return (transfer.progressTotalBytes ?? 0) > 0
+}
+
+function isCompletedTransfer(transfer: TransferRecord) {
+  return transfer.state === 'Completed' || transfer.succeeded
+}
+
+function hasKnownTransferTotal(transfer: TransferRecord) {
+  return isZipStreamTransfer(transfer)
+    ? hasEstimatedProgress(transfer)
+    : transfer.totalBytes > 0
+}
+
+function shouldShowProgressBar(transfer: TransferRecord) {
+  return !isCompletedTransfer(transfer) && hasKnownTransferTotal(transfer)
+}
+
 function clampProgress(value: number) {
   return Math.max(0, Math.min(100, value))
 }
 
 function getProgressPercent(transfer: TransferRecord) {
-  if (transfer.totalBytes <= 0) {
+  const totalBytes = hasEstimatedProgress(transfer)
+    ? transfer.progressTotalBytes ?? 0
+    : transfer.totalBytes
+  const progressBytes = hasEstimatedProgress(transfer)
+    ? transfer.progressBytes ?? 0
+    : transfer.bytesSent
+
+  if (totalBytes <= 0) {
     return transfer.isActive ? 0 : 100
   }
 
-  return clampProgress((transfer.bytesSent / transfer.totalBytes) * 100)
+  return clampProgress((progressBytes / totalBytes) * 100)
 }
 
 function formatBytes(value: number) {
@@ -109,6 +134,12 @@ function formatProgressLabel(transfer: TransferRecord) {
   const sent = formatBytes(transfer.bytesSent)
   const total = transfer.totalBytes > 0 ? formatBytes(transfer.totalBytes) : '?'
   return `${sent} / ${total}`
+}
+
+function formatEstimatedProgressLabel(transfer: TransferRecord) {
+  const progressBytes = formatBytes(transfer.progressBytes ?? 0)
+  const progressTotalBytes = formatBytes(transfer.progressTotalBytes ?? 0)
+  return `${progressBytes} / ${progressTotalBytes} source processed`
 }
 
 function getZipProgressLabel(transfer: TransferRecord) {
@@ -239,6 +270,24 @@ watch([filteredTransfers, () => props.itemsPerPage], () => {
                 </div>
                 <span>No file download</span>
               </div>
+              <template v-else-if="isZipStreamTransfer(transfer) && hasEstimatedProgress(transfer)">
+                <div class="progress-meta">
+                  <div class="progress-inline-label">
+                    <strong>{{ Math.round(getProgressPercent(transfer)) }}% estimated</strong>
+                    <HelpTooltip text="Streamed ZIP size is not known ahead of time, so this bar estimates progress from how much source data has been compressed into the archive." />
+                  </div>
+                  <span>
+                    {{ formatEstimatedProgressLabel(transfer) }}
+                    <template v-if="formatSpeedLabel(transfer)">
+                      • {{ formatBytes(transfer.bytesSent) }} sent
+                      • {{ formatSpeedLabel(transfer) }}
+                    </template>
+                  </span>
+                </div>
+                <div v-if="shouldShowProgressBar(transfer)" class="progress-track" :aria-label="formatEstimatedProgressLabel(transfer)" role="progressbar" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="Math.round(getProgressPercent(transfer))">
+                  <div class="progress-fill" :class="{ active: transfer.isActive && !transfer.isPaused, paused: transfer.isPaused }" :style="{ width: `${getProgressPercent(transfer)}%` }" />
+                </div>
+              </template>
               <div v-else-if="isZipStreamTransfer(transfer)" class="status-copy">
                 <div class="progress-inline-label">
                   <strong>Streaming ZIP</strong>
@@ -256,7 +305,7 @@ watch([filteredTransfers, () => props.itemsPerPage], () => {
                     </template>
                   </span>
                 </div>
-                <div class="progress-track" :aria-label="formatProgressLabel(transfer)" role="progressbar" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="Math.round(getProgressPercent(transfer))">
+                <div v-if="shouldShowProgressBar(transfer)" class="progress-track" :aria-label="formatProgressLabel(transfer)" role="progressbar" :aria-valuemin="0" :aria-valuemax="100" :aria-valuenow="Math.round(getProgressPercent(transfer))">
                   <div class="progress-fill" :class="{ active: transfer.isActive && !transfer.isPaused, paused: transfer.isPaused }" :style="{ width: `${getProgressPercent(transfer)}%` }" />
                 </div>
               </template>

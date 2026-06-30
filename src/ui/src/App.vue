@@ -51,6 +51,12 @@ const settingsDraft = ref<AppSettings>({
   defaultReceiveExpiryValue: 24,
   defaultReceiveExpiryUnit: 'Hours',
   defaultReceiveMaxTotalBytes: 10 * 1024 * 1024 * 1024,
+  receiveParallelUploadLimit: 4,
+  receiveUploadMode: 'MultipartChunks',
+  receiveUploadChunkSizingMode: 'Fixed',
+  receiveUploadChunkSizeBytes: 16 * 1024 * 1024,
+  receiveUploadMaxBodySizeBytes: 95 * 1024 * 1024,
+  receiveUploadChunkTargetSeconds: 30,
   folderBrowsePageTitle: 'Browse files',
   receivePageTitle: 'Upload files',
   friendlyUrlsEnabled: true,
@@ -64,7 +70,7 @@ const settingsDraft = ref<AppSettings>({
   cloudflaredPathOverride: '',
   startOnLogin: true,
   openDashboardOnStart: false,
-  manualBindAddress: '127.0.0.1',
+  manualBindAddress: '0.0.0.0',
   manualPublicPort: 46431,
   manualBaseUrl: '',
   localApiPort: 46430,
@@ -247,8 +253,16 @@ async function showShareInExplorer(shareId: string) {
 }
 
 function buildShareUrl(share: AgentShareRecord) {
+  if (share.url) {
+    return share.url
+  }
+
   const baseUrl = share.publicBaseUrl.replace(/\/$/, '')
-  if (share.shareKind === 'Folder') {
+  if (share.itemKind === 'Receive') {
+    return `${baseUrl}/r/${share.token}`
+  }
+
+  if (share.shareKind === 'Folder' || share.itemKind === 'Folder') {
     const folderSlug = share.slug ?? share.fileName.trim().toLowerCase().replace(/\s+/g, '-')
     if (share.primaryFolderEntryPoint === 'Zip') {
       return `${baseUrl}/s/${share.token}/${encodeURIComponent(folderSlug)}.zip`
@@ -562,6 +576,7 @@ function normalizeWholeNumber(value: number | null | undefined, fallback: number
 }
 
 function buildSettingsPayload(): AppSettings {
+  const receiveUploadMode = normalizeReceiveUploadMode(settingsDraft.value.receiveUploadMode)
   return {
     ...settingsDraft.value,
     publicTokenLength: normalizeWholeNumber(settingsDraft.value.publicTokenLength, 11, 6, 128),
@@ -570,6 +585,12 @@ function buildSettingsPayload(): AppSettings {
     defaultMaxUses: settingsDraft.value.defaultMaxUses ?? null,
     defaultReceiveExpiryValue: normalizeWholeNumber(settingsDraft.value.defaultReceiveExpiryValue, 24, 0),
     defaultReceiveMaxTotalBytes: normalizeWholeNumber(settingsDraft.value.defaultReceiveMaxTotalBytes, 10 * 1024 * 1024 * 1024, 0),
+    receiveParallelUploadLimit: normalizeWholeNumber(settingsDraft.value.receiveParallelUploadLimit, 4, 0),
+    receiveUploadMode,
+    receiveUploadChunkSizingMode: normalizeReceiveUploadChunkSizingMode(settingsDraft.value.receiveUploadChunkSizingMode, settingsDraft.value.receiveUploadMode),
+    receiveUploadChunkSizeBytes: normalizeWholeNumber(settingsDraft.value.receiveUploadChunkSizeBytes, 16 * 1024 * 1024, 1024 * 1024),
+    receiveUploadMaxBodySizeBytes: normalizeWholeNumber(settingsDraft.value.receiveUploadMaxBodySizeBytes, 95 * 1024 * 1024, 1024 * 1024),
+    receiveUploadChunkTargetSeconds: normalizeWholeNumber(settingsDraft.value.receiveUploadChunkTargetSeconds, 30, 5),
     folderBrowsePageTitle: settingsDraft.value.folderBrowsePageTitle?.trim() ?? '',
     receivePageTitle: settingsDraft.value.receivePageTitle?.trim() ?? '',
     historyRetentionValue: normalizeWholeNumber(settingsDraft.value.historyRetentionValue, 3, 0),
@@ -578,6 +599,23 @@ function buildSettingsPayload(): AppSettings {
     sharesItemsPerPage: normalizeWholeNumber(settingsDraft.value.sharesItemsPerPage, 25, 0),
     bandwidthLimitBytesPerSecond: serializeBandwidthLimit(bandwidthValue.value, bandwidthUnit.value),
   }
+}
+
+function normalizeReceiveUploadMode(value: AppSettings['receiveUploadMode']) {
+  if (value === 'AdaptiveBinaryChunks') {
+    return 'BinaryChunks'
+  }
+
+  return value === 'BinaryChunks' || value === 'WebSocket'
+    ? value
+    : 'MultipartChunks'
+}
+
+function normalizeReceiveUploadChunkSizingMode(
+  value: AppSettings['receiveUploadChunkSizingMode'],
+  uploadMode: AppSettings['receiveUploadMode'],
+) {
+  return value === 'Auto' || uploadMode === 'AdaptiveBinaryChunks' ? 'Auto' : 'Fixed'
 }
 
 onMounted(async () => {

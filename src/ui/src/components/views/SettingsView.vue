@@ -39,6 +39,7 @@ const cloudflareLoginLabel = computed(() =>
   props.cloudflaredStatus?.loggedIn ? 'Log out' : 'Start Cloudflare login',
 )
 const isShortPublicTokenLength = computed(() => settingsDraft.value.publicTokenLength < 11)
+const bytesPerMegabyte = 1024 * 1024
 const receiveMaxTotalUnit = ref<'Unlimited' | 'MB' | 'GB' | 'TB'>(resolveReceiveMaxTotalUnit(settingsDraft.value.defaultReceiveMaxTotalBytes))
 const receiveMaxTotalValue = computed({
   get: () => {
@@ -59,6 +60,33 @@ const receiveMaxTotalValue = computed({
   },
 })
 const showUnlimitedReceiveQuotaWarning = computed(() => settingsDraft.value.defaultReceiveMaxTotalBytes === 0)
+const cloudflareZonePlanKey = computed(() =>
+  (props.managedStatus?.zonePlanLegacyId || props.managedStatus?.zonePlanName || '').trim().toLowerCase(),
+)
+const showCloudflareFreePlanBodySizeWarning = computed(() =>
+  settingsDraft.value.defaultPublishMode !== 'Manual' &&
+  cloudflareZonePlanKey.value === 'free' &&
+  receiveUploadMaxBodySizeMb.value > 100,
+)
+const showCloudflareTargetTimeoutWarning = computed(() =>
+  settingsDraft.value.defaultPublishMode !== 'Manual' &&
+  settingsDraft.value.receiveUploadChunkSizingMode === 'Auto' &&
+  settingsDraft.value.receiveUploadChunkTargetSeconds > 120,
+)
+const receiveUploadChunkSizeMb = computed({
+  get: () => Math.max(1, Math.round((settingsDraft.value.receiveUploadChunkSizeBytes ?? 16 * bytesPerMegabyte) / bytesPerMegabyte)),
+  set: (value: number) => {
+    const normalized = Number.isFinite(value) ? Math.max(1, Math.round(value)) : 16
+    settingsDraft.value.receiveUploadChunkSizeBytes = normalized * bytesPerMegabyte
+  },
+})
+const receiveUploadMaxBodySizeMb = computed({
+  get: () => Math.max(1, Math.round((settingsDraft.value.receiveUploadMaxBodySizeBytes ?? 95 * bytesPerMegabyte) / bytesPerMegabyte)),
+  set: (value: number) => {
+    const normalized = Number.isFinite(value) ? Math.max(1, Math.round(value)) : 95
+    settingsDraft.value.receiveUploadMaxBodySizeBytes = normalized * bytesPerMegabyte
+  },
+})
 
 watch(
   () => settingsDraft.value.defaultReceiveMaxTotalBytes,
@@ -470,6 +498,101 @@ function resolveReceiveMaxTotalUnit(value: number) {
             </div>
             <span v-if="showUnlimitedReceiveQuotaWarning" class="field-warning">
               Unlimited receive links are not recommended for public use.
+            </span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-parallel-upload-limit">Parallel uploads</label>
+              <HelpTooltip text="Controls how many files a public receive page can upload at the same time. Higher values can finish batches faster but use more bandwidth and disk activity." />
+            </div>
+            <input
+              id="receive-parallel-upload-limit"
+              v-model.number="settingsDraft.receiveParallelUploadLimit"
+              type="number"
+              min="0"
+              placeholder="Unlimited"
+            />
+            <span class="field-help">Default: 4 files at a time. Use 0 for no limit.</span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-mode">Upload mode</label>
+              <HelpTooltip text="Multipart chunks sends each piece as multipart form data. Binary chunks sends raw binary requests. WebSocket uploads send chunks through a dedicated upload socket." />
+            </div>
+            <select id="receive-upload-mode" v-model="settingsDraft.receiveUploadMode">
+              <option value="MultipartChunks">Multipart chunks</option>
+              <option value="BinaryChunks">Binary chunks</option>
+              <option value="WebSocket">WebSocket chunks</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-chunk-sizing-mode">Packet sizing</label>
+              <HelpTooltip text="Fixed uses the configured request size. Auto lets the host recommend the next packet size from the receive speed and target request time." />
+            </div>
+            <select id="receive-upload-chunk-sizing-mode" v-model="settingsDraft.receiveUploadChunkSizingMode">
+              <option value="Fixed">Fixed size</option>
+              <option value="Auto">Auto</option>
+            </select>
+          </div>
+
+          <div v-if="settingsDraft.receiveUploadChunkSizingMode !== 'Auto'" class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-chunk-size">Packet size</label>
+              <HelpTooltip text="Controls the request size used for large receive-page uploads. Smaller packets retry less data after a failure; larger packets reduce per-request overhead." />
+            </div>
+            <div class="input-group">
+              <input
+                id="receive-upload-chunk-size"
+                v-model.number="receiveUploadChunkSizeMb"
+                type="number"
+                min="1"
+              />
+              <span class="unit-suffix">MB</span>
+            </div>
+            <span class="field-help">Default: 16 MB. Minimum: 1 MB.</span>
+          </div>
+
+          <div v-else class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-chunk-target-seconds">Target request time</label>
+              <HelpTooltip text="The host uses receive speed to recommend packet sizes that should finish near this duration." />
+            </div>
+            <div class="input-group">
+              <input
+                id="receive-upload-chunk-target-seconds"
+                v-model.number="settingsDraft.receiveUploadChunkTargetSeconds"
+                type="number"
+                min="5"
+              />
+              <span class="unit-suffix">seconds</span>
+            </div>
+            <span class="field-help">Default: 30 seconds. Minimum: 5 seconds.</span>
+            <span v-if="showCloudflareTargetTimeoutWarning" class="field-warning">
+              Cloudflare can time out proxied requests after 120 seconds. Use a lower target when publishing through Cloudflare.
+            </span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-max-body-size">Max request body size</label>
+              <HelpTooltip text="Caps receive-page upload request bodies. Cloudflare Free and Pro allow up to 100 MB per request, so the default leaves a small safety margin." />
+            </div>
+            <div class="input-group">
+              <input
+                id="receive-upload-max-body-size"
+                v-model.number="receiveUploadMaxBodySizeMb"
+                type="number"
+                min="1"
+              />
+              <span class="unit-suffix">MB</span>
+            </div>
+            <span class="field-help">Default: 95 MB. Cloudflare Free/Pro limit: 100 MB.</span>
+            <span v-if="showCloudflareFreePlanBodySizeWarning" class="field-warning">
+              The logged-in Cloudflare zone is on the Free plan. Requests over 100 MB can fail with 413.
             </span>
           </div>
 

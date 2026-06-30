@@ -30,6 +30,7 @@ internal sealed class PublicShareHtmlRenderer(PublicShareAssetLocator assetLocat
         builder.AppendLine($"    <title>{encodedTitle}</title>");
         builder.AppendLine($"    <meta name=\"description\" content=\"{encodedDescription}\" />");
         builder.AppendLine("    <meta name=\"robots\" content=\"noindex, nofollow\" />");
+        builder.AppendLine("    <link rel=\"icon\" href=\"/favicon.ico\" />");
         builder.AppendLine($"    <meta property=\"og:title\" content=\"{encodedTitle}\" />");
         builder.AppendLine($"    <meta property=\"og:description\" content=\"{encodedDescription}\" />");
         builder.AppendLine("    <meta property=\"og:type\" content=\"website\" />");

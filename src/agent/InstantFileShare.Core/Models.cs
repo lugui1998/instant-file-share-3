@@ -47,6 +47,12 @@ public sealed record AppSettings
     public int DefaultReceiveExpiryValue { get; init; } = 24;
     public ExpiryUnit DefaultReceiveExpiryUnit { get; init; } = ExpiryUnit.Hours;
     public long DefaultReceiveMaxTotalBytes { get; init; } = Defaults.DefaultReceiveMaxTotalBytes;
+    public int ReceiveParallelUploadLimit { get; init; } = Defaults.DefaultReceiveParallelUploadLimit;
+    public ReceiveUploadMode ReceiveUploadMode { get; init; } = Defaults.DefaultReceiveUploadMode;
+    public ReceiveUploadChunkSizingMode ReceiveUploadChunkSizingMode { get; init; } = Defaults.DefaultReceiveUploadChunkSizingMode;
+    public long ReceiveUploadChunkSizeBytes { get; init; } = Defaults.DefaultReceiveUploadChunkSizeBytes;
+    public long ReceiveUploadMaxBodySizeBytes { get; init; } = Defaults.DefaultReceiveUploadMaxBodySizeBytes;
+    public int ReceiveUploadChunkTargetSeconds { get; init; } = Defaults.DefaultReceiveUploadChunkTargetSeconds;
     public string FolderBrowsePageTitle { get; init; } = Defaults.CreateDefaultFolderBrowsePageTitle();
     public string ReceivePageTitle { get; init; } = Defaults.CreateDefaultReceivePageTitle();
     public bool FriendlyUrlsEnabled { get; init; } = true;
@@ -94,6 +100,84 @@ public sealed record ReceiveLinkRecord
     public string? BrokenReason { get; init; }
 }
 
+public sealed record ShareListItem
+{
+    public required string Id { get; init; }
+    public required string Token { get; init; }
+    public required string FileName { get; init; }
+    public required string FilePath { get; init; }
+    public string? Slug { get; init; }
+    public required string PublicBaseUrl { get; init; }
+    public required string Url { get; init; }
+    public long FileSize { get; init; }
+    public DateTimeOffset? FileModifiedAtUtc { get; init; }
+    public required ShareListItemKind ItemKind { get; init; }
+    public ShareKind? ShareKind { get; init; }
+    public bool CanBrowseFolderContents { get; init; }
+    public bool CanDownloadFolderAsZip { get; init; }
+    public FolderShareEntryPoint? PrimaryFolderEntryPoint { get; init; }
+    public DateTimeOffset CreatedAtUtc { get; init; }
+    public DateTimeOffset? ExpiresAtUtc { get; init; }
+    public int? MaxUses { get; init; }
+    public int UseCount { get; init; }
+    public long? MaxTotalBytes { get; init; }
+    public long? BytesReceived { get; init; }
+    public PublishMode PublishMode { get; init; }
+    public required string State { get; init; }
+    public string? BrokenReason { get; init; }
+    public DateTimeOffset? LastAccessedAtUtc { get; init; }
+
+    public static ShareListItem FromShare(ShareRecord share)
+    {
+        return new ShareListItem
+        {
+            Id = share.Id,
+            Token = share.Token,
+            FileName = share.FileName,
+            FilePath = share.FilePath,
+            Slug = share.Slug,
+            PublicBaseUrl = share.PublicBaseUrl,
+            Url = ShareUrlBuilder.Build(share),
+            FileSize = share.FileSize,
+            FileModifiedAtUtc = share.FileModifiedAtUtc,
+            ItemKind = share.ShareKind == InstantFileShare.Core.ShareKind.Folder ? ShareListItemKind.Folder : ShareListItemKind.File,
+            ShareKind = share.ShareKind,
+            CanBrowseFolderContents = share.CanBrowseFolderContents,
+            CanDownloadFolderAsZip = share.CanDownloadFolderAsZip,
+            PrimaryFolderEntryPoint = share.PrimaryFolderEntryPoint,
+            CreatedAtUtc = share.CreatedAtUtc,
+            ExpiresAtUtc = share.ExpiresAtUtc,
+            MaxUses = share.MaxUses,
+            UseCount = share.UseCount,
+            PublishMode = share.PublishMode,
+            State = share.State.ToString(),
+            BrokenReason = share.BrokenReason,
+            LastAccessedAtUtc = share.LastAccessedAtUtc,
+        };
+    }
+
+    public static ShareListItem FromReceiveLink(ReceiveLinkRecord receiveLink)
+    {
+        return new ShareListItem
+        {
+            Id = receiveLink.Id,
+            Token = receiveLink.Token,
+            FileName = receiveLink.TargetDisplayName,
+            FilePath = receiveLink.TargetDirectoryPath,
+            PublicBaseUrl = receiveLink.PublicBaseUrl,
+            Url = ShareUrlBuilder.BuildReceiveLink(receiveLink.PublicBaseUrl, receiveLink.Token),
+            ItemKind = ShareListItemKind.Receive,
+            CreatedAtUtc = receiveLink.CreatedAtUtc,
+            ExpiresAtUtc = receiveLink.ExpiresAtUtc,
+            MaxTotalBytes = receiveLink.MaxTotalBytes,
+            BytesReceived = receiveLink.BytesReceived,
+            PublishMode = receiveLink.PublishMode,
+            State = receiveLink.State.ToString(),
+            BrokenReason = receiveLink.BrokenReason,
+        };
+    }
+}
+
 public sealed record CloudflaredState
 {
     public string? ExecutablePath { get; init; }
@@ -118,6 +202,8 @@ public sealed record TransferSnapshot
     public string? RemoteAddress { get; init; }
     public long BytesSent { get; init; }
     public long TotalBytes { get; init; }
+    public long ProgressBytes { get; init; }
+    public long ProgressTotalBytes { get; init; }
     public DateTimeOffset StartedAtUtc { get; init; }
     public DateTimeOffset LastUpdatedAtUtc { get; init; }
     public DateTimeOffset? CompletedAtUtc { get; init; }
@@ -131,7 +217,7 @@ public sealed record RuntimeEvent(RuntimeEventType Type, DateTimeOffset Occurred
 
 public sealed record RuntimeSnapshot
 {
-    public required IReadOnlyList<ShareRecord> Shares { get; init; }
+    public required IReadOnlyList<ShareListItem> Shares { get; init; }
     public required IReadOnlyList<TransferSnapshot> Transfers { get; init; }
     public required AppSettings Settings { get; init; }
     public required CloudflaredState Cloudflared { get; init; }
@@ -141,9 +227,17 @@ public static class Defaults
 {
     public const int LocalApiPort = 46430;
     public const int PublicPort = 46431;
-    public const string PublicBindAddress = "127.0.0.1";
+    public const string PublicBindAddress = "0.0.0.0";
     public const string NamedPipeName = "InstantFileShare.Agent";
     public const long DefaultReceiveMaxTotalBytes = 10L * 1024 * 1024 * 1024;
+    public const int DefaultReceiveParallelUploadLimit = 4;
+    public const ReceiveUploadMode DefaultReceiveUploadMode = ReceiveUploadMode.MultipartChunks;
+    public const ReceiveUploadChunkSizingMode DefaultReceiveUploadChunkSizingMode = ReceiveUploadChunkSizingMode.Fixed;
+    public const long DefaultReceiveUploadChunkSizeBytes = 16L * 1024 * 1024;
+    public const long DefaultReceiveUploadMaxBodySizeBytes = 95L * 1024 * 1024;
+    public const long MinimumReceiveUploadChunkSizeBytes = 1L * 1024 * 1024;
+    public const int DefaultReceiveUploadChunkTargetSeconds = 30;
+    public const int MinimumReceiveUploadChunkTargetSeconds = 5;
     public const string RepositoryUrl = "https://github.com/lugui1998/instant-file-share-3";
 
     public static string CreateDefaultReceivePageTitle()

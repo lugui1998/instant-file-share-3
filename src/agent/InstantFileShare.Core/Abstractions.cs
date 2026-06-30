@@ -9,6 +9,7 @@ public interface IShareStore
     Task<ShareRecord?> GetShareByTokenAsync(string token, CancellationToken cancellationToken);
     Task UpdateShareAsync(ShareRecord share, CancellationToken cancellationToken);
     Task<ReceiveLinkRecord> AddReceiveLinkAsync(ReceiveLinkRecord receiveLink, CancellationToken cancellationToken);
+    Task<IReadOnlyList<ReceiveLinkRecord>> ListReceiveLinksAsync(CancellationToken cancellationToken);
     Task<ReceiveLinkRecord?> GetReceiveLinkByIdAsync(string receiveLinkId, CancellationToken cancellationToken);
     Task<ReceiveLinkRecord?> GetReceiveLinkByTokenAsync(string token, CancellationToken cancellationToken);
     Task UpdateReceiveLinkAsync(ReceiveLinkRecord receiveLink, CancellationToken cancellationToken);
@@ -38,6 +39,7 @@ public interface IShareCoordinator
     Task<(ReceiveLinkRecord ReceiveLink, string Url)> CreateReceiveLinkAsync(CreateReceiveLinkRequest request, CancellationToken cancellationToken);
     Task ReconcilePersistedSharesAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<ShareRecord>> ListSharesAsync(CancellationToken cancellationToken);
+    Task<IReadOnlyList<ShareListItem>> ListShareItemsAsync(CancellationToken cancellationToken);
     Task<ShareRecord?> ResolveDownloadAsync(string token, CancellationToken cancellationToken);
     Task<ReceiveLinkRecord?> ResolveReceiveLinkAsync(string token, CancellationToken cancellationToken);
     Task<ReceiveLinkRecord?> AddReceivedBytesAsync(string receiveLinkId, long bytesReceived, CancellationToken cancellationToken);
@@ -51,7 +53,7 @@ public interface IShareCoordinator
     Task RemoveTransferAsync(string transferId, CancellationToken cancellationToken);
     Task ClearTransferHistoryAsync(CancellationToken cancellationToken);
     Task<TransferSnapshot> StartTransferAsync(string shareId, string token, string fileName, TransferKind transferKind, string? clientSessionId, string? clientFingerprint, string? remoteAddress, long totalBytes, long bytesSent, string? requesterName, CancellationToken cancellationToken);
-    Task UpdateTransferProgressAsync(string transferId, long bytesSent, CancellationToken cancellationToken);
+    Task UpdateTransferProgressAsync(string transferId, long bytesSent, CancellationToken cancellationToken, long? progressBytes = null, long? progressTotalBytes = null);
     Task MarkTransferCompletedAsync(string transferId, string shareId, string token, string fileName, TransferKind transferKind, string? remoteAddress, long bytesSent, long totalBytes, bool paused, bool succeeded, bool countsTowardUsage, string? usageSessionKey, string? error, string? requesterName, CancellationToken cancellationToken);
     Task<CloudflaredState> GetCloudflaredStateAsync(CancellationToken cancellationToken);
     Task<CloudflaredDetectionResult> DetectCloudflaredAsync(CancellationToken cancellationToken);

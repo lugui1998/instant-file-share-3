@@ -2,9 +2,11 @@ namespace InstantFileShare.Agent;
 
 internal static class FolderZipManifestBuilder
 {
-    public static IReadOnlyList<(string FullPath, string EntryPath)> Build(FolderSharePathResolver.ResolvedEntry rootEntry)
+    public sealed record Entry(string FullPath, string EntryPath, long SizeBytes);
+
+    public static IReadOnlyList<Entry> Build(FolderSharePathResolver.ResolvedEntry rootEntry)
     {
-        var manifest = new List<(string FullPath, string EntryPath)>();
+        var manifest = new List<Entry>();
         var pending = new Stack<FolderSharePathResolver.ResolvedEntry>();
         pending.Push(rootEntry);
 
@@ -24,8 +26,9 @@ internal static class FolderZipManifestBuilder
                     continue;
                 }
 
+                var fileInfo = new FileInfo(resolvedChild.FullPath);
                 var entryPath = Path.GetRelativePath(rootEntry.FullPath, resolvedChild.FullPath).Replace('\\', '/');
-                manifest.Add((resolvedChild.FullPath, entryPath));
+                manifest.Add(new Entry(resolvedChild.FullPath, entryPath, fileInfo.Length));
             }
         }
 
