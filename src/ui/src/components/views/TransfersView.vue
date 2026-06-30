@@ -117,17 +117,21 @@ function formatCompactNumber(value: number) {
 }
 
 function formatTransferSpeed(value: number) {
-  const normalized = Math.max(0, value)
+  const normalizedBits = Math.max(0, value * 8)
 
-  if (normalized >= 1024 * 1024 * 1024) {
-    return `${formatCompactNumber(normalized / (1024 * 1024 * 1024))} GB/s`
+  if (normalizedBits >= 1024 * 1024 * 1024) {
+    return `${formatCompactNumber(normalizedBits / (1024 * 1024 * 1024))} Gb/s`
   }
 
-  if (normalized >= 1024 * 1024) {
-    return `${formatCompactNumber(normalized / (1024 * 1024))} MB/s`
+  if (normalizedBits >= 1024 * 1024) {
+    return `${formatCompactNumber(normalizedBits / (1024 * 1024))} Mb/s`
   }
 
-  return `${formatCompactNumber(normalized / 1024)} KB/s`
+  if (normalizedBits >= 1024) {
+    return `${formatCompactNumber(normalizedBits / 1024)} Kb/s`
+  }
+
+  return `${Math.round(normalizedBits)} b/s`
 }
 
 function formatProgressLabel(transfer: TransferRecord) {
@@ -149,11 +153,15 @@ function getZipProgressLabel(transfer: TransferRecord) {
     : sent
 }
 
+function isStoppedTransfer(transfer: TransferRecord) {
+  return transfer.state === 'Paused' || Boolean(transfer.isPaused) || !transfer.isActive
+}
+
 function getTransferSpeedBytesPerSecond(transfer: TransferRecord) {
   const startedAt = new Date(transfer.startedAtUtc).getTime()
   const finishedAt = transfer.completedAtUtc
     ? new Date(transfer.completedAtUtc).getTime()
-    : transfer.state === 'InProgress'
+    : transfer.state === 'InProgress' && !isStoppedTransfer(transfer)
       ? now.value
       : new Date(transfer.lastUpdatedAtUtc).getTime()
   const elapsedMs = finishedAt - startedAt
@@ -175,7 +183,11 @@ function getStatusLabel(transfer: TransferRecord) {
     return 'Crawler preview'
   }
 
-  if ('isPaused' in transfer && transfer.isPaused) {
+  if (transfer.state === 'Completed' || transfer.succeeded) {
+    return isUploadTransfer(transfer) ? 'Uploaded' : 'Completed'
+  }
+
+  if (isStoppedTransfer(transfer)) {
     return 'Stopped'
   }
 
@@ -183,19 +195,54 @@ function getStatusLabel(transfer: TransferRecord) {
     return 'In progress'
   }
 
-  if (transfer.state === 'Completed' || transfer.succeeded) {
-    return isUploadTransfer(transfer) ? 'Uploaded' : 'Completed'
-  }
-
   return 'Failed / partial'
 }
 
+function isLikelyGatewayAddress(value: string | null | undefined) {
+  if (!value) {
+    return false
+  }
+
+  const segments = value.trim().split('.').map((segment) => Number(segment))
+  if (segments.length !== 4 || segments.some((segment) => !Number.isInteger(segment) || segment < 0 || segment > 255)) {
+    return false
+  }
+
+  const [first, second, third, fourth] = segments
+  const isPrivate =
+    first === 10 ||
+    (first === 172 && second >= 16 && second <= 31) ||
+    (first === 192 && second === 168)
+
+  return isPrivate && (fourth === 1 || fourth === 254 || third === 0 && fourth === 1)
+}
+
+function isLikelyUnresolvedProxyRemote(transfer: TransferRecord) {
+  return !transfer.requesterName && isLikelyGatewayAddress(transfer.remoteAddress)
+}
+
 function getRemotePrimaryLabel(transfer: TransferRecord) {
+  if (isLikelyUnresolvedProxyRemote(transfer)) {
+    return 'Router/proxy'
+  }
+
   if (isUploadTransfer(transfer)) {
     return transfer.remoteAddress ?? 'Uploader'
   }
 
   return transfer.requesterName ?? transfer.remoteAddress ?? 'n/a'
+}
+
+function getRemoteSecondaryLabel(transfer: TransferRecord) {
+  if (isLikelyUnresolvedProxyRemote(transfer)) {
+    return `${transfer.remoteAddress} reported by TCP peer`
+  }
+
+  if (transfer.requesterName && transfer.remoteAddress) {
+    return transfer.remoteAddress
+  }
+
+  return null
 }
 
 function isCrawlerTransfer(transfer: TransferRecord) {
@@ -258,8 +305,14 @@ watch([filteredTransfers, () => props.itemsPerPage], () => {
             <td>{{ transfer.fileName ?? 'Unknown file' }}</td>
             <td>
               <div class="status-copy">
-                <strong>{{ getRemotePrimaryLabel(transfer) }}</strong>
-                <span v-if="transfer.requesterName && transfer.remoteAddress">{{ transfer.remoteAddress }}</span>
+                <div class="progress-inline-label">
+                  <strong>{{ getRemotePrimaryLabel(transfer) }}</strong>
+                  <HelpTooltip
+                    v-if="isLikelyUnresolvedProxyRemote(transfer)"
+                    text="The request reached IFS through a likely router or proxy address without a forwarded client-IP header. IFS cannot recover the original client IP from that HTTP request."
+                  />
+                </div>
+                <span v-if="getRemoteSecondaryLabel(transfer)">{{ getRemoteSecondaryLabel(transfer) }}</span>
               </div>
             </td>
             <td class="progress-cell">

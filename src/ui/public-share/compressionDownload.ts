@@ -71,6 +71,20 @@ export function formatTransferBytes(bytes: number): string {
   return unitIndex === 0 ? `${size.toFixed(0)} ${units[unitIndex]}` : `${size.toFixed(1)} ${units[unitIndex]}`
 }
 
+export function formatTransferBitsPerSecond(bytesPerSecond: number): string {
+  const safeBits = Number.isFinite(bytesPerSecond) && bytesPerSecond > 0 ? bytesPerSecond * 8 : 0
+  const units = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s']
+  let size = safeBits
+  let unitIndex = 0
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024
+    unitIndex += 1
+  }
+
+  return unitIndex === 0 ? `${size.toFixed(0)} ${units[unitIndex]}` : `${size.toFixed(1).replace(/\.0$/, '')} ${units[unitIndex]}`
+}
+
 export function createManagedCompressionProbeState(): ManagedCompressionProbeState {
   return {
     gzipDisabled: false,

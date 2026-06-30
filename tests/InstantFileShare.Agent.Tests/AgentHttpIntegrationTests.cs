@@ -376,6 +376,7 @@ public sealed class AgentHttpIntegrationTests
         });
 
         await File.WriteAllTextAsync(Path.Combine(host.FilesDirectory, "team-files", "docs", "new-file.txt"), "new");
+        await File.WriteAllTextAsync(Path.Combine(host.FilesDirectory, "team-files", "docs", "large.bin.downloadpart"), "partial");
 
         using var response = await host.PublicClient.GetAsync("/s/folder-token/docs?ifs=folder-list");
         var folder = await response.Content.ReadFromJsonAsync<PublicShareFolderModel>(JsonOptions);
@@ -386,6 +387,7 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal("docs", folder.RelativePath);
         Assert.Contains(folder.Entries, entry => entry.Name == "guide.txt");
         Assert.Contains(folder.Entries, entry => entry.Name == "new-file.txt");
+        Assert.DoesNotContain(folder.Entries, entry => entry.Name == "large.bin.downloadpart");
     }
 
     [Fact]
@@ -843,6 +845,63 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
+    public async Task ReceiveUpload_RetriesIncompleteChunkFromConfirmedBytes()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var interruptedChunkForm = CreateChunkUploadForm(
+            uploadId: "upload-1",
+            relativePath: "large.bin",
+            totalBytes: 10,
+            chunkIndex: 0,
+            chunkCount: 1,
+            chunkStart: 0,
+            chunkValue: "hello",
+            declaredChunkSize: 10);
+        using var interruptedResponse = await host.PublicClient.PostAsync("/r/receive-token", interruptedChunkForm);
+        var interruptedBody = await interruptedResponse.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.BadRequest, interruptedResponse.StatusCode);
+        Assert.Contains("The upload did not complete.", interruptedBody);
+        Assert.True(File.Exists(Path.Combine(host.FilesDirectory, "drop", "large.bin.downloadpart")));
+
+        using var interruptedTransfersResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var interruptedTransfers = await interruptedTransfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+        var activeTransfer = Assert.Single(interruptedTransfers!);
+        Assert.Equal(TransferState.InProgress, activeTransfer.State);
+        Assert.Equal(5, activeTransfer.ProgressBytes);
+
+        using var retryChunkForm = CreateChunkUploadForm(
+            uploadId: "upload-1",
+            relativePath: "large.bin",
+            totalBytes: 10,
+            chunkIndex: 0,
+            chunkCount: 1,
+            chunkStart: 0,
+            chunkValue: "helloworld",
+            declaredChunkSize: 10);
+        using var retryResponse = await host.PublicClient.PostAsync("/r/receive-token", retryChunkForm);
+        var retryBody = await retryResponse.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, retryResponse.StatusCode);
+        Assert.Equal("helloworld", await File.ReadAllTextAsync(Path.Combine(host.FilesDirectory, "drop", "large.bin")));
+        AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
+        Assert.Contains("\"uploadedCount\":1", retryBody);
+
+        using var completedTransfersResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var completedTransfers = await completedTransfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+        var completedTransfer = Assert.Single(completedTransfers!);
+        Assert.Equal(activeTransfer.Id, completedTransfer.Id);
+        Assert.Equal(TransferState.Completed, completedTransfer.State);
+        Assert.Equal(10, completedTransfer.ProgressBytes);
+    }
+
+    [Fact]
     public async Task ReceiveUpload_AssemblesBinaryChunkedFileAcrossRequests()
     {
         await using var host = await AgentTestHost.StartAsync(async context =>
@@ -1157,6 +1216,7 @@ public sealed class AgentHttpIntegrationTests
         using var socket = new ClientWebSocket();
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{host.Settings.ManualPublicPort}/r/receive-token/events"), timeout.Token);
+        await SendUploadProgressSubscriptionAsync(socket, "upload-1", timeout.Token);
 
         var coordinator = host.App.Services.GetRequiredService<IShareCoordinator>();
         var transfer = await coordinator.StartTransferAsync(
@@ -1177,7 +1237,8 @@ public sealed class AgentHttpIntegrationTests
 
         Assert.Equal("upload-1", startedRoot.GetProperty("uploadId").GetString());
         Assert.Equal(0, startedRoot.GetProperty("receivedBytes").GetInt64());
-        Assert.Equal(Defaults.MinimumReceiveUploadChunkSizeBytes, startedRoot.GetProperty("recommendedChunkSizeBytes").GetInt64());
+        var startedRecommendedChunkSize = startedRoot.GetProperty("recommendedChunkSizeBytes").GetInt64();
+        Assert.InRange(startedRecommendedChunkSize, Defaults.MinimumReceiveUploadChunkSizeBytes, 8L * 1024 * 1024);
 
         await coordinator.UpdateTransferProgressAsync(
             transfer.Id,
@@ -1193,7 +1254,8 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal(firstProgressBytes, root.GetProperty("receivedBytes").GetInt64());
         Assert.Equal(totalBytes, root.GetProperty("totalBytes").GetInt64());
         Assert.Equal("InProgress", root.GetProperty("state").GetString());
-        Assert.Equal(Defaults.MinimumReceiveUploadChunkSizeBytes * 2, root.GetProperty("recommendedChunkSizeBytes").GetInt64());
+        var firstRecommendedChunkSize = root.GetProperty("recommendedChunkSizeBytes").GetInt64();
+        Assert.InRange(firstRecommendedChunkSize, startedRecommendedChunkSize, 8L * 1024 * 1024);
 
         await Task.Delay(TimeSpan.FromMilliseconds(50), timeout.Token);
         await coordinator.UpdateTransferProgressAsync(
@@ -1207,7 +1269,59 @@ public sealed class AgentHttpIntegrationTests
         var secondRoot = secondDocument.RootElement;
 
         Assert.Equal(secondProgressBytes, secondRoot.GetProperty("receivedBytes").GetInt64());
-        Assert.Equal(Defaults.MinimumReceiveUploadChunkSizeBytes * 4, secondRoot.GetProperty("recommendedChunkSizeBytes").GetInt64());
+        Assert.InRange(secondRoot.GetProperty("recommendedChunkSizeBytes").GetInt64(), firstRecommendedChunkSize, 8L * 1024 * 1024);
+    }
+
+    [Fact]
+    public async Task ReceiveUploadEvents_DoesNotStreamProgressForUnsubscribedUploads()
+    {
+        const long progressBytes = 1L * 1024 * 1024;
+        const long totalBytes = 2L * 1024 * 1024;
+        ReceiveLinkRecord? receiveLink = null;
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            receiveLink = context.CreateReceiveLink("receive-token", dropPath);
+            await context.Store.AddReceiveLinkAsync(receiveLink, CancellationToken.None);
+        });
+
+        using var subscribedSocket = new ClientWebSocket();
+        using var otherSocket = new ClientWebSocket();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var eventsUri = new Uri($"ws://127.0.0.1:{host.Settings.ManualPublicPort}/r/receive-token/events");
+        await subscribedSocket.ConnectAsync(eventsUri, timeout.Token);
+        await otherSocket.ConnectAsync(eventsUri, timeout.Token);
+        await SendUploadProgressSubscriptionAsync(subscribedSocket, "upload-1", timeout.Token);
+        await SendUploadProgressSubscriptionAsync(otherSocket, "upload-2", timeout.Token);
+
+        await Task.Delay(TimeSpan.FromMilliseconds(50), timeout.Token);
+
+        var coordinator = host.App.Services.GetRequiredService<IShareCoordinator>();
+        var transfer = await coordinator.StartTransferAsync(
+            receiveLink!.Id,
+            receiveLink.Token,
+            "incoming.bin",
+            TransferKind.FileUpload,
+            clientSessionId: "upload-1",
+            clientFingerprint: null,
+            remoteAddress: "127.0.0.1",
+            totalBytes: totalBytes,
+            bytesSent: 0,
+            requesterName: null,
+            CancellationToken.None);
+
+        await coordinator.UpdateTransferProgressAsync(
+            transfer.Id,
+            bytesSent: progressBytes,
+            CancellationToken.None,
+            progressBytes: progressBytes,
+            progressTotalBytes: totalBytes);
+
+        using var document = await ReceiveUploadProgressDocumentAsync(subscribedSocket, "upload-1", progressBytes, timeout.Token);
+        Assert.Equal("upload-1", document.RootElement.GetProperty("uploadId").GetString());
+
+        await AssertNoWebSocketMessageAsync(otherSocket, TimeSpan.FromMilliseconds(250));
     }
 
     [Fact]
@@ -1366,7 +1480,8 @@ public sealed class AgentHttpIntegrationTests
         int chunkIndex,
         int chunkCount,
         long chunkStart,
-        string chunkValue)
+        string chunkValue,
+        long? declaredChunkSize = null)
     {
         var form = new MultipartFormDataContent();
         form.Add(new StringContent(relativePath), "relativePaths");
@@ -1375,7 +1490,7 @@ public sealed class AgentHttpIntegrationTests
         form.Add(new StringContent(chunkIndex.ToString()), "chunkIndex");
         form.Add(new StringContent(chunkCount.ToString()), "chunkCount");
         form.Add(new StringContent(chunkStart.ToString()), "chunkStart");
-        form.Add(new StringContent(System.Text.Encoding.UTF8.GetByteCount(chunkValue).ToString()), "chunkSize");
+        form.Add(new StringContent((declaredChunkSize ?? System.Text.Encoding.UTF8.GetByteCount(chunkValue)).ToString()), "chunkSize");
         form.Add(CreateFileContent(chunkValue), "files", Path.GetFileName(relativePath));
         return form;
     }
@@ -1522,6 +1637,37 @@ public sealed class AgentHttpIntegrationTests
 
             document.Dispose();
         }
+    }
+
+    private static Task SendUploadProgressSubscriptionAsync(
+        ClientWebSocket socket,
+        string uploadId,
+        CancellationToken cancellationToken)
+    {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            type = "subscribe",
+            uploadIds = new[] { uploadId },
+        }, JsonOptions);
+        return socket.SendAsync(payload, WebSocketMessageType.Text, true, cancellationToken);
+    }
+
+    private static async Task AssertNoWebSocketMessageAsync(ClientWebSocket socket, TimeSpan waitTime)
+    {
+        using var timeout = new CancellationTokenSource(waitTime);
+        var buffer = new byte[4096];
+        var receivedMessage = false;
+
+        try
+        {
+            await socket.ReceiveAsync(buffer, timeout.Token);
+            receivedMessage = true;
+        }
+        catch (OperationCanceledException)
+        {
+        }
+
+        Assert.False(receivedMessage, "The websocket received an upload progress event for an unsubscribed upload ID.");
     }
 
     private static void AssertNoPartialUploads(string directoryPath)

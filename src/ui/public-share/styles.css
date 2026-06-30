@@ -343,6 +343,24 @@ a {
   letter-spacing: 0.12em;
 }
 
+.folder-download-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid rgba(255, 181, 125, 0.24);
+  border-radius: 999px;
+  color: var(--accent);
+}
+
+.folder-download-button svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+}
+
 .empty-state {
   color: var(--muted);
 }

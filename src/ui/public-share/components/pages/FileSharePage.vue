@@ -15,6 +15,7 @@ import {
   createManagedCompressionProbeState,
   createRawCompressionSample,
   estimateBlobFallbackMemoryCost,
+  formatTransferBitsPerSecond,
   formatTransferBytes,
   readManagedGzipResponseAsBuffer,
   recordManagedCompressionSample,
@@ -45,6 +46,10 @@ const capabilities = ref({
   streamingSave: false,
   webCrypto: false,
 })
+
+const defaultManagedDownloadRetryLimit = 8
+const baseManagedDownloadRetryDelayMs = 1000
+const maxManagedDownloadRetryDelayMs = 30000
 
 const managedDownload = computed(() => props.file.managedDownload ?? null)
 const maxManagedParallelChunks = computed(() => Math.max(1, managedDownload.value?.maxParallelChunks ?? 4))
@@ -92,9 +97,9 @@ const compressionSpeedLabel = computed(() => {
   }
 
   const raw = compressionProbe.value.lastRawSample
-  const gzipLabel = `${formatTransferBytes(gzip.effectiveBytesPerSecond)}/s effective`
+  const gzipLabel = `${formatTransferBitsPerSecond(gzip.effectiveBytesPerSecond)} effective`
   return raw
-    ? `${gzipLabel}, raw baseline ${formatTransferBytes(raw.effectiveBytesPerSecond)}/s`
+    ? `${gzipLabel}, raw baseline ${formatTransferBitsPerSecond(raw.effectiveBytesPerSecond)}`
     : gzipLabel
 })
 const compressionDecodeLabel = computed(() => {
@@ -179,12 +184,7 @@ async function startManagedDownload() {
   state.value = reduceManagedDownloadState(state.value, { type: 'start' })
 
   try {
-    const manifestResponse = await fetch(managedDownload.value.manifestUrl, { cache: 'no-store' })
-    if (!manifestResponse.ok) {
-      throw new Error(`Download plan failed with HTTP ${manifestResponse.status}.`)
-    }
-
-    const nextPlan = await manifestResponse.json() as BrowserManagedDownloadPlan
+    const nextPlan = await fetchManagedDownloadPlanWithRetry(managedDownload.value.manifestUrl)
     plan.value = nextPlan
     state.value = reduceManagedDownloadState(state.value, { type: 'plan-ready', totalBytes: nextPlan.fileSizeBytes })
     const useBlobAssembly = canUseBlobManagedDownload(nextPlan.fileSizeBytes, managedDownload.value.maxMemoryBytes)
@@ -360,19 +360,24 @@ async function streamDownloadToDisk(downloadPlan: BrowserManagedDownloadPlan) {
 }
 
 async function fetchChunkWithRetry(downloadPlan: BrowserManagedDownloadPlan, chunk: BrowserManagedDownloadChunk) {
-  for (let attempt = 0; attempt <= downloadPlan.maxRetriesPerChunk; attempt++) {
+  const retryLimit = resolveManagedDownloadRetryLimit(downloadPlan)
+  for (let attempt = 0; attempt <= retryLimit; attempt++) {
     if (attempt > 0) {
       state.value = reduceManagedDownloadState(state.value, {
         type: 'chunk-retry',
         chunkIndex: chunk.index,
         retryCount: attempt,
       })
+      await waitForManagedDownloadRetryDelay(attempt - 1)
+      if (isPaused.value) {
+        throw new DOMException('Download paused.', 'AbortError')
+      }
     }
 
     try {
       return await fetchChunk(downloadPlan, chunk)
     } catch (error) {
-      if (isPaused.value || attempt >= downloadPlan.maxRetriesPerChunk) {
+      if (isPaused.value || attempt >= retryLimit || !isManagedDownloadRetryableError(error)) {
         throw error
       }
     }
@@ -387,19 +392,24 @@ async function fetchChunk(downloadPlan: BrowserManagedDownloadPlan, chunk: Brows
 }
 
 async function fetchVerifiedChunkBufferWithRetry(downloadPlan: BrowserManagedDownloadPlan, chunk: BrowserManagedDownloadChunk) {
-  for (let attempt = 0; attempt <= downloadPlan.maxRetriesPerChunk; attempt++) {
+  const retryLimit = resolveManagedDownloadRetryLimit(downloadPlan)
+  for (let attempt = 0; attempt <= retryLimit; attempt++) {
     if (attempt > 0) {
       state.value = reduceManagedDownloadState(state.value, {
         type: 'chunk-retry',
         chunkIndex: chunk.index,
         retryCount: attempt,
       })
+      await waitForManagedDownloadRetryDelay(attempt - 1)
+      if (isPaused.value) {
+        throw new DOMException('Download paused.', 'AbortError')
+      }
     }
 
     try {
       return await fetchVerifiedChunkBuffer(downloadPlan, chunk)
     } catch (error) {
-      if (isPaused.value || attempt >= downloadPlan.maxRetriesPerChunk) {
+      if (isPaused.value || attempt >= retryLimit || !isManagedDownloadRetryableError(error)) {
         throw error
       }
     }
@@ -501,6 +511,61 @@ async function fetchCompressedVerifiedChunkBuffer(downloadPlan: BrowserManagedDo
 
 function throwChunkIntegrityError(chunkIndex: number): never {
   throw new Error(`Chunk ${chunkIndex} failed integrity verification. The shared file may have changed after the download plan was created. Restart the download or use Direct download.`)
+}
+
+async function fetchManagedDownloadPlanWithRetry(manifestUrl: string) {
+  for (let attempt = 0; attempt <= defaultManagedDownloadRetryLimit; attempt += 1) {
+    if (attempt > 0) {
+      await waitForManagedDownloadRetryDelay(attempt - 1)
+    }
+
+    try {
+      const manifestResponse = await fetch(manifestUrl, { cache: 'no-store' })
+      if (!manifestResponse.ok) {
+        throw new Error(`Download plan failed with HTTP ${manifestResponse.status}.`)
+      }
+
+      return await manifestResponse.json() as BrowserManagedDownloadPlan
+    } catch (error) {
+      if (attempt >= defaultManagedDownloadRetryLimit || !isManagedDownloadRetryableError(error)) {
+        throw error
+      }
+    }
+  }
+
+  throw new Error('Download plan failed.')
+}
+
+function resolveManagedDownloadRetryLimit(downloadPlan: BrowserManagedDownloadPlan) {
+  return Math.max(defaultManagedDownloadRetryLimit, Math.max(0, downloadPlan.maxRetriesPerChunk))
+}
+
+function waitForManagedDownloadRetryDelay(attempt: number) {
+  const delayMs = Math.min(maxManagedDownloadRetryDelayMs, baseManagedDownloadRetryDelayMs * 2 ** Math.min(attempt, 5))
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, delayMs)
+  })
+}
+
+function isManagedDownloadRetryableError(error: unknown) {
+  if (error instanceof DOMException && error.name === 'AbortError') {
+    return false
+  }
+
+  const message = error instanceof Error ? error.message : ''
+  if (message.includes('failed integrity verification') ||
+    message.includes('shared file may have changed') ||
+    message.includes('HTTP 400') ||
+    message.includes('HTTP 401') ||
+    message.includes('HTTP 403') ||
+    message.includes('HTTP 404') ||
+    message.includes('HTTP 409') ||
+    message.includes('HTTP 410') ||
+    message.includes('HTTP 416')) {
+    return false
+  }
+
+  return true
 }
 
 async function sha256Hex(buffer: ArrayBuffer) {

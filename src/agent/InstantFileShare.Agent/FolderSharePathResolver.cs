@@ -73,7 +73,7 @@ internal static class FolderSharePathResolver
 
         foreach (var child in directoryInfo.EnumerateFileSystemInfos())
         {
-            if (!child.Exists || HasReparsePoint(child.Attributes))
+            if (!child.Exists || HasReparsePoint(child.Attributes) || IsPartialDownloadFile(child))
             {
                 continue;
             }
@@ -232,7 +232,7 @@ internal static class FolderSharePathResolver
     {
         foreach (var child in directoryInfo.EnumerateFileSystemInfos())
         {
-            if (!child.Exists || HasReparsePoint(child.Attributes))
+            if (!child.Exists || HasReparsePoint(child.Attributes) || IsPartialDownloadFile(child))
             {
                 continue;
             }
@@ -255,4 +255,9 @@ internal static class FolderSharePathResolver
     }
 
     private static bool HasReparsePoint(FileAttributes attributes) => attributes.HasFlag(FileAttributes.ReparsePoint);
+
+    private static bool IsPartialDownloadFile(FileSystemInfo entry)
+    {
+        return entry is FileInfo && entry.Name.EndsWith(".downloadpart", StringComparison.OrdinalIgnoreCase);
+    }
 }

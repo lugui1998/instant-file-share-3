@@ -92,6 +92,7 @@ describe('SharesView', () => {
     const wrapper = mountSharesView([receiveShare])
 
     expect(wrapper.text()).toContain('Receive link')
+    expect(wrapper.findAll('tbody tr:first-child td')[1].text()).toBe('--')
 
     await wrapper.get('button[aria-label="Copy link"]').trigger('click')
     await wrapper.get('button[aria-label="Show in Explorer"]').trigger('click')

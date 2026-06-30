@@ -87,7 +87,10 @@ watch([activeShares, () => props.itemsPerPage], () => {
                 <span>{{ getShareTypeLabel(share) }}</span>
               </div>
             </td>
-            <td>{{ share.useCount }}<span v-if="share.maxUses"> / {{ share.maxUses }}</span></td>
+            <td>
+              <template v-if="share.itemKind === 'Receive'">--</template>
+              <template v-else>{{ share.useCount }}<span v-if="share.maxUses"> / {{ share.maxUses }}</span></template>
+            </td>
             <td>{{ formatTimestamp(share.createdAtUtc) }}</td>
             <td class="actions-cell">
               <button
