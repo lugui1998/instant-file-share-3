@@ -1,0 +1,83 @@
+import { describe, expect, it, vi } from 'vitest'
+import {
+  downloadFileWithCompressionFallback,
+  estimateBlobFallbackMemoryCost,
+  supportsGzipDecompression,
+  supportsStreamingFileSave,
+} from './compressionDownload'
+import type { PublicShareFileModel } from './types'
+
+class IdentityDecompressionStream {
+  readonly readable: ReadableStream<Uint8Array>
+  readonly writable: WritableStream<Uint8Array>
+
+  constructor(_format: CompressionFormat) {
+    const stream = new TransformStream<Uint8Array, Uint8Array>()
+    this.readable = stream.readable
+    this.writable = stream.writable
+  }
+}
+
+describe('compressionDownload', () => {
+  it('detects browser decompression and streaming save support', () => {
+    expect(supportsGzipDecompression({ DecompressionStream: IdentityDecompressionStream })).toBe(true)
+    expect(supportsGzipDecompression({})).toBe(false)
+    expect(supportsStreamingFileSave({ showSaveFilePicker: vi.fn() })).toBe(true)
+    expect(supportsStreamingFileSave({})).toBe(false)
+  })
+
+  it('falls back to the raw download when decompression is unsupported', async () => {
+    const assign = vi.fn()
+
+    const result = await downloadFileWithCompressionFallback(createFile(), {
+      location: { assign },
+    })
+
+    expect(result.mode).toBe('raw-fallback')
+    expect(assign).toHaveBeenCalledWith('https://share.example.test/s/token/report.csv')
+  })
+
+  it('streams decoded bytes to the File System Access API when available', async () => {
+    const chunks: number[] = []
+    const writable = new WritableStream<Uint8Array>({
+      write(chunk) {
+        chunks.push(...chunk)
+      },
+    })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(Uint8Array.from([65, 66])))
+
+    const result = await downloadFileWithCompressionFallback(createFile(), {
+      DecompressionStream: IdentityDecompressionStream,
+      fetch: fetchMock,
+      showSaveFilePicker: vi.fn().mockResolvedValue({
+        createWritable: vi.fn().mockResolvedValue(writable),
+      }),
+      location: { assign: vi.fn() },
+    })
+
+    expect(result.mode).toBe('compressed-stream')
+    expect(fetchMock).toHaveBeenCalledWith('https://share.example.test/s/token/report.csv?compression=gzip')
+    expect(chunks).toEqual([65, 66])
+  })
+
+  it('records Blob fallback memory as decoded bytes buffered', () => {
+    expect(estimateBlobFallbackMemoryCost(4096)).toEqual({
+      decodedBytesBuffered: 4096,
+      minimumTransientBytes: 4096,
+    })
+  })
+})
+
+function createFile(): PublicShareFileModel {
+  return {
+    fileName: 'report.csv',
+    displaySize: '4.0 KB',
+    sizeBytes: 4096,
+    preferInline: false,
+    canUseBrowserCompression: true,
+    rawDownloadUrl: 'https://share.example.test/s/token/report.csv',
+    compressedDownloadUrl: 'https://share.example.test/s/token/report.csv?compression=gzip',
+    actionVerb: 'Download',
+    actionLabel: 'Open this link to download report.csv.',
+  }
+}

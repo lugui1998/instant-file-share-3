@@ -17,7 +17,11 @@ internal sealed record PublicSharePageModel(
 internal sealed record PublicShareFileModel(
     string FileName,
     string DisplaySize,
+    long SizeBytes,
     bool PreferInline,
+    bool CanUseBrowserCompression,
+    string RawDownloadUrl,
+    string? CompressedDownloadUrl,
     string ActionVerb,
     string ActionLabel);
 

@@ -22,7 +22,11 @@ export type PublicSharePageModel = {
 export type PublicShareFileModel = {
   fileName: string
   displaySize: string
+  sizeBytes: number
   preferInline: boolean
+  canUseBrowserCompression: boolean
+  rawDownloadUrl: string
+  compressedDownloadUrl?: string | null
   actionVerb: string
   actionLabel: string
 }
