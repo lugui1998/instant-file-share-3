@@ -259,11 +259,24 @@ a {
   margin: 0;
   line-height: 1.5;
   font-size: 0.92rem;
-}
-
-.download-error {
   color: #ffb57d;
   font-weight: 700;
+}
+
+.download-actions button {
+  cursor: pointer;
+}
+
+.download-actions button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.download-note {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .info-grid {

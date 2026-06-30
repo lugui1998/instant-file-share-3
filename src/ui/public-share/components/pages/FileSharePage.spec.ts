@@ -92,7 +92,11 @@ function createFile(): PublicShareFileModel {
   return {
     fileName: 'large.bin',
     displaySize: '513 MB',
+    sizeBytes: blobManagedDownloadMaxBytes + 1,
     preferInline: false,
+    canUseBrowserCompression: false,
+    rawDownloadUrl: 'https://public.example/s/file-token?download=raw',
+    compressedDownloadUrl: null,
     actionVerb: 'Download',
     actionLabel: 'Open this link to download large.bin.',
     managedDownload: {

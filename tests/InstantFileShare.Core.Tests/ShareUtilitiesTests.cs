@@ -117,4 +117,28 @@ public sealed class ShareUtilitiesTests
         Assert.False(videoMetadata.PreferInline);
         Assert.False(pdfMetadata.PreferInline);
     }
+
+    [Theory]
+    [InlineData("report.csv")]
+    [InlineData("README")]
+    [InlineData("export.json")]
+    public void IsBrowserCompressionCandidate_ShouldAllowLikelyCompressibleAttachments(string fileName)
+    {
+        var metadata = ShareFileResponsePolicy.Resolve(fileName);
+
+        Assert.True(ShareFileResponsePolicy.IsBrowserCompressionCandidate(fileName, metadata));
+    }
+
+    [Theory]
+    [InlineData("photo.jpg")]
+    [InlineData("clip.mp4")]
+    [InlineData("report.pdf")]
+    [InlineData("archive.zip")]
+    [InlineData("workbook.xlsx")]
+    public void IsBrowserCompressionCandidate_ShouldSkipInlineAndAlreadyCompressedFiles(string fileName)
+    {
+        var metadata = ShareFileResponsePolicy.Resolve(fileName);
+
+        Assert.False(ShareFileResponsePolicy.IsBrowserCompressionCandidate(fileName, metadata));
+    }
 }

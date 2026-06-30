@@ -21,6 +21,7 @@ internal sealed class PublicSharePageModelFactory
             : $"Open this link to download {responseFileName}.";
         var currentUrl = BuildCurrentUrl(context);
         var rawDownloadUrl = AppendQueryValue(currentUrl, "download", "raw");
+        var canUseBrowserCompression = ShareFileResponsePolicy.IsBrowserCompressionCandidate(responseFileName, fileResponseMetadata);
 
         return new PublicSharePageModel(
             Kind: "file",
@@ -34,7 +35,11 @@ internal sealed class PublicSharePageModelFactory
             File: new PublicShareFileModel(
                 responseFileName,
                 FormatFileSize(file.Length),
+                file.Length,
                 fileResponseMetadata.PreferInline,
+                canUseBrowserCompression,
+                rawDownloadUrl,
+                canUseBrowserCompression ? AppendQueryValue(rawDownloadUrl, "compression", "gzip") : null,
                 actionVerb,
                 actionLabel,
                 fileResponseMetadata.PreferInline
