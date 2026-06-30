@@ -859,7 +859,7 @@ describe('ReceiveSharePage', () => {
     expect(wrapper.find('.success-icon').exists()).toBe(true)
   })
 
-  it('retries auto uploads from the last host-confirmed byte boundary', async () => {
+  it('retries auto uploads from the last host-confirmed byte boundary and keeps fallback metadata aligned', async () => {
     vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
     vi.stubGlobal('WebSocket', FakeWebSocket)
     const customChunkSizeBytes = 4 * 1024 * 1024
@@ -911,6 +911,71 @@ describe('ReceiveSharePage', () => {
       chunkStart: confirmedBytes,
       chunkSize: customChunkSizeBytes - confirmedBytes + 7,
     })
+
+    uploadSocket.emitError()
+    await vi.dynamicImportSettled()
+
+    expect(FakeXMLHttpRequest.instances).toHaveLength(2)
+    expect(FakeXMLHttpRequest.instances[1].sentBody).toBeInstanceOf(FormData)
+    expect(getFormValue(FakeXMLHttpRequest.instances[1], 'uploadId')).toBe(uploadId)
+    expect(getFormValue(FakeXMLHttpRequest.instances[1], 'chunkIndex')).toBe('1')
+    expect(getFormValue(FakeXMLHttpRequest.instances[1], 'chunkCount')).toBe('2')
+    expect(getFormValue(FakeXMLHttpRequest.instances[1], 'chunkStart')).toBe(confirmedBytes.toString())
+    expect(getFormValue(FakeXMLHttpRequest.instances[1], 'chunkSize')).toBe((customChunkSizeBytes - confirmedBytes + 7).toString())
+
+    FakeXMLHttpRequest.instances[1].response = createUploadResponse()
+    FakeXMLHttpRequest.instances[1].emit('load')
+    await vi.dynamicImportSettled()
+
+    expect(wrapper.find('.success-icon').exists()).toBe(true)
+  })
+
+  it('completes auto uploads when host-confirmed progress reaches the end after a transport failure', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const customChunkSizeBytes = 4 * 1024 * 1024
+    const wrapper = mount(ReceiveSharePage, {
+      props: {
+        page: createPage({
+          uploadEventsUrl: '/r/token/events',
+          uploadMode: 'Auto',
+          uploadChunkSizeBytes: customChunkSizeBytes,
+        }),
+        receive: createReceive({
+          uploadEventsUrl: '/r/token/events',
+          uploadMode: 'Auto',
+          uploadChunkSizeBytes: customChunkSizeBytes,
+        }),
+      },
+    })
+    const input = wrapper.find('input[type="file"]')
+
+    Object.defineProperty(input.element, 'files', {
+      configurable: true,
+      value: [createSizedFile('confirmed.bin', 'confirmed.bin', customChunkSizeBytes)],
+    })
+    await input.trigger('change')
+
+    const eventsSocket = FakeWebSocket.instances[0]
+    const uploadId = getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Upload-Id')
+    eventsSocket.emitMessage({
+      uploadId,
+      receivedBytes: customChunkSizeBytes,
+      totalBytes: customChunkSizeBytes,
+      state: 'Completed',
+      succeeded: true,
+      error: null,
+    })
+    await vi.dynamicImportSettled()
+
+    FakeXMLHttpRequest.instances[0].emit('error')
+    await vi.dynamicImportSettled()
+
+    expect(FakeXMLHttpRequest.instances).toHaveLength(2)
+    expect(FakeXMLHttpRequest.instances[1].url).toContain('ifs=batch-complete')
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    expect(wrapper.text()).not.toContain('Upload failed')
+    expect(wrapper.find('.success-icon').exists()).toBe(true)
   })
 
   it('reports large-file progress from total uploaded bytes across chunks', async () => {
