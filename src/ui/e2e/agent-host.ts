@@ -47,7 +47,14 @@ export async function startAgentE2EHost(): Promise<AgentE2EHost> {
   const stderr: string[] = []
   child.stderr.on('data', (chunk) => stderr.push(chunk.toString()))
 
-  const info = await waitForReadyLine(child, stderr)
+  let info: AgentE2EHostInfo
+  try {
+    info = await waitForReadyLine(child, stderr)
+  } catch (error) {
+    await stopHost(child)
+    throw error
+  }
+
   return {
     ...info,
     stop: async () => {
@@ -73,6 +80,11 @@ async function waitForReadyLine(
       reject(new Error(`E2E host exited before readiness. code=${code} signal=${signal}\n${stderr.join('')}`))
     })
 
+    child.once('error', (error) => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+
     child.stdout.on('data', (chunk) => {
       stdout += chunk.toString()
       const lines = stdout.split(/\r?\n/)
@@ -84,11 +96,52 @@ async function waitForReadyLine(
           continue
         }
 
+        const readyInfo = parseReadyLine(trimmed)
+        if (readyInfo === null) {
+          continue
+        }
+
         clearTimeout(timeout)
-        resolve(JSON.parse(trimmed) as AgentE2EHostInfo)
+        resolve(readyInfo)
       }
     })
   })
+}
+
+export function parseReadyLine(line: string): AgentE2EHostInfo | null {
+  const trimmed = line.trim()
+  if (!trimmed.startsWith('{')) {
+    return null
+  }
+
+  let payload: unknown
+  try {
+    payload = JSON.parse(trimmed)
+  } catch {
+    return null
+  }
+
+  if (!isRecord(payload)) {
+    return null
+  }
+
+  const readyInfo = {
+    publicBaseUrl: payload.publicBaseUrl,
+    localBaseUrl: payload.localBaseUrl,
+    receiveUrl: payload.receiveUrl,
+    downloadUrl: payload.downloadUrl,
+    rootPath: payload.rootPath,
+    receiveDirectory: payload.receiveDirectory,
+    downloadFilePath: payload.downloadFilePath,
+  }
+
+  return Object.values(readyInfo).every((value) => typeof value === 'string')
+    ? (readyInfo as AgentE2EHostInfo)
+    : null
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 async function cleanupHostRoot(rootPath: string): Promise<void> {
