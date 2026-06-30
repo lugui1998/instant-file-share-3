@@ -186,6 +186,29 @@ a {
   line-height: 1.6;
 }
 
+.download-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.download-actions button {
+  cursor: pointer;
+}
+
+.download-actions button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.download-note {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

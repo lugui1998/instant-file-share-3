@@ -16,20 +16,26 @@ internal sealed class PublicSharePageModelFactory
         var actionLabel = fileResponseMetadata.PreferInline
             ? $"Open this link to view {responseFileName} in your browser or download it."
             : $"Open this link to download {responseFileName}.";
+        var rawDownloadUrl = BuildCurrentUrl(context);
+        var canUseBrowserCompression = ShareFileResponsePolicy.IsBrowserCompressionCandidate(responseFileName, fileResponseMetadata);
 
         return new PublicSharePageModel(
             Kind: "file",
             Title: responseFileName,
             Description: description,
-            CanonicalUrl: BuildCurrentUrl(context),
+            CanonicalUrl: rawDownloadUrl,
             SiteName: "Instant File Share",
             RepositoryUrl: Defaults.RepositoryUrl,
             PrimaryActionLabel: $"{actionVerb} file",
-            PrimaryActionUrl: BuildCurrentUrl(context),
+            PrimaryActionUrl: rawDownloadUrl,
             File: new PublicShareFileModel(
                 responseFileName,
                 FormatFileSize(file.Length),
+                file.Length,
                 fileResponseMetadata.PreferInline,
+                canUseBrowserCompression,
+                rawDownloadUrl,
+                canUseBrowserCompression ? BuildCurrentUrlWithQuery(context, "compression", "gzip") : null,
                 actionVerb,
                 actionLabel),
             Folder: null,
@@ -212,6 +218,16 @@ internal sealed class PublicSharePageModelFactory
     private static string BuildCurrentUrl(HttpContext context)
     {
         return $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{context.Request.Path}";
+    }
+
+    private static string BuildCurrentUrlWithQuery(HttpContext context, string name, string value)
+    {
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(context.Request.QueryString.Value);
+        query[name] = value;
+        return Microsoft.AspNetCore.WebUtilities.QueryHelpers.AddQueryString(BuildCurrentUrl(context), query.ToDictionary(
+            pair => pair.Key,
+            pair => (string?)pair.Value.ToString(),
+            StringComparer.OrdinalIgnoreCase));
     }
 
     private static string BuildCurrentPath(HttpContext context)
