@@ -419,6 +419,7 @@ internal sealed class ShareCoordinator(
             ReceiveUploadChunkSizeBytes = NormalizeReceiveUploadChunkSizeBytes(settings.ReceiveUploadChunkSizeBytes),
             ReceiveUploadMaxBodySizeBytes = NormalizeReceiveUploadMaxBodySizeBytes(settings.ReceiveUploadMaxBodySizeBytes),
             ReceiveUploadChunkTargetSeconds = NormalizeReceiveUploadChunkTargetSeconds(settings.ReceiveUploadChunkTargetSeconds),
+            ReceiveUploadAutoProbeChunkCount = NormalizeReceiveUploadAutoProbeChunkCount(settings.ReceiveUploadAutoProbeChunkCount),
             FolderBrowsePageTitle = NormalizeFolderBrowsePageTitle(settings.FolderBrowsePageTitle),
             ReceivePageTitle = NormalizeReceivePageTitle(settings.ReceivePageTitle),
             HistoryRetentionValue = Math.Max(0, settings.HistoryRetentionValue),
@@ -1410,6 +1411,13 @@ internal sealed class ShareCoordinator(
         return Math.Max(
             Defaults.MinimumReceiveUploadChunkTargetSeconds,
             chunkTargetSeconds <= 0 ? Defaults.DefaultReceiveUploadChunkTargetSeconds : chunkTargetSeconds);
+    }
+
+    private static int NormalizeReceiveUploadAutoProbeChunkCount(int chunkCount)
+    {
+        return Math.Max(
+            Defaults.MinimumReceiveUploadAutoProbeChunkCount,
+            chunkCount <= 0 ? Defaults.DefaultReceiveUploadAutoProbeChunkCount : chunkCount);
     }
 
     private static string NormalizeReceivePageTitle(string? title)
