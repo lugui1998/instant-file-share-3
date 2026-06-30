@@ -21,6 +21,7 @@ public sealed class SqliteShareStoreTests
         Assert.Equal(Defaults.DefaultReceiveUploadChunkSizeBytes, settings.ReceiveUploadChunkSizeBytes);
         Assert.Equal(Defaults.DefaultReceiveUploadMaxBodySizeBytes, settings.ReceiveUploadMaxBodySizeBytes);
         Assert.Equal(Defaults.DefaultReceiveUploadChunkTargetSeconds, settings.ReceiveUploadChunkTargetSeconds);
+        Assert.Equal(Defaults.DefaultReceiveUploadAutoProbeChunkCount, settings.ReceiveUploadAutoProbeChunkCount);
         Assert.False(cloudflaredState.ManagedTunnelRunning);
         Assert.Equal(3, profiles.Count);
         Assert.Contains(profiles, profile => profile.Mode == PublishMode.QuickTunnel && profile.Enabled);
