@@ -58,6 +58,12 @@ const settingsDraft = ref<AppSettings>({
   receiveUploadMaxBodySizeBytes: 95 * 1024 * 1024,
   receiveUploadChunkTargetSeconds: 30,
   receiveUploadAutoProbeChunkCount: 4,
+  browserManagedDownloadsEnabled: true,
+  browserManagedDownloadMaxMemoryBytes: 512 * 1024 * 1024,
+  browserManagedDownloadMaxParallelChunks: 4,
+  browserManagedCompressionMode: 'Auto',
+  browserTransferEncryptionPolicy: 'HttpOnly',
+  browserTransferDiagnosticsEnabled: false,
   folderBrowsePageTitle: 'Browse files',
   receivePageTitle: 'Upload files',
   friendlyUrlsEnabled: true,
@@ -593,6 +599,12 @@ function buildSettingsPayload(): AppSettings {
     receiveUploadMaxBodySizeBytes: normalizeWholeNumber(settingsDraft.value.receiveUploadMaxBodySizeBytes, 95 * 1024 * 1024, 1024 * 1024),
     receiveUploadChunkTargetSeconds: normalizeWholeNumber(settingsDraft.value.receiveUploadChunkTargetSeconds, 30, 5),
     receiveUploadAutoProbeChunkCount: normalizeWholeNumber(settingsDraft.value.receiveUploadAutoProbeChunkCount, 4, 1),
+    browserManagedDownloadsEnabled: Boolean(settingsDraft.value.browserManagedDownloadsEnabled),
+    browserManagedDownloadMaxMemoryBytes: normalizeWholeNumber(settingsDraft.value.browserManagedDownloadMaxMemoryBytes, 512 * 1024 * 1024, 1024 * 1024),
+    browserManagedDownloadMaxParallelChunks: normalizeWholeNumber(settingsDraft.value.browserManagedDownloadMaxParallelChunks, 4, 1),
+    browserManagedCompressionMode: settingsDraft.value.browserManagedCompressionMode === 'Off' ? 'Off' : 'Auto',
+    browserTransferEncryptionPolicy: normalizeBrowserTransferEncryptionPolicy(settingsDraft.value.browserTransferEncryptionPolicy),
+    browserTransferDiagnosticsEnabled: Boolean(settingsDraft.value.browserTransferDiagnosticsEnabled),
     folderBrowsePageTitle: settingsDraft.value.folderBrowsePageTitle?.trim() ?? '',
     receivePageTitle: settingsDraft.value.receivePageTitle?.trim() ?? '',
     historyRetentionValue: normalizeWholeNumber(settingsDraft.value.historyRetentionValue, 3, 0),
@@ -618,6 +630,10 @@ function normalizeReceiveUploadChunkSizingMode(
   uploadMode: AppSettings['receiveUploadMode'],
 ) {
   return value === 'Auto' || uploadMode === 'AdaptiveBinaryChunks' ? 'Auto' : 'Fixed'
+}
+
+function normalizeBrowserTransferEncryptionPolicy(value: AppSettings['browserTransferEncryptionPolicy']) {
+  return value === 'Always' || value === 'Off' ? value : 'HttpOnly'
 }
 
 onMounted(async () => {

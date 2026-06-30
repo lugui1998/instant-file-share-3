@@ -35,17 +35,12 @@ test('uploads a file through a receive link', async ({ page }) => {
 test('downloads a shared file through the public file route', async ({ page }) => {
   expect(host).not.toBeNull()
   const currentHost = host!
-  const downloadPromise = page.waitForEvent('download')
-  const [, download] = await Promise.all([
-    page.goto(currentHost.downloadUrl).catch((error: unknown) => {
-      if (error instanceof Error && error.message.includes('Download is starting')) {
-        return null
-      }
+  await page.goto(currentHost.downloadUrl)
+  await expect(page.getByRole('heading', { level: 1, name: 'download-smoke.txt' })).toBeVisible()
 
-      throw error
-    }),
-    downloadPromise,
-  ])
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download in browser' }).click()
+  const download = await downloadPromise
   const downloadedPath = await download.path()
 
   expect(download.suggestedFilename()).toBe('download-smoke.txt')

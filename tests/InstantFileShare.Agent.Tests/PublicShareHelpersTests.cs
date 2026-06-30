@@ -254,7 +254,7 @@ public sealed class PublicShareHelpersTests
         };
 
         var factory = new PublicSharePageModelFactory();
-        var filePage = factory.BuildFileMetadataPage(context, share, fileInfo.Name, fileInfo, ShareFileResponsePolicy.Resolve(fileInfo.Name));
+        var filePage = factory.BuildFileMetadataPage(context, share, fileInfo.Name, fileInfo, ShareFileResponsePolicy.Resolve(fileInfo.Name), new AppSettings());
         Assert.True(FolderSharePathResolver.TryResolveEntry(tempDirectory.RootPath, null, out var resolvedRoot));
         Assert.NotNull(resolvedRoot);
         var zipPage = factory.BuildFolderZipMetadataPage(context, share with { ShareKind = ShareKind.Folder, FilePath = tempDirectory.RootPath }, resolvedRoot!);
@@ -301,7 +301,8 @@ public sealed class PublicShareHelpersTests
             share,
             fileInfo.Name,
             fileInfo,
-            ShareFileResponsePolicy.Resolve(fileInfo.Name));
+            ShareFileResponsePolicy.Resolve(fileInfo.Name),
+            new AppSettings());
 
         Assert.NotNull(page.File);
         Assert.True(page.File!.CanUseBrowserCompression);

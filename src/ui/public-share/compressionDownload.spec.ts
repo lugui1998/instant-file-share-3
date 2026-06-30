@@ -1,7 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  buildManagedGzipUrl,
+  chooseManagedCompressionMethod,
+  createManagedCompressionProbeState,
+  createRawCompressionSample,
   downloadFileWithCompressionFallback,
   estimateBlobFallbackMemoryCost,
+  readManagedGzipResponseAsBuffer,
+  recordManagedCompressionSample,
   supportsGzipDecompression,
   supportsStreamingFileSave,
 } from './compressionDownload'
@@ -77,6 +83,12 @@ describe('compressionDownload', () => {
     expect(result.mode).toBe('compressed-stream')
     expect(fetchMock).toHaveBeenCalledWith('https://share.example.test/s/token/report.csv?compression=gzip')
     expect(chunks).toEqual([65, 66])
+    expect(result.compressionSample).toMatchObject({
+      method: 'gzip',
+      logicalBytes: 2,
+      wireBytes: 2,
+      ok: true,
+    })
   })
 
   it('rejects oversized decoded output without falling back to the raw download', async () => {
@@ -140,6 +152,102 @@ describe('compressionDownload', () => {
     expect(estimateBlobFallbackMemoryCost(4096)).toEqual({
       decodedBytesBuffered: 4096,
       minimumTransientBytes: 4096,
+    })
+  })
+
+  it('adds managed gzip to signed raw chunk URLs without dropping plan query parameters', () => {
+    expect(buildManagedGzipUrl('https://share.example.test/s/file-token?download=raw&ifsPlanHash=abc')).toBe(
+      'https://share.example.test/s/file-token?download=raw&ifsPlanHash=abc&compression=gzip',
+    )
+  })
+
+  it('chooses gzip first, then raw as a baseline, then keeps gzip while it wins', () => {
+    let state = createManagedCompressionProbeState()
+
+    expect(chooseManagedCompressionMethod({ state, canUseGzip: true })).toEqual({
+      method: 'gzip',
+      reason: 'probing managed gzip',
+    })
+
+    state = recordManagedCompressionSample(state, {
+      method: 'gzip',
+      logicalBytes: 4 * 1024 * 1024,
+      wireBytes: 1024 * 1024,
+      transferDurationMs: 1000,
+      decompressionDurationMs: 50,
+      ok: true,
+    })
+
+    expect(chooseManagedCompressionMethod({ state, canUseGzip: true })).toEqual({
+      method: 'raw',
+      reason: 'probing raw baseline',
+    })
+
+    state = recordManagedCompressionSample(state, createRawCompressionSample(4 * 1024 * 1024, 2500))
+
+    expect(state.gzipDisabled).toBe(false)
+    expect(chooseManagedCompressionMethod({ state, canUseGzip: true })).toEqual({
+      method: 'gzip',
+      reason: 'gzip probe is currently winning',
+    })
+  })
+
+  it('disables gzip when the compressed transfer is effectively raw-sized', () => {
+    const state = recordManagedCompressionSample(createManagedCompressionProbeState(), {
+      method: 'gzip',
+      logicalBytes: 1024 * 1024,
+      wireBytes: 1020 * 1024,
+      transferDurationMs: 100,
+      decompressionDurationMs: 10,
+      ok: true,
+    })
+
+    expect(state.gzipDisabled).toBe(true)
+    expect(chooseManagedCompressionMethod({ state, canUseGzip: true }).method).toBe('raw')
+    expect(state.disabledReason).toContain('using raw chunks')
+  })
+
+  it('disables gzip when effective logical throughput loses to the raw baseline', () => {
+    let state = createManagedCompressionProbeState()
+    state = recordManagedCompressionSample(state, createRawCompressionSample(4 * 1024 * 1024, 400))
+    state = recordManagedCompressionSample(state, {
+      method: 'gzip',
+      logicalBytes: 4 * 1024 * 1024,
+      wireBytes: 1024 * 1024,
+      transferDurationMs: 300,
+      decompressionDurationMs: 1000,
+      ok: true,
+    })
+
+    expect(state.gzipDisabled).toBe(true)
+    expect(state.disabledReason).toBe('gzip effective speed was slower than raw; using raw chunks')
+  })
+
+  it('decodes managed gzip responses and reports wire bytes and timings', async () => {
+    let timestamp = 0
+    const result = await readManagedGzipResponseAsBuffer(
+      new Response(Uint8Array.from([65, 66, 67])),
+      3,
+      {
+        DecompressionStream: IdentityDecompressionStream,
+        performance: {
+          now: () => {
+            timestamp += 10
+            return timestamp
+          },
+        },
+      },
+    )
+
+    expect(Array.from(new Uint8Array(result.buffer))).toEqual([65, 66, 67])
+    expect(result.sample).toMatchObject({
+      method: 'gzip',
+      logicalBytes: 3,
+      wireBytes: 3,
+      transferDurationMs: 10,
+      decompressionDurationMs: 10,
+      ratio: 1,
+      ok: true,
     })
   })
 })

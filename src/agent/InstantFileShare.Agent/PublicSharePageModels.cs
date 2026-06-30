@@ -33,6 +33,10 @@ internal sealed record PublicShareManagedDownloadModel(
     long FileSizeBytes,
     int DefaultChunkSizeBytes,
     int MaxRetriesPerChunk,
+    long MaxMemoryBytes,
+    int MaxParallelChunks,
+    string CompressionMode,
+    bool TransferDiagnosticsEnabled,
     string SaveLimitationNote);
 
 internal sealed record BrowserTransferEncryptionExperimentModel(

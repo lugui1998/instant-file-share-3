@@ -29,6 +29,10 @@ public sealed class ShareCoordinatorTests
             ReceiveUploadMaxBodySizeBytes = 1024,
             ReceiveUploadChunkTargetSeconds = 1,
             ReceiveUploadAutoProbeChunkCount = 0,
+            BrowserManagedDownloadMaxMemoryBytes = 1024,
+            BrowserManagedDownloadMaxParallelChunks = 0,
+            BrowserManagedCompressionMode = (BrowserManagedCompressionMode)999,
+            BrowserTransferEncryptionPolicy = (BrowserTransferEncryptionPolicy)999,
             FolderBrowsePageTitle = "  ",
             ReceivePageTitle = "  ",
             HistoryRetentionValue = -5,
@@ -51,6 +55,10 @@ public sealed class ShareCoordinatorTests
         Assert.Equal(Defaults.MinimumReceiveUploadChunkSizeBytes, savedSettings.ReceiveUploadMaxBodySizeBytes);
         Assert.Equal(Defaults.MinimumReceiveUploadChunkTargetSeconds, savedSettings.ReceiveUploadChunkTargetSeconds);
         Assert.Equal(Defaults.DefaultReceiveUploadAutoProbeChunkCount, savedSettings.ReceiveUploadAutoProbeChunkCount);
+        Assert.Equal(Defaults.MinimumReceiveUploadChunkSizeBytes, savedSettings.BrowserManagedDownloadMaxMemoryBytes);
+        Assert.Equal(Defaults.DefaultBrowserManagedDownloadMaxParallelChunks, savedSettings.BrowserManagedDownloadMaxParallelChunks);
+        Assert.Equal(BrowserManagedCompressionMode.Auto, savedSettings.BrowserManagedCompressionMode);
+        Assert.Equal(BrowserTransferEncryptionPolicy.HttpOnly, savedSettings.BrowserTransferEncryptionPolicy);
         Assert.Equal(Defaults.CreateDefaultFolderBrowsePageTitle(), savedSettings.FolderBrowsePageTitle);
         Assert.Equal(Defaults.CreateDefaultReceivePageTitle(), savedSettings.ReceivePageTitle);
         Assert.Equal(0, savedSettings.HistoryRetentionValue);

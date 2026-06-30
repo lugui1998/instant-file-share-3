@@ -23,6 +23,7 @@ internal static class PublicShareEndpoints
     private const string ManagedDownloadQueryValue = "managed";
     private const string RawDownloadQueryValue = "raw";
     private const string PlanHashQueryName = "ifsPlanHash";
+    private const string PlanSignatureQueryName = "ifsPlanSignature";
     private const string PlanSizeQueryName = "ifsPlanSize";
     private const string PlanModifiedQueryName = "ifsPlanModified";
     private const string EncryptedDownloadPlanQueryValue = "encrypted-download-plan";
@@ -61,6 +62,7 @@ internal static class PublicShareEndpoints
         string LastModifiedUtc,
         long LastModifiedUtcTicks,
         string PlanHash,
+        string PlanSignature,
         int ChunkSizeBytes,
         int MaxRetriesPerChunk,
         IReadOnlyList<BrowserManagedDownloadChunk> Chunks,
@@ -2449,6 +2451,12 @@ internal static class PublicShareEndpoints
             message.Contains("did not complete", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("decoded upload size did not match", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("interrupted", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("uploaded path is empty", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("uploaded path is invalid", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("invalid segment", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("invalid characters", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("reserved Windows name", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("escapes the receive folder", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("path traverses", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("not allowed", StringComparison.OrdinalIgnoreCase);
     }
@@ -2527,11 +2535,11 @@ internal static class PublicShareEndpoints
         var fileResponseMetadata = ShareFileResponsePolicy.Resolve(responseFileName, settings);
         var remoteAddress = RequestAddressResolver.ResolveClientIpAddress(context);
         var userAgent = context.Request.Headers.UserAgent.ToString();
-        var isManagedDownloadCandidate = !fileResponseMetadata.PreferInline;
+        var isManagedDownloadCandidate = settings.BrowserManagedDownloadsEnabled && !fileResponseMetadata.PreferInline;
 
         if (isManagedDownloadCandidate && IsDownloadPlanRequest(context.Request))
         {
-            return await HandleBrowserManagedDownloadPlanAsync(context, file, responseFileName, fileResponseMetadata, cancellationToken);
+            return await HandleBrowserManagedDownloadPlanAsync(context, share, file, responseFileName, fileResponseMetadata, cancellationToken);
         }
 
         if (IsEncryptedDownloadPlanRequest(context.Request))
@@ -2542,6 +2550,11 @@ internal static class PublicShareEndpoints
         if (IsEncryptedDownloadRequest(context.Request))
         {
             return CreateEncryptedDownloadUnavailableResult();
+        }
+
+        if (settings.BrowserTransferEncryptionPolicy == BrowserTransferEncryptionPolicy.Always)
+        {
+            return CreateEncryptedDownloadRequiredResult();
         }
 
         if ((crawlerName is not null && settings.SendMetadataToCrawlers) ||
@@ -2580,7 +2593,7 @@ internal static class PublicShareEndpoints
                     cancellationToken);
             }
 
-            var pageModel = pageModelFactory.BuildFileMetadataPage(context, share, responseFileName, file, fileResponseMetadata);
+            var pageModel = pageModelFactory.BuildFileMetadataPage(context, share, responseFileName, file, fileResponseMetadata, settings);
             if (!htmlRenderer.TryRender(pageModel, out var metadataHtml, out var renderError))
             {
                 return Results.Problem(renderError, statusCode: StatusCodes.Status500InternalServerError);
@@ -2603,17 +2616,18 @@ internal static class PublicShareEndpoints
             return Results.Empty;
         }
 
-        if (!TryValidateBrowserManagedDownloadPlanBinding(context.Request, file, responseFileName, out var bindingError))
+        if (!TryValidateBrowserManagedDownloadPlanBinding(context.Request, share, file, responseFileName, out var bindingError))
         {
             return Results.Conflict(new { message = bindingError });
         }
 
         var (clientSessionId, setCookie) = DownloadSessionManager.ResolveDownloadSession(context, share.Token);
         var clientFingerprint = RequestAddressResolver.BuildClientFingerprint(remoteAddress, userAgent);
-        var useBrowserCompression = IsBrowserCompressionRequest(context.Request)
+        var useBrowserCompression = settings.BrowserManagedCompressionMode == BrowserManagedCompressionMode.Auto
+            && IsBrowserCompressionRequest(context.Request)
             && ShareFileResponsePolicy.IsBrowserCompressionCandidate(responseFileName, fileResponseMetadata);
         var allowRangeRequestsForResponse = allowRangeRequests && !useBrowserCompression;
-        var requestedRange = allowRangeRequestsForResponse ? context.Request.GetTypedHeaders().Range?.Ranges.FirstOrDefault() : null;
+        var requestedRange = allowRangeRequests ? context.Request.GetTypedHeaders().Range?.Ranges.FirstOrDefault() : null;
         var initialBytesSent = ResolveRangeStartOffset(file.Length, requestedRange);
         var expectedTransferBytes = ResolveExpectedTransferBytes(file.Length, requestedRange);
         var countsTowardUsage = true;
@@ -2714,10 +2728,16 @@ internal static class PublicShareEndpoints
         {
             context.Response.ContentType = BinaryChunkContentType;
             context.Response.Headers[BrowserCompressionHeaderName] = GzipCompressionQueryValue;
-            context.Response.Headers[UncompressedLengthHeaderName] = file.Length.ToString(CultureInfo.InvariantCulture);
+            context.Response.Headers[UncompressedLengthHeaderName] = expectedTransferBytes.ToString(CultureInfo.InvariantCulture);
+            if (requestedRange is not null)
+            {
+                context.Response.Headers[ChunkStartHeaderName] = initialBytesSent.ToString(CultureInfo.InvariantCulture);
+                context.Response.Headers[ChunkSizeHeaderName] = expectedTransferBytes.ToString(CultureInfo.InvariantCulture);
+            }
 
+            meteredStream.Position = initialBytesSent;
             await using var gzipStream = new GZipStream(context.Response.Body, CompressionLevel.Fastest, leaveOpen: true);
-            await meteredStream.CopyToAsync(gzipStream, cancellationToken);
+            await CopyExactlyAsync(meteredStream, gzipStream, expectedTransferBytes, cancellationToken);
             return Results.Empty;
         }
 
@@ -2726,6 +2746,7 @@ internal static class PublicShareEndpoints
 
     private static async Task<IResult> HandleBrowserManagedDownloadPlanAsync(
         HttpContext context,
+        ShareRecord share,
         FileInfo file,
         string responseFileName,
         ShareFileResponseMetadata fileResponseMetadata,
@@ -2741,6 +2762,7 @@ internal static class PublicShareEndpoints
         var lastModifiedUtc = file.LastWriteTimeUtc;
         var lastModifiedUtcTicks = lastModifiedUtc.Ticks;
         var planHash = ComputeBrowserManagedDownloadPlanHash(responseFileName, file.Length, lastModifiedUtcTicks, chunkSizeBytes);
+        var planSignature = ComputeBrowserManagedDownloadPlanSignature(share, planHash);
         var chunks = await BuildBrowserManagedDownloadChunksAsync(file, chunkSizeBytes, cancellationToken);
         var payload = new BrowserManagedDownloadPlan(
             responseFileName,
@@ -2749,6 +2771,7 @@ internal static class PublicShareEndpoints
             BuildCurrentUrl(context, [
                 ("download", RawDownloadQueryValue),
                 (PlanHashQueryName, planHash),
+                (PlanSignatureQueryName, planSignature),
                 (PlanSizeQueryName, file.Length.ToString(CultureInfo.InvariantCulture)),
                 (PlanModifiedQueryName, lastModifiedUtcTicks.ToString(CultureInfo.InvariantCulture)),
                 ("chunkSize", chunkSizeBytes.ToString(CultureInfo.InvariantCulture)),
@@ -2758,6 +2781,7 @@ internal static class PublicShareEndpoints
             lastModifiedUtc.ToString("O", CultureInfo.InvariantCulture),
             lastModifiedUtcTicks,
             planHash,
+            planSignature,
             chunkSizeBytes,
             PublicSharePageModelFactory.BrowserManagedDownloadMaxRetriesPerChunk,
             chunks,
@@ -2769,6 +2793,7 @@ internal static class PublicShareEndpoints
 
     private static bool TryValidateBrowserManagedDownloadPlanBinding(
         HttpRequest request,
+        ShareRecord share,
         FileInfo file,
         string responseFileName,
         out string? error)
@@ -2779,9 +2804,11 @@ internal static class PublicShareEndpoints
         {
             return true;
         }
+        var planSignature = request.Query[PlanSignatureQueryName].ToString();
 
         if (!long.TryParse(request.Query[PlanSizeQueryName], NumberStyles.Integer, CultureInfo.InvariantCulture, out var expectedSize) ||
-            !long.TryParse(request.Query[PlanModifiedQueryName], NumberStyles.Integer, CultureInfo.InvariantCulture, out var expectedModifiedUtcTicks))
+            !long.TryParse(request.Query[PlanModifiedQueryName], NumberStyles.Integer, CultureInfo.InvariantCulture, out var expectedModifiedUtcTicks) ||
+            string.IsNullOrWhiteSpace(planSignature))
         {
             error = "The browser-managed download plan is missing file binding metadata. Restart the download.";
             return false;
@@ -2798,13 +2825,22 @@ internal static class PublicShareEndpoints
             file.LastWriteTimeUtc.Ticks != expectedModifiedUtcTicks ||
             !CryptographicOperations.FixedTimeEquals(
                 Encoding.ASCII.GetBytes(planHash),
-                Encoding.ASCII.GetBytes(actualHash)))
+                Encoding.ASCII.GetBytes(actualHash)) ||
+            !CryptographicOperations.FixedTimeEquals(
+                Encoding.ASCII.GetBytes(planSignature),
+                Encoding.ASCII.GetBytes(ComputeBrowserManagedDownloadPlanSignature(share, actualHash))))
         {
             error = "The shared file changed after the browser-managed download plan was created. Restart the download or use direct download.";
             return false;
         }
 
         return true;
+    }
+
+    private static string ComputeBrowserManagedDownloadPlanSignature(ShareRecord share, string planHash)
+    {
+        var keyMaterial = Encoding.UTF8.GetBytes($"{share.Id}\n{share.Token}");
+        return Convert.ToHexString(HMACSHA256.HashData(keyMaterial, Encoding.UTF8.GetBytes(planHash))).ToLowerInvariant();
     }
 
     private static string ComputeBrowserManagedDownloadPlanHash(
@@ -2927,6 +2963,13 @@ internal static class PublicShareEndpoints
     {
         return Results.Problem(
             "Encrypted browser downloads are disabled for live file shares because no persisted AES-GCM IV metadata exists for the stored object.",
+            statusCode: StatusCodes.Status409Conflict);
+    }
+
+    private static IResult CreateEncryptedDownloadRequiredResult()
+    {
+        return Results.Problem(
+            "This host requires browser-managed encryption for file downloads, but encrypted live file downloads are not available until AES-GCM metadata is persisted.",
             statusCode: StatusCodes.Status409Conflict);
     }
 
@@ -3255,6 +3298,34 @@ internal static class PublicShareEndpoints
     private static bool IsBrowserCompressionRequest(HttpRequest request)
     {
         return string.Equals(request.Query[CompressionQueryName], GzipCompressionQueryValue, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static async Task CopyExactlyAsync(
+        Stream sourceStream,
+        Stream destinationStream,
+        long bytesToCopy,
+        CancellationToken cancellationToken)
+    {
+        if (bytesToCopy <= 0)
+        {
+            return;
+        }
+
+        var buffer = new byte[81920];
+        var remainingBytes = bytesToCopy;
+        while (remainingBytes > 0)
+        {
+            var bytesRead = await sourceStream.ReadAsync(
+                buffer.AsMemory(0, (int)Math.Min(buffer.Length, remainingBytes)),
+                cancellationToken);
+            if (bytesRead == 0)
+            {
+                break;
+            }
+
+            await destinationStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+            remainingBytes -= bytesRead;
+        }
     }
 
     private static long ResolveRangeStartOffset(long fileLength, RangeItemHeaderValue? requestedRange)
