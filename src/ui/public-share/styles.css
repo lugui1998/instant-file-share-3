@@ -268,8 +268,8 @@ a {
 }
 
 .download-actions button:disabled {
-  cursor: wait;
-  opacity: 0.72;
+  cursor: not-allowed;
+  opacity: 0.58;
 }
 
 .download-note {
@@ -277,6 +277,32 @@ a {
   color: var(--muted);
   font-size: 0.9rem;
   line-height: 1.45;
+}
+
+.transfer-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(3, 11, 15, 0.36);
+}
+
+.transfer-diagnostics div {
+  min-width: 0;
+}
+
+.transfer-diagnostics dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.transfer-diagnostics dd {
+  margin: 3px 0 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
 }
 
 .info-grid {

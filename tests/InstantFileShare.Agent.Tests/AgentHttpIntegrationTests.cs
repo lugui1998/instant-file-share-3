@@ -60,6 +60,32 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
+    public async Task FileShareDownload_WithBrowserCompressionRange_ReturnsGzipChunk()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "report.csv");
+            await File.WriteAllTextAsync(filePath, "id,name\n1,Ada\n2,Grace\n");
+            await context.Store.AddShareAsync(context.CreateFileShare("file-token", filePath), CancellationToken.None);
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/s/file-token?download=raw&compression=gzip");
+        request.Headers.Range = new RangeHeaderValue(8, 12);
+
+        using var response = await host.PublicClient.SendAsync(request);
+        await using var gzip = new GZipStream(await response.Content.ReadAsStreamAsync(), CompressionMode.Decompress);
+        using var reader = new StreamReader(gzip);
+        var body = await reader.ReadToEndAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("gzip", response.Headers.GetValues("X-IFS-Transfer-Compression").Single());
+        Assert.Equal("5", response.Headers.GetValues("X-IFS-Uncompressed-Length").Single());
+        Assert.Equal("8", response.Headers.GetValues("X-IFS-Chunk-Start").Single());
+        Assert.Equal("5", response.Headers.GetValues("X-IFS-Chunk-Size").Single());
+        Assert.Equal("1,Ada", body);
+    }
+
+    [Fact]
     public async Task EncryptedDownloadPlan_RejectsLiveFileSharesWithoutIvMetadata()
     {
         await using var host = await AgentTestHost.StartAsync(async context =>
@@ -95,6 +121,27 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
         Assert.Contains("no persisted AES-GCM IV metadata", body, StringComparison.Ordinal);
         Assert.DoesNotContain("AQIDBA", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task FileShareDownload_WhenEncryptionAlways_BlocksRawDownload()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "secret.txt");
+            await File.WriteAllTextAsync(filePath, "plain secret");
+            await context.Store.SaveSettingsAsync(
+                context.Settings with { BrowserTransferEncryptionPolicy = BrowserTransferEncryptionPolicy.Always },
+                CancellationToken.None);
+            await context.Store.AddShareAsync(context.CreateFileShare("file-token", filePath), CancellationToken.None);
+        });
+
+        using var response = await host.PublicClient.GetAsync("/s/file-token?download=raw");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("requires browser-managed encryption", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("plain secret", body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -200,9 +247,11 @@ public sealed class AgentHttpIntegrationTests
         Assert.True(plan.GetProperty("lastModifiedUtcTicks").GetInt64() > 0);
         Assert.False(string.IsNullOrWhiteSpace(plan.GetProperty("lastModifiedUtc").GetString()));
         Assert.Equal(64, plan.GetProperty("planHash").GetString()?.Length);
+        Assert.Equal(64, plan.GetProperty("planSignature").GetString()?.Length);
         Assert.Equal(65536, plan.GetProperty("chunkSizeBytes").GetInt32());
         Assert.Contains("download=raw", plan.GetProperty("rawDownloadUrl").GetString());
         Assert.Contains("ifsPlanHash=", plan.GetProperty("rawDownloadUrl").GetString());
+        Assert.Contains("ifsPlanSignature=", plan.GetProperty("rawDownloadUrl").GetString());
         Assert.Contains("ifsPlanSize=", plan.GetProperty("rawDownloadUrl").GetString());
         Assert.Contains("ifsPlanModified=", plan.GetProperty("rawDownloadUrl").GetString());
         Assert.Contains("chunkSize=65536", plan.GetProperty("rawDownloadUrl").GetString());
@@ -217,6 +266,35 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal(69999, chunks[1].GetProperty("end").GetInt64());
         Assert.Equal(4464, chunks[1].GetProperty("sizeBytes").GetInt64());
         Assert.Equal(ComputeSha256Hex(bytes, 65536, 4464), chunks[1].GetProperty("sha256").GetString());
+    }
+
+    [Fact]
+    public async Task BrowserManagedDownloadPlan_RawChunkRequestRejectsTamperedSignature()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "signed.bin");
+            await File.WriteAllBytesAsync(filePath, [1, 2, 3, 4]);
+            await context.Store.AddShareAsync(context.CreateFileShare("signed-token", filePath), CancellationToken.None);
+        });
+
+        using var planResponse = await host.PublicClient.GetAsync("/s/signed-token?ifs=download-plan&chunkSize=65536");
+        var plan = await planResponse.Content.ReadFromJsonAsync<JsonElement>(JsonOptions);
+        var rawDownloadUrl = plan.GetProperty("rawDownloadUrl").GetString();
+        var planSignature = plan.GetProperty("planSignature").GetString();
+        var tamperedRawDownloadUrl = rawDownloadUrl!.Replace(
+            $"ifsPlanSignature={planSignature}",
+            $"ifsPlanSignature={new string('0', 64)}",
+            StringComparison.Ordinal);
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(tamperedRawDownloadUrl).PathAndQuery);
+        request.Headers.Range = new RangeHeaderValue(0, 3);
+        using var response = await host.PublicClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("browser-managed download plan", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AQIDBA", body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -645,7 +723,7 @@ public sealed class AgentHttpIntegrationTests
         using var response = await host.PublicClient.PostAsync("/r/receive-token", form);
         var body = await response.Content.ReadAsStringAsync();
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.DoesNotContain("outside.txt", Directory.GetFiles(host.FilesDirectory, "*", SearchOption.AllDirectories).Select(Path.GetFileName));
         Assert.Contains("\"failedCount\":1", body);
     }
@@ -668,7 +746,7 @@ public sealed class AgentHttpIntegrationTests
         using var response = await host.PublicClient.PostAsync("/r/receive-token", form);
         var body = await response.Content.ReadAsStringAsync();
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
         Assert.False(File.Exists(Path.Combine(host.FilesDirectory, "drop", "hello.txt")));
         AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
         Assert.Contains("\"uploadedCount\":0", body);
@@ -694,7 +772,7 @@ public sealed class AgentHttpIntegrationTests
         using var transfersResponse = await host.LocalClient.GetAsync("/api/transfers");
         var transfers = await transfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
 
-        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
         Assert.False(File.Exists(Path.Combine(host.FilesDirectory, "drop", "partial.bin")));
         AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
         Assert.Contains("\"failedCount\":1", body);

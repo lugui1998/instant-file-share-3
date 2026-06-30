@@ -420,6 +420,10 @@ internal sealed class ShareCoordinator(
             ReceiveUploadMaxBodySizeBytes = NormalizeReceiveUploadMaxBodySizeBytes(settings.ReceiveUploadMaxBodySizeBytes),
             ReceiveUploadChunkTargetSeconds = NormalizeReceiveUploadChunkTargetSeconds(settings.ReceiveUploadChunkTargetSeconds),
             ReceiveUploadAutoProbeChunkCount = NormalizeReceiveUploadAutoProbeChunkCount(settings.ReceiveUploadAutoProbeChunkCount),
+            BrowserManagedDownloadMaxMemoryBytes = NormalizeBrowserManagedDownloadMaxMemoryBytes(settings.BrowserManagedDownloadMaxMemoryBytes),
+            BrowserManagedDownloadMaxParallelChunks = NormalizeBrowserManagedDownloadMaxParallelChunks(settings.BrowserManagedDownloadMaxParallelChunks),
+            BrowserManagedCompressionMode = NormalizeBrowserManagedCompressionMode(settings.BrowserManagedCompressionMode),
+            BrowserTransferEncryptionPolicy = NormalizeBrowserTransferEncryptionPolicy(settings.BrowserTransferEncryptionPolicy),
             FolderBrowsePageTitle = NormalizeFolderBrowsePageTitle(settings.FolderBrowsePageTitle),
             ReceivePageTitle = NormalizeReceivePageTitle(settings.ReceivePageTitle),
             HistoryRetentionValue = Math.Max(0, settings.HistoryRetentionValue),
@@ -1418,6 +1422,28 @@ internal sealed class ShareCoordinator(
         return Math.Max(
             Defaults.MinimumReceiveUploadAutoProbeChunkCount,
             chunkCount <= 0 ? Defaults.DefaultReceiveUploadAutoProbeChunkCount : chunkCount);
+    }
+
+    private static long NormalizeBrowserManagedDownloadMaxMemoryBytes(long maxMemoryBytes)
+    {
+        return Math.Max(Defaults.MinimumReceiveUploadChunkSizeBytes, maxMemoryBytes <= 0 ? Defaults.DefaultBrowserManagedDownloadMaxMemoryBytes : maxMemoryBytes);
+    }
+
+    private static int NormalizeBrowserManagedDownloadMaxParallelChunks(int maxParallelChunks)
+    {
+        return Math.Max(
+            Defaults.MinimumBrowserManagedDownloadMaxParallelChunks,
+            maxParallelChunks <= 0 ? Defaults.DefaultBrowserManagedDownloadMaxParallelChunks : maxParallelChunks);
+    }
+
+    private static BrowserManagedCompressionMode NormalizeBrowserManagedCompressionMode(BrowserManagedCompressionMode compressionMode)
+    {
+        return Enum.IsDefined(compressionMode) ? compressionMode : BrowserManagedCompressionMode.Auto;
+    }
+
+    private static BrowserTransferEncryptionPolicy NormalizeBrowserTransferEncryptionPolicy(BrowserTransferEncryptionPolicy encryptionPolicy)
+    {
+        return Enum.IsDefined(encryptionPolicy) ? encryptionPolicy : BrowserTransferEncryptionPolicy.HttpOnly;
     }
 
     private static string NormalizeReceivePageTitle(string? title)

@@ -42,6 +42,8 @@ type FolderShareCapabilityPolicy = 'Exclusive' | 'AllowBoth'
 type FolderZipCompressionLevel = 'Optimal' | 'Fastest' | 'NoCompression' | 'SmallestSize'
 type ReceiveUploadMode = 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket' | 'Auto' | 'CompressedStream'
 type ReceiveUploadChunkSizingMode = 'Fixed' | 'Auto'
+type BrowserManagedCompressionMode = 'Auto' | 'Off'
+type BrowserTransferEncryptionPolicy = 'HttpOnly' | 'Always' | 'Off'
 type FileChangeBehavior = 'Strict' | 'Lenient'
 type ExpiryUnit = 'Minutes' | 'Hours' | 'Days'
 type HistoryRetentionUnit = 'Minutes' | 'Hours' | 'Days' | 'Months' | 'Years'
@@ -89,6 +91,12 @@ type AppSettings = {
   receiveUploadMaxBodySizeBytes: number
   receiveUploadChunkTargetSeconds: number
   receiveUploadAutoProbeChunkCount: number
+  browserManagedDownloadsEnabled: boolean
+  browserManagedDownloadMaxMemoryBytes: number
+  browserManagedDownloadMaxParallelChunks: number
+  browserManagedCompressionMode: BrowserManagedCompressionMode
+  browserTransferEncryptionPolicy: BrowserTransferEncryptionPolicy
+  browserTransferDiagnosticsEnabled: boolean
   folderBrowsePageTitle: string
   receivePageTitle: string
   friendlyUrlsEnabled: boolean

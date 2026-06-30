@@ -20,6 +20,12 @@ function createSettingsDraft(): AppSettings {
     receiveUploadMaxBodySizeBytes: 95 * 1024 * 1024,
     receiveUploadChunkTargetSeconds: 30,
     receiveUploadAutoProbeChunkCount: 4,
+    browserManagedDownloadsEnabled: true,
+    browserManagedDownloadMaxMemoryBytes: 512 * 1024 * 1024,
+    browserManagedDownloadMaxParallelChunks: 4,
+    browserManagedCompressionMode: 'Auto',
+    browserTransferEncryptionPolicy: 'HttpOnly',
+    browserTransferDiagnosticsEnabled: false,
     folderBrowsePageTitle: '',
     receivePageTitle: '',
     friendlyUrlsEnabled: true,
@@ -141,6 +147,30 @@ describe('SettingsView', () => {
       'WebSocket',
       'CompressedStream',
     ])
+  })
+
+  it('shows browser-managed transfer settings', () => {
+    const wrapper = mount(SettingsView, {
+      props: {
+        settingsDraft: createSettingsDraft(),
+        bandwidthValue: null,
+        bandwidthUnit: 'MB/s',
+        selectedDomain: '',
+        managedSubdomain: 'share',
+        cloudflaredStatus: null,
+        clearingTransferHistory: false,
+        managedStatus: null,
+        managedAvailability: null,
+        saveMessage: '',
+      },
+    })
+
+    expect(wrapper.find('#browser-managed-downloads-enabled').exists()).toBe(true)
+    expect(wrapper.find('#browser-managed-download-memory').exists()).toBe(true)
+    expect(wrapper.find('#browser-managed-download-parallel-chunks').exists()).toBe(true)
+    expect(wrapper.find('#browser-managed-compression-mode').exists()).toBe(true)
+    expect(wrapper.find('#browser-transfer-encryption-policy').exists()).toBe(true)
+    expect(wrapper.find('#browser-transfer-diagnostics-enabled').exists()).toBe(true)
   })
 
   it('shows the auto probing threshold only for auto receive uploads', async () => {

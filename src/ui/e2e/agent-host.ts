@@ -27,6 +27,7 @@ export async function startAgentE2EHost(): Promise<AgentE2EHost> {
     'dotnet',
     [
       'run',
+      '--no-restore',
       '--project',
       path.join(repositoryRoot, 'tests', 'InstantFileShare.E2EHost', 'InstantFileShare.E2EHost.csproj'),
       '--',

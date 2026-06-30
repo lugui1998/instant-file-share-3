@@ -112,10 +112,10 @@ export function canResumeManagedDownload(state: ManagedDownloadState) {
   return state.status === 'paused' || state.status === 'failed'
 }
 
-export function requiresStreamingManagedDownload(fileSizeBytes: number) {
-  return fileSizeBytes > blobManagedDownloadMaxBytes
+export function requiresStreamingManagedDownload(fileSizeBytes: number, maxMemoryBytes = blobManagedDownloadMaxBytes) {
+  return fileSizeBytes > Math.max(1, maxMemoryBytes)
 }
 
-export function canUseBlobManagedDownload(fileSizeBytes: number) {
-  return !requiresStreamingManagedDownload(fileSizeBytes)
+export function canUseBlobManagedDownload(fileSizeBytes: number, maxMemoryBytes = blobManagedDownloadMaxBytes) {
+  return !requiresStreamingManagedDownload(fileSizeBytes, maxMemoryBytes)
 }

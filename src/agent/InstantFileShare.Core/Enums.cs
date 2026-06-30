@@ -56,6 +56,19 @@ public enum ReceiveUploadChunkSizingMode
     Auto = 1,
 }
 
+public enum BrowserManagedCompressionMode
+{
+    Auto = 0,
+    Off = 1,
+}
+
+public enum BrowserTransferEncryptionPolicy
+{
+    HttpOnly = 0,
+    Always = 1,
+    Off = 2,
+}
+
 public enum ShareState
 {
     Active = 0,

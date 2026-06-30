@@ -54,6 +54,12 @@ public sealed record AppSettings
     public long ReceiveUploadMaxBodySizeBytes { get; init; } = Defaults.DefaultReceiveUploadMaxBodySizeBytes;
     public int ReceiveUploadChunkTargetSeconds { get; init; } = Defaults.DefaultReceiveUploadChunkTargetSeconds;
     public int ReceiveUploadAutoProbeChunkCount { get; init; } = Defaults.DefaultReceiveUploadAutoProbeChunkCount;
+    public bool BrowserManagedDownloadsEnabled { get; init; } = true;
+    public long BrowserManagedDownloadMaxMemoryBytes { get; init; } = Defaults.DefaultBrowserManagedDownloadMaxMemoryBytes;
+    public int BrowserManagedDownloadMaxParallelChunks { get; init; } = Defaults.DefaultBrowserManagedDownloadMaxParallelChunks;
+    public BrowserManagedCompressionMode BrowserManagedCompressionMode { get; init; } = BrowserManagedCompressionMode.Auto;
+    public BrowserTransferEncryptionPolicy BrowserTransferEncryptionPolicy { get; init; } = BrowserTransferEncryptionPolicy.HttpOnly;
+    public bool BrowserTransferDiagnosticsEnabled { get; init; }
     public string FolderBrowsePageTitle { get; init; } = Defaults.CreateDefaultFolderBrowsePageTitle();
     public string ReceivePageTitle { get; init; } = Defaults.CreateDefaultReceivePageTitle();
     public bool FriendlyUrlsEnabled { get; init; } = true;
@@ -241,6 +247,9 @@ public static class Defaults
     public const int MinimumReceiveUploadChunkTargetSeconds = 5;
     public const int DefaultReceiveUploadAutoProbeChunkCount = 4;
     public const int MinimumReceiveUploadAutoProbeChunkCount = 1;
+    public const long DefaultBrowserManagedDownloadMaxMemoryBytes = 512L * 1024 * 1024;
+    public const int DefaultBrowserManagedDownloadMaxParallelChunks = 4;
+    public const int MinimumBrowserManagedDownloadMaxParallelChunks = 1;
     public const string RepositoryUrl = "https://github.com/lugui1998/instant-file-share-3";
 
     public static string CreateDefaultReceivePageTitle()

@@ -12,7 +12,8 @@ internal sealed class PublicSharePageModelFactory
         ShareRecord share,
         string responseFileName,
         FileInfo file,
-        ShareFileResponseMetadata fileResponseMetadata)
+        ShareFileResponseMetadata fileResponseMetadata,
+        AppSettings settings)
     {
         var actionVerb = fileResponseMetadata.PreferInline ? "View" : "Download";
         var description = $"{actionVerb} {responseFileName} ({FormatFileSize(file.Length)}). Shared via Instant File Share.";
@@ -21,7 +22,9 @@ internal sealed class PublicSharePageModelFactory
             : $"Open this link to download {responseFileName}.";
         var currentUrl = BuildCurrentUrl(context);
         var rawDownloadUrl = AppendQueryValue(currentUrl, "download", "raw");
-        var canUseBrowserCompression = ShareFileResponsePolicy.IsBrowserCompressionCandidate(responseFileName, fileResponseMetadata);
+        var canUseBrowserCompression = settings.BrowserManagedCompressionMode == BrowserManagedCompressionMode.Auto &&
+            ShareFileResponsePolicy.IsBrowserCompressionCandidate(responseFileName, fileResponseMetadata);
+        var managedDownloadsEnabled = settings.BrowserManagedDownloadsEnabled && !fileResponseMetadata.PreferInline;
 
         return new PublicSharePageModel(
             Kind: "file",
@@ -42,15 +45,19 @@ internal sealed class PublicSharePageModelFactory
                 canUseBrowserCompression ? AppendQueryValue(rawDownloadUrl, "compression", "gzip") : null,
                 actionVerb,
                 actionLabel,
-                fileResponseMetadata.PreferInline
-                    ? null
-                    : new PublicShareManagedDownloadModel(
+                managedDownloadsEnabled
+                    ? new PublicShareManagedDownloadModel(
                         ManifestUrl: AppendQueryValue(currentUrl, "ifs", "download-plan"),
                         RawDownloadUrl: rawDownloadUrl,
                         FileSizeBytes: file.Length,
                         DefaultChunkSizeBytes: BrowserManagedDownloadChunkSizeBytes,
                         MaxRetriesPerChunk: BrowserManagedDownloadMaxRetriesPerChunk,
-                        SaveLimitationNote: "The browser-managed downloader verifies Range chunks and assembles a Blob before saving. Very large files may require substantial browser memory; direct download remains available."),
+                        MaxMemoryBytes: Math.Max(Defaults.MinimumReceiveUploadChunkSizeBytes, settings.BrowserManagedDownloadMaxMemoryBytes),
+                        MaxParallelChunks: Math.Max(Defaults.MinimumBrowserManagedDownloadMaxParallelChunks, settings.BrowserManagedDownloadMaxParallelChunks),
+                        CompressionMode: settings.BrowserManagedCompressionMode.ToString(),
+                        TransferDiagnosticsEnabled: settings.BrowserTransferDiagnosticsEnabled,
+                        SaveLimitationNote: "The browser-managed downloader verifies Range chunks and assembles a Blob before saving. Very large files may require substantial browser memory; direct download remains available.")
+                    : null,
                 EncryptionExperiment: null),
             Folder: null,
             Zip: null,
@@ -162,8 +169,18 @@ internal sealed class PublicSharePageModelFactory
                 Math.Max(
                     Defaults.MinimumReceiveUploadAutoProbeChunkCount,
                     settings.ReceiveUploadAutoProbeChunkCount <= 0 ? Defaults.DefaultReceiveUploadAutoProbeChunkCount : settings.ReceiveUploadAutoProbeChunkCount),
-                CreateBrowserTransferReceiveEncryptionExperiment(),
+                ShouldExposeBrowserTransferEncryption(context, settings) ? CreateBrowserTransferReceiveEncryptionExperiment() : null,
                 receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
+    }
+
+    private static bool ShouldExposeBrowserTransferEncryption(HttpContext context, AppSettings settings)
+    {
+        return settings.BrowserTransferEncryptionPolicy switch
+        {
+            BrowserTransferEncryptionPolicy.Always => true,
+            BrowserTransferEncryptionPolicy.Off => false,
+            _ => !context.Request.IsHttps,
+        };
     }
 
     private static BrowserTransferEncryptionExperimentModel CreateBrowserTransferReceiveEncryptionExperiment()

@@ -39,6 +39,10 @@ export type PublicShareManagedDownloadModel = {
   fileSizeBytes: number
   defaultChunkSizeBytes: number
   maxRetriesPerChunk: number
+  maxMemoryBytes: number
+  maxParallelChunks: number
+  compressionMode: 'Auto' | 'Off'
+  transferDiagnosticsEnabled: boolean
   saveLimitationNote: string
 }
 
@@ -52,6 +56,7 @@ export type BrowserManagedDownloadPlan = {
   lastModifiedUtc: string
   lastModifiedUtcTicks: number
   planHash: string
+  planSignature: string
   chunkSizeBytes: number
   maxRetriesPerChunk: number
   chunks: BrowserManagedDownloadChunk[]
@@ -64,6 +69,45 @@ export type BrowserManagedDownloadChunk = {
   end: number
   sizeBytes: number
   sha256: string
+}
+
+export type ManagedCompressionMethod = 'raw' | 'gzip'
+
+export type ManagedCompressionSample = {
+  method: ManagedCompressionMethod
+  logicalBytes: number
+  wireBytes: number
+  transferDurationMs: number
+  decompressionDurationMs: number
+  ok: boolean
+}
+
+export type ManagedCompressionSampleSummary = ManagedCompressionSample & {
+  ratio: number
+  wireBytesPerSecond: number
+  effectiveBytesPerSecond: number
+}
+
+export type ManagedCompressionProbeState = {
+  gzipDisabled: boolean
+  disabledReason?: string
+  decisionReason: string
+  rawSampleCount: number
+  gzipSampleCount: number
+  rawLogicalBytes: number
+  rawWireBytes: number
+  rawTransferDurationMs: number
+  gzipLogicalBytes: number
+  gzipWireBytes: number
+  gzipTransferDurationMs: number
+  gzipDecompressionDurationMs: number
+  lastRawSample?: ManagedCompressionSampleSummary
+  lastGzipSample?: ManagedCompressionSampleSummary
+}
+
+export type ManagedCompressionDecision = {
+  method: ManagedCompressionMethod
+  reason: string
 }
 
 export type BrowserTransferEncryptionExperimentModel = {
