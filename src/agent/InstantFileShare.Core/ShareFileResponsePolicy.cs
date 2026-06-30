@@ -17,6 +17,42 @@ public static class ShareFileResponsePolicy
 {
     public const string DefaultContentType = "application/octet-stream";
 
+    private static readonly HashSet<string> AlreadyCompressedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".7z",
+        ".avi",
+        ".avif",
+        ".br",
+        ".bz2",
+        ".cab",
+        ".docx",
+        ".flac",
+        ".gif",
+        ".gz",
+        ".heic",
+        ".heif",
+        ".jar",
+        ".jpeg",
+        ".jpg",
+        ".m4a",
+        ".m4v",
+        ".mov",
+        ".mp3",
+        ".mp4",
+        ".ogg",
+        ".ogv",
+        ".pdf",
+        ".png",
+        ".pptx",
+        ".rar",
+        ".webm",
+        ".webp",
+        ".xlsx",
+        ".xz",
+        ".zip",
+        ".zst",
+    };
+
     private static readonly IReadOnlyDictionary<string, (string ContentType, ShareFileTypeCategory Category)> KnownContentTypes = new Dictionary<string, (string ContentType, ShareFileTypeCategory Category)>(StringComparer.OrdinalIgnoreCase)
     {
         [".avif"] = ("image/avif", ShareFileTypeCategory.Image),
@@ -46,6 +82,17 @@ public static class ShareFileResponsePolicy
         }
 
         return new ShareFileResponseMetadata(DefaultContentType, ShareFileTypeCategory.Other, PreferInline: false);
+    }
+
+    public static bool IsBrowserCompressionCandidate(string? fileName, ShareFileResponseMetadata metadata)
+    {
+        if (metadata.PreferInline || metadata.Category != ShareFileTypeCategory.Other)
+        {
+            return false;
+        }
+
+        var extension = Path.GetExtension(fileName);
+        return string.IsNullOrWhiteSpace(extension) || !AlreadyCompressedExtensions.Contains(extension);
     }
 
     private static bool ShouldOpenInBrowser(ShareFileTypeCategory category, AppSettings? settings)

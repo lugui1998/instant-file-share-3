@@ -87,6 +87,13 @@ const receiveUploadMaxBodySizeMb = computed({
     settingsDraft.value.receiveUploadMaxBodySizeBytes = normalized * bytesPerMegabyte
   },
 })
+const browserManagedDownloadMaxMemoryMb = computed({
+  get: () => Math.max(1, Math.round((settingsDraft.value.browserManagedDownloadMaxMemoryBytes ?? 512 * bytesPerMegabyte) / bytesPerMegabyte)),
+  set: (value: number) => {
+    const normalized = Number.isFinite(value) ? Math.max(1, Math.round(value)) : 512
+    settingsDraft.value.browserManagedDownloadMaxMemoryBytes = normalized * bytesPerMegabyte
+  },
+})
 
 watch(
   () => settingsDraft.value.defaultReceiveMaxTotalBytes,
@@ -519,13 +526,29 @@ function resolveReceiveMaxTotalUnit(value: number) {
           <div class="field">
             <div class="field-label-row">
               <label for="receive-upload-mode">Upload mode</label>
-              <HelpTooltip text="Multipart chunks sends each piece as multipart form data. Binary chunks sends raw binary requests. WebSocket uploads send chunks through a dedicated upload socket." />
+              <HelpTooltip text="Auto probes the available upload transports and keeps one server upload session per file. Multipart chunks sends each piece as multipart form data. Binary chunks sends raw binary requests. WebSocket uploads send chunks through a dedicated upload socket. Compressed stream is an experimental single-request gzip upload path." />
             </div>
             <select id="receive-upload-mode" v-model="settingsDraft.receiveUploadMode">
+              <option value="Auto">Auto</option>
               <option value="MultipartChunks">Multipart chunks</option>
               <option value="BinaryChunks">Binary chunks</option>
               <option value="WebSocket">WebSocket chunks</option>
+              <option value="CompressedStream">Compressed stream (experimental)</option>
             </select>
+          </div>
+
+          <div v-if="settingsDraft.receiveUploadMode === 'Auto'" class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-auto-probe-chunks">Auto probing threshold</label>
+              <HelpTooltip text="How many chunks Auto mode uses to compare transports before it prefers the most reliable observed method." />
+            </div>
+            <input
+              id="receive-upload-auto-probe-chunks"
+              v-model.number="settingsDraft.receiveUploadAutoProbeChunkCount"
+              type="number"
+              min="1"
+            />
+            <span class="field-help">Default: 4 chunks. Minimum: 1 chunk.</span>
           </div>
 
           <div class="field">
@@ -602,6 +625,75 @@ function resolveReceiveMaxTotalUnit(value: number) {
             label="Receive notifications"
             help-text="Shows a local notification when uploads finish on this machine."
           />
+
+          <ToggleField
+            v-model="settingsDraft.browserManagedDownloadsEnabled"
+            input-id="browser-managed-downloads-enabled"
+            label="Browser-managed downloads"
+            help-text="Uses a browser page for non-inline file downloads so chunks can be verified, retried, paused, and resumed before falling back to direct download."
+          />
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="browser-managed-download-memory">Managed download memory limit</label>
+              <HelpTooltip text="Files at or below this size may be assembled in browser memory. Larger files require streaming save support or direct download fallback." />
+            </div>
+            <div class="input-group">
+              <input
+                id="browser-managed-download-memory"
+                v-model.number="browserManagedDownloadMaxMemoryMb"
+                type="number"
+                min="1"
+              />
+              <span class="unit-suffix">MB</span>
+            </div>
+            <span class="field-help">Default: 512 MB.</span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="browser-managed-download-parallel-chunks">Managed download parallel chunks</label>
+              <HelpTooltip text="Maximum number of file chunks the browser-managed downloader can fetch at once. It still starts at one and backs off after errors." />
+            </div>
+            <input
+              id="browser-managed-download-parallel-chunks"
+              v-model.number="settingsDraft.browserManagedDownloadMaxParallelChunks"
+              type="number"
+              min="1"
+            />
+            <span class="field-help">Default: 4 chunks.</span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="browser-managed-compression-mode">Managed compression</label>
+              <HelpTooltip text="Auto allows browser-managed transfers to compare raw and gzip transfer paths for files that may compress well." />
+            </div>
+            <select id="browser-managed-compression-mode" v-model="settingsDraft.browserManagedCompressionMode">
+              <option value="Auto">Auto</option>
+              <option value="Off">Off</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="browser-transfer-encryption-policy">Browser transfer encryption</label>
+              <HelpTooltip text="Controls when browser-managed transfers should use application-level encryption. Raw direct downloads cannot be encrypted by this setting." />
+            </div>
+            <select id="browser-transfer-encryption-policy" v-model="settingsDraft.browserTransferEncryptionPolicy">
+              <option value="HttpOnly">HTTP only</option>
+              <option value="Always">Always</option>
+              <option value="Off">Off</option>
+            </select>
+          </div>
+
+          <ToggleField
+            v-model="settingsDraft.browserTransferDiagnosticsEnabled"
+            input-id="browser-transfer-diagnostics-enabled"
+            label="Transfer diagnostics"
+            help-text="Shows browser-managed transfer decisions, chunk sizing, compression status, retry counts, and fallback reasons on public transfer pages."
+          />
+
           <ToggleField
             v-model="settingsDraft.addFolderReceiveContextMenuButton"
             input-id="folder-receive-context-button"

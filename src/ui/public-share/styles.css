@@ -186,6 +186,125 @@ a {
   line-height: 1.6;
 }
 
+.download-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: var(--surface-strong);
+}
+
+.download-panel__header,
+.download-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.download-panel__header strong {
+  display: block;
+  font-size: 1.05rem;
+}
+
+.download-progress {
+  position: relative;
+  width: 100%;
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.download-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(135deg, rgba(92, 219, 149, 0.9), rgba(76, 196, 255, 0.85));
+  transition: width 180ms ease-out;
+}
+
+.download-actions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 181, 125, 0.24);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.button--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, rgba(255, 138, 84, 0.9), rgba(255, 186, 69, 0.82));
+  color: var(--action-text);
+}
+
+.button--ghost {
+  color: var(--muted);
+}
+
+.download-error {
+  margin: 0;
+  line-height: 1.5;
+  font-size: 0.92rem;
+  color: #ffb57d;
+  font-weight: 700;
+}
+
+.download-actions button {
+  cursor: pointer;
+}
+
+.download-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.download-note {
+  margin: -6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.transfer-diagnostics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(3, 11, 15, 0.36);
+}
+
+.transfer-diagnostics div {
+  min-width: 0;
+}
+
+.transfer-diagnostics dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.transfer-diagnostics dd {
+  margin: 3px 0 0;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -250,6 +369,7 @@ a {
 
 .upload-dropzone,
 .upload-panel,
+.download-panel,
 .upload-item {
   border: 1px solid var(--line);
   background: var(--surface-strong);
@@ -257,8 +377,22 @@ a {
 }
 
 .upload-dropzone,
-.upload-panel {
+.upload-panel,
+.download-panel {
   padding: 18px;
+}
+
+.download-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.download-panel__header,
+.download-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
 }
 
 .upload-dropzone {
@@ -524,6 +658,7 @@ a {
 
   .public-shell__header,
   .hero-panel,
+  .download-panel__header,
   .upload-item__row,
   .upload-folder__header,
   .upload-child-row,

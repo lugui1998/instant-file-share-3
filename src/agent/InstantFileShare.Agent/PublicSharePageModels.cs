@@ -17,9 +17,36 @@ internal sealed record PublicSharePageModel(
 internal sealed record PublicShareFileModel(
     string FileName,
     string DisplaySize,
+    long SizeBytes,
     bool PreferInline,
+    bool CanUseBrowserCompression,
+    string RawDownloadUrl,
+    string? CompressedDownloadUrl,
     string ActionVerb,
-    string ActionLabel);
+    string ActionLabel,
+    PublicShareManagedDownloadModel? ManagedDownload,
+    BrowserTransferEncryptionExperimentModel? EncryptionExperiment);
+
+internal sealed record PublicShareManagedDownloadModel(
+    string ManifestUrl,
+    string RawDownloadUrl,
+    long FileSizeBytes,
+    int DefaultChunkSizeBytes,
+    int MaxRetriesPerChunk,
+    long MaxMemoryBytes,
+    int MaxParallelChunks,
+    string CompressionMode,
+    bool TransferDiagnosticsEnabled,
+    string SaveLimitationNote);
+
+internal sealed record BrowserTransferEncryptionExperimentModel(
+    string? DownloadManifestUrl,
+    string? EncryptedDownloadUrl,
+    string FragmentKeyParameter,
+    string Algorithm,
+    string IvStrategy,
+    string KeyDelivery,
+    IReadOnlyList<string> ReceiveUploadModes);
 
 internal sealed record PublicShareFolderModel(
     string Name,
@@ -47,6 +74,8 @@ internal sealed record PublicShareReceiveModel(
     long UploadChunkSizeBytes,
     long UploadMaxBodySizeBytes,
     int UploadChunkTargetSeconds,
+    int UploadAutoProbeChunkCount,
+    BrowserTransferEncryptionExperimentModel? EncryptionExperiment,
     string? ExpiresAtLabel);
 
 internal sealed record PublicShareBreadcrumb(string Label, string Href);

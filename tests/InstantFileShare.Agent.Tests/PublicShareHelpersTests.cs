@@ -254,7 +254,7 @@ public sealed class PublicShareHelpersTests
         };
 
         var factory = new PublicSharePageModelFactory();
-        var filePage = factory.BuildFileMetadataPage(context, share, fileInfo.Name, fileInfo, ShareFileResponsePolicy.Resolve(fileInfo.Name));
+        var filePage = factory.BuildFileMetadataPage(context, share, fileInfo.Name, fileInfo, ShareFileResponsePolicy.Resolve(fileInfo.Name), new AppSettings());
         Assert.True(FolderSharePathResolver.TryResolveEntry(tempDirectory.RootPath, null, out var resolvedRoot));
         Assert.NotNull(resolvedRoot);
         var zipPage = factory.BuildFolderZipMetadataPage(context, share with { ShareKind = ShareKind.Folder, FilePath = tempDirectory.RootPath }, resolvedRoot!);
@@ -262,9 +262,53 @@ public sealed class PublicShareHelpersTests
         Assert.Equal("file", filePage.Kind);
         Assert.Equal(Defaults.RepositoryUrl, filePage.RepositoryUrl);
         Assert.NotNull(filePage.File);
+        Assert.False(filePage.File!.CanUseBrowserCompression);
+        Assert.Null(filePage.File.CompressedDownloadUrl);
         Assert.Equal("zip", zipPage.Kind);
         Assert.Equal(Defaults.RepositoryUrl, zipPage.RepositoryUrl);
         Assert.NotNull(zipPage.Zip);
+    }
+
+    [Fact]
+    public void BuildFileMetadataPage_AddsCompressionUrlForCompressibleDownloads()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("share.example.test");
+        context.Request.Path = "/s/file-token/report.csv";
+
+        using var tempDirectory = new TemporaryDirectory();
+        var filePath = Path.Combine(tempDirectory.RootPath, "report.csv");
+        File.WriteAllText(filePath, "id,name\n1,Ada\n");
+        var fileInfo = new FileInfo(filePath);
+        var share = new ShareRecord
+        {
+            Id = "share-file",
+            Token = "file-token",
+            FilePath = filePath,
+            FileName = "report.csv",
+            Slug = "report.csv",
+            PublicBaseUrl = "https://share.example.test",
+            FileSize = fileInfo.Length,
+            FileModifiedAtUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc),
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            PublishMode = PublishMode.Manual,
+            State = ShareState.Active,
+        };
+
+        var page = new PublicSharePageModelFactory().BuildFileMetadataPage(
+            context,
+            share,
+            fileInfo.Name,
+            fileInfo,
+            ShareFileResponsePolicy.Resolve(fileInfo.Name),
+            new AppSettings());
+
+        Assert.NotNull(page.File);
+        Assert.True(page.File!.CanUseBrowserCompression);
+        Assert.Equal(fileInfo.Length, page.File.SizeBytes);
+        Assert.Equal("https://share.example.test/s/file-token/report.csv?download=raw", page.File.RawDownloadUrl);
+        Assert.Equal("https://share.example.test/s/file-token/report.csv?download=raw&compression=gzip", page.File.CompressedDownloadUrl);
     }
 
     [Fact]
@@ -304,11 +348,12 @@ public sealed class PublicShareHelpersTests
         Assert.Equal("/r/receive-token", page.Receive.UploadUrl);
         Assert.Equal(768, page.Receive.RemainingQuotaBytes);
         Assert.Equal(5, page.Receive.ParallelUploadLimit);
-        Assert.Equal(ReceiveUploadMode.MultipartChunks.ToString(), page.Receive.UploadMode);
+        Assert.Equal(ReceiveUploadMode.Auto.ToString(), page.Receive.UploadMode);
         Assert.Equal(ReceiveUploadChunkSizingMode.Fixed.ToString(), page.Receive.UploadChunkSizingMode);
         Assert.Equal(Defaults.DefaultReceiveUploadChunkSizeBytes, page.Receive.UploadChunkSizeBytes);
         Assert.Equal(Defaults.DefaultReceiveUploadMaxBodySizeBytes, page.Receive.UploadMaxBodySizeBytes);
         Assert.Equal(Defaults.DefaultReceiveUploadChunkTargetSeconds, page.Receive.UploadChunkTargetSeconds);
+        Assert.Equal(Defaults.DefaultReceiveUploadAutoProbeChunkCount, page.Receive.UploadAutoProbeChunkCount);
     }
 
     [Fact]
