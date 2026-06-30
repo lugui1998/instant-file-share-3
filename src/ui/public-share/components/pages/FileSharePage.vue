@@ -9,6 +9,12 @@ import {
   reduceManagedDownloadState,
   requiresStreamingManagedDownload,
 } from '../../downloadState'
+import {
+  estimateBlobFallbackMemoryCost,
+  formatTransferBytes,
+  supportsGzipDecompression,
+  supportsStreamingFileSave,
+} from '../../compressionDownload'
 import type {
   BrowserManagedDownloadChunk,
   BrowserManagedDownloadPlan,
@@ -28,6 +34,24 @@ const activeController = ref<AbortController | null>(null)
 const isPaused = ref(false)
 
 const managedDownload = computed(() => props.file.managedDownload ?? null)
+const canAttemptCompressedDownload = computed(() => props.file.canUseBrowserCompression && Boolean(props.file.compressedDownloadUrl))
+const hasGzipDecompression = computed(() => supportsGzipDecompression())
+const hasStreamingFileSave = computed(() => supportsStreamingFileSave())
+const compressionSupportLabel = computed(() => {
+  if (!canAttemptCompressedDownload.value) {
+    return 'Raw transfer'
+  }
+
+  if (!hasGzipDecompression.value) {
+    return 'Raw transfer fallback'
+  }
+
+  return hasStreamingFileSave.value ? 'Managed gzip stream available' : 'Managed gzip Blob fallback available'
+})
+const blobMemoryLabel = computed(() => {
+  const estimate = estimateBlobFallbackMemoryCost(props.file.sizeBytes)
+  return formatTransferBytes(estimate.minimumTransientBytes)
+})
 const progressPercent = computed(() => {
   if (state.value.totalBytes <= 0) {
     return state.value.status === 'complete' ? 100 : 0
@@ -361,6 +385,13 @@ function saveBlob(blob: Blob, fileName: string) {
         <span :style="{ width: `${progressPercent}%` }" />
       </div>
 
+      <p class="download-note" role="status">
+        {{ compressionSupportLabel }}
+        <template v-if="canAttemptCompressedDownload && !hasStreamingFileSave">
+          - Blob path buffers about {{ blobMemoryLabel }} before saving.
+        </template>
+      </p>
+
       <p v-if="state.error" class="download-error">{{ state.error }}</p>
 
       <div class="download-actions">
@@ -379,6 +410,12 @@ function saveBlob(blob: Blob, fileName: string) {
       </div>
     </div>
 
+    <div v-else class="download-actions">
+      <a class="public-shell__action" :href="file.rawDownloadUrl">
+        {{ file.actionVerb }} file
+      </a>
+    </div>
+
     <div class="info-grid">
       <article class="info-card">
         <span class="label">Mode</span>
@@ -387,7 +424,7 @@ function saveBlob(blob: Blob, fileName: string) {
 
       <article class="info-card">
         <span class="label">Content type</span>
-        <strong>{{ file.actionVerb }} from this link</strong>
+        <strong>{{ canAttemptCompressedDownload ? 'Raw or browser-decompressed gzip' : file.actionVerb + ' from this link' }}</strong>
       </article>
     </div>
   </section>

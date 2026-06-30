@@ -33,6 +33,10 @@ internal static class PublicShareEndpoints
     private const string RelativePathHeaderName = "X-IFS-Relative-Path";
     private const string FileNameHeaderName = "X-IFS-File-Name";
     private const string FileSizeHeaderName = "X-IFS-File-Size";
+    private const string CompressionQueryName = "compression";
+    private const string GzipCompressionQueryValue = "gzip";
+    private const string BrowserCompressionHeaderName = "X-IFS-Transfer-Compression";
+    private const string UncompressedLengthHeaderName = "X-IFS-Uncompressed-Length";
     private const string ChunkIndexHeaderName = "X-IFS-Chunk-Index";
     private const string ChunkCountHeaderName = "X-IFS-Chunk-Count";
     private const string ChunkStartHeaderName = "X-IFS-Chunk-Start";
@@ -2594,7 +2598,10 @@ internal static class PublicShareEndpoints
 
         var (clientSessionId, setCookie) = DownloadSessionManager.ResolveDownloadSession(context, share.Token);
         var clientFingerprint = RequestAddressResolver.BuildClientFingerprint(remoteAddress, userAgent);
-        var requestedRange = allowRangeRequests ? context.Request.GetTypedHeaders().Range?.Ranges.FirstOrDefault() : null;
+        var useBrowserCompression = IsBrowserCompressionRequest(context.Request)
+            && ShareFileResponsePolicy.IsBrowserCompressionCandidate(responseFileName, fileResponseMetadata);
+        var allowRangeRequestsForResponse = allowRangeRequests && !useBrowserCompression;
+        var requestedRange = allowRangeRequestsForResponse ? context.Request.GetTypedHeaders().Range?.Ranges.FirstOrDefault() : null;
         var initialBytesSent = ResolveRangeStartOffset(file.Length, requestedRange);
         var expectedTransferBytes = ResolveExpectedTransferBytes(file.Length, requestedRange);
         var countsTowardUsage = true;
@@ -2691,7 +2698,18 @@ internal static class PublicShareEndpoints
         }
 
         ResponseHeaderWriter.ApplyFileResponseHeaders(context.Response, responseFileName, fileResponseMetadata);
-        return Results.File(meteredStream, contentType: fileResponseMetadata.ContentType, enableRangeProcessing: allowRangeRequests);
+        if (useBrowserCompression)
+        {
+            context.Response.ContentType = BinaryChunkContentType;
+            context.Response.Headers[BrowserCompressionHeaderName] = GzipCompressionQueryValue;
+            context.Response.Headers[UncompressedLengthHeaderName] = file.Length.ToString(CultureInfo.InvariantCulture);
+
+            await using var gzipStream = new GZipStream(context.Response.Body, CompressionLevel.Fastest, leaveOpen: true);
+            await meteredStream.CopyToAsync(gzipStream, cancellationToken);
+            return Results.Empty;
+        }
+
+        return Results.File(meteredStream, contentType: fileResponseMetadata.ContentType, enableRangeProcessing: allowRangeRequestsForResponse);
     }
 
     private static async Task<IResult> HandleBrowserManagedDownloadPlanAsync(
@@ -3203,6 +3221,11 @@ internal static class PublicShareEndpoints
     private static bool IsCurrentDirectoryZipRequest(HttpRequest request)
     {
         return string.Equals(request.Query["download"], "zip", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsBrowserCompressionRequest(HttpRequest request)
+    {
+        return string.Equals(request.Query[CompressionQueryName], GzipCompressionQueryValue, StringComparison.OrdinalIgnoreCase);
     }
 
     private static long ResolveRangeStartOffset(long fileLength, RangeItemHeaderValue? requestedRange)

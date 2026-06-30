@@ -39,6 +39,27 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
+    public async Task FileShareDownload_WithBrowserCompressionQuery_ReturnsGzipBody()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "report.csv");
+            await File.WriteAllTextAsync(filePath, "id,name\n1,Ada\n2,Grace\n");
+            await context.Store.AddShareAsync(context.CreateFileShare("file-token", filePath), CancellationToken.None);
+        });
+
+        using var response = await host.PublicClient.GetAsync("/s/file-token?compression=gzip");
+        await using var gzip = new GZipStream(await response.Content.ReadAsStreamAsync(), CompressionMode.Decompress);
+        using var reader = new StreamReader(gzip);
+        var body = await reader.ReadToEndAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("gzip", response.Headers.GetValues("X-IFS-Transfer-Compression").Single());
+        Assert.Equal("22", response.Headers.GetValues("X-IFS-Uncompressed-Length").Single());
+        Assert.Equal("id,name\n1,Ada\n2,Grace\n", body);
+    }
+
+    [Fact]
     public async Task CrawlerRequest_ReturnsMetadataHtmlShell()
     {
         await using var host = await AgentTestHost.StartAsync(async context =>
