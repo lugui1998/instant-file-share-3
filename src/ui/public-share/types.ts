@@ -22,9 +22,114 @@ export type PublicSharePageModel = {
 export type PublicShareFileModel = {
   fileName: string
   displaySize: string
+  sizeBytes: number
   preferInline: boolean
+  canUseBrowserCompression: boolean
+  rawDownloadUrl: string
+  compressedDownloadUrl?: string | null
   actionVerb: string
   actionLabel: string
+  managedDownload?: PublicShareManagedDownloadModel | null
+  encryptionExperiment?: BrowserTransferEncryptionExperimentModel | null
+}
+
+export type PublicShareManagedDownloadModel = {
+  manifestUrl: string
+  rawDownloadUrl: string
+  fileSizeBytes: number
+  defaultChunkSizeBytes: number
+  maxRetriesPerChunk: number
+  maxMemoryBytes: number
+  maxParallelChunks: number
+  compressionMode: 'Auto' | 'Off'
+  transferDiagnosticsEnabled: boolean
+  saveLimitationNote: string
+}
+
+export type BrowserManagedDownloadPlan = {
+  fileName: string
+  fileSizeBytes: number
+  contentType: string
+  rawDownloadUrl: string
+  rangeUnit: 'bytes'
+  integrityAlgorithm: 'sha-256'
+  lastModifiedUtc: string
+  lastModifiedUtcTicks: number
+  planHash: string
+  planSignature: string
+  chunkSizeBytes: number
+  maxRetriesPerChunk: number
+  chunks: BrowserManagedDownloadChunk[]
+  saveLimitationNote: string
+}
+
+export type BrowserManagedDownloadChunk = {
+  index: number
+  start: number
+  end: number
+  sizeBytes: number
+  sha256: string
+}
+
+export type ManagedCompressionMethod = 'raw' | 'gzip'
+
+export type ManagedCompressionSample = {
+  method: ManagedCompressionMethod
+  logicalBytes: number
+  wireBytes: number
+  transferDurationMs: number
+  decompressionDurationMs: number
+  ok: boolean
+}
+
+export type ManagedCompressionSampleSummary = ManagedCompressionSample & {
+  ratio: number
+  wireBytesPerSecond: number
+  effectiveBytesPerSecond: number
+}
+
+export type ManagedCompressionProbeState = {
+  gzipDisabled: boolean
+  disabledReason?: string
+  decisionReason: string
+  rawSampleCount: number
+  gzipSampleCount: number
+  rawLogicalBytes: number
+  rawWireBytes: number
+  rawTransferDurationMs: number
+  gzipLogicalBytes: number
+  gzipWireBytes: number
+  gzipTransferDurationMs: number
+  gzipDecompressionDurationMs: number
+  lastRawSample?: ManagedCompressionSampleSummary
+  lastGzipSample?: ManagedCompressionSampleSummary
+}
+
+export type ManagedCompressionDecision = {
+  method: ManagedCompressionMethod
+  reason: string
+}
+
+export type BrowserTransferEncryptionExperimentModel = {
+  downloadManifestUrl?: string | null
+  encryptedDownloadUrl?: string | null
+  fragmentKeyParameter: string
+  algorithm: 'AES-GCM'
+  ivStrategy: string
+  keyDelivery: string
+  receiveUploadModes: BrowserTransferReceiveEncryptionMode[]
+}
+
+export type BrowserTransferReceiveEncryptionMode = 'store-encrypted'
+
+export type BrowserTransferEncryptedDownloadPlan = {
+  algorithm: 'AES-GCM'
+  encryptedDownloadUrl: string
+  fileName: string
+  contentType: string
+  chunkIndex: number
+  ivBase64Url: string
+  keyDelivery: string
 }
 
 export type PublicShareFolderModel = {
@@ -50,11 +155,13 @@ export type PublicShareReceiveModel = {
   remainingQuotaBytes: number
   remainingQuotaLabel: string
   parallelUploadLimit: number
-  uploadMode: 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket'
+  uploadMode: 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket' | 'Auto' | 'CompressedStream'
   uploadChunkSizingMode: 'Fixed' | 'Auto'
   uploadChunkSizeBytes: number
   uploadMaxBodySizeBytes: number
   uploadChunkTargetSeconds: number
+  uploadAutoProbeChunkCount: number
+  encryptionExperiment?: BrowserTransferEncryptionExperimentModel | null
   expiresAtLabel?: string | null
 }
 

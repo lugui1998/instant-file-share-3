@@ -14,11 +14,18 @@ function createSettingsDraft(): AppSettings {
     defaultReceiveExpiryUnit: 'Hours',
     defaultReceiveMaxTotalBytes: 10 * 1024 * 1024 * 1024,
     receiveParallelUploadLimit: 4,
-    receiveUploadMode: 'MultipartChunks',
+    receiveUploadMode: 'Auto',
     receiveUploadChunkSizingMode: 'Fixed',
     receiveUploadChunkSizeBytes: 16 * 1024 * 1024,
     receiveUploadMaxBodySizeBytes: 95 * 1024 * 1024,
     receiveUploadChunkTargetSeconds: 30,
+    receiveUploadAutoProbeChunkCount: 4,
+    browserManagedDownloadsEnabled: true,
+    browserManagedDownloadMaxMemoryBytes: 512 * 1024 * 1024,
+    browserManagedDownloadMaxParallelChunks: 4,
+    browserManagedCompressionMode: 'Auto',
+    browserTransferEncryptionPolicy: 'HttpOnly',
+    browserTransferDiagnosticsEnabled: false,
     folderBrowsePageTitle: '',
     receivePageTitle: '',
     friendlyUrlsEnabled: true,
@@ -134,10 +141,64 @@ describe('SettingsView', () => {
     expect(wrapper.text()).toContain('Upload mode')
     expect(select.exists()).toBe(true)
     expect(select.findAll('option').map((option) => option.attributes('value'))).toEqual([
+      'Auto',
       'MultipartChunks',
       'BinaryChunks',
       'WebSocket',
+      'CompressedStream',
     ])
+  })
+
+  it('shows browser-managed transfer settings', () => {
+    const wrapper = mount(SettingsView, {
+      props: {
+        settingsDraft: createSettingsDraft(),
+        bandwidthValue: null,
+        bandwidthUnit: 'MB/s',
+        selectedDomain: '',
+        managedSubdomain: 'share',
+        cloudflaredStatus: null,
+        clearingTransferHistory: false,
+        managedStatus: null,
+        managedAvailability: null,
+        saveMessage: '',
+      },
+    })
+
+    expect(wrapper.find('#browser-managed-downloads-enabled').exists()).toBe(true)
+    expect(wrapper.find('#browser-managed-download-memory').exists()).toBe(true)
+    expect(wrapper.find('#browser-managed-download-parallel-chunks').exists()).toBe(true)
+    expect(wrapper.find('#browser-managed-compression-mode').exists()).toBe(true)
+    expect(wrapper.find('#browser-transfer-encryption-policy').exists()).toBe(true)
+    expect(wrapper.find('#browser-transfer-diagnostics-enabled').exists()).toBe(true)
+  })
+
+  it('shows the auto probing threshold only for auto receive uploads', async () => {
+    const settingsDraft = createSettingsDraft()
+    const wrapper = mount(SettingsView, {
+      props: {
+        settingsDraft,
+        bandwidthValue: null,
+        bandwidthUnit: 'MB/s',
+        selectedDomain: '',
+        managedSubdomain: 'share',
+        cloudflaredStatus: null,
+        clearingTransferHistory: false,
+        managedStatus: null,
+        managedAvailability: null,
+        saveMessage: '',
+      },
+    })
+
+    const input = wrapper.find('#receive-upload-auto-probe-chunks')
+    expect(input.exists()).toBe(true)
+    expect(input.element).toHaveProperty('value', '4')
+    expect(input.attributes('min')).toBe('1')
+    expect(wrapper.text()).toContain('Default: 4 chunks')
+
+    await wrapper.find('#receive-upload-mode').setValue('BinaryChunks')
+
+    expect(wrapper.find('#receive-upload-auto-probe-chunks').exists()).toBe(false)
   })
 
   it('shows fixed and automatic packet sizing settings', async () => {

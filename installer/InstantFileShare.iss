@@ -6,7 +6,7 @@
 #define CloudflaredWingetUninstallArgs "uninstall --id Cloudflare.cloudflared -e --disable-interactivity"
 
 #ifndef AppVersion
-  #define AppVersion "1.0.2"
+  #define AppVersion "1.3.0"
 #endif
 
 #ifndef StageDir

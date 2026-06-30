@@ -4,34 +4,61 @@ namespace InstantFileShare.Agent;
 
 internal sealed class PublicSharePageModelFactory
 {
+    public const int BrowserManagedDownloadChunkSizeBytes = 4 * 1024 * 1024;
+    public const int BrowserManagedDownloadMaxRetriesPerChunk = 3;
+
     public PublicSharePageModel BuildFileMetadataPage(
         HttpContext context,
         ShareRecord share,
         string responseFileName,
         FileInfo file,
-        ShareFileResponseMetadata fileResponseMetadata)
+        ShareFileResponseMetadata fileResponseMetadata,
+        AppSettings settings)
     {
         var actionVerb = fileResponseMetadata.PreferInline ? "View" : "Download";
         var description = $"{actionVerb} {responseFileName} ({FormatFileSize(file.Length)}). Shared via Instant File Share.";
         var actionLabel = fileResponseMetadata.PreferInline
             ? $"Open this link to view {responseFileName} in your browser or download it."
             : $"Open this link to download {responseFileName}.";
+        var currentUrl = BuildCurrentUrl(context);
+        var rawDownloadUrl = AppendQueryValue(currentUrl, "download", "raw");
+        var canUseBrowserCompression = settings.BrowserManagedCompressionMode == BrowserManagedCompressionMode.Auto &&
+            ShareFileResponsePolicy.IsBrowserCompressionCandidate(responseFileName, fileResponseMetadata);
+        var managedDownloadsEnabled = settings.BrowserManagedDownloadsEnabled && !fileResponseMetadata.PreferInline;
 
         return new PublicSharePageModel(
             Kind: "file",
             Title: responseFileName,
             Description: description,
-            CanonicalUrl: BuildCurrentUrl(context),
+            CanonicalUrl: currentUrl,
             SiteName: "Instant File Share",
             RepositoryUrl: Defaults.RepositoryUrl,
-            PrimaryActionLabel: $"{actionVerb} file",
-            PrimaryActionUrl: BuildCurrentUrl(context),
+            PrimaryActionLabel: fileResponseMetadata.PreferInline ? $"{actionVerb} file" : "Direct download",
+            PrimaryActionUrl: fileResponseMetadata.PreferInline ? currentUrl : rawDownloadUrl,
             File: new PublicShareFileModel(
                 responseFileName,
                 FormatFileSize(file.Length),
+                file.Length,
                 fileResponseMetadata.PreferInline,
+                canUseBrowserCompression,
+                rawDownloadUrl,
+                canUseBrowserCompression ? AppendQueryValue(rawDownloadUrl, "compression", "gzip") : null,
                 actionVerb,
-                actionLabel),
+                actionLabel,
+                managedDownloadsEnabled
+                    ? new PublicShareManagedDownloadModel(
+                        ManifestUrl: AppendQueryValue(currentUrl, "ifs", "download-plan"),
+                        RawDownloadUrl: rawDownloadUrl,
+                        FileSizeBytes: file.Length,
+                        DefaultChunkSizeBytes: BrowserManagedDownloadChunkSizeBytes,
+                        MaxRetriesPerChunk: BrowserManagedDownloadMaxRetriesPerChunk,
+                        MaxMemoryBytes: Math.Max(Defaults.MinimumReceiveUploadChunkSizeBytes, settings.BrowserManagedDownloadMaxMemoryBytes),
+                        MaxParallelChunks: Math.Max(Defaults.MinimumBrowserManagedDownloadMaxParallelChunks, settings.BrowserManagedDownloadMaxParallelChunks),
+                        CompressionMode: settings.BrowserManagedCompressionMode.ToString(),
+                        TransferDiagnosticsEnabled: settings.BrowserTransferDiagnosticsEnabled,
+                        SaveLimitationNote: "The browser-managed downloader verifies Range chunks and assembles a Blob before saving. Very large files may require substantial browser memory; direct download remains available.")
+                    : null,
+                EncryptionExperiment: null),
             Folder: null,
             Zip: null,
             Receive: null);
@@ -139,7 +166,33 @@ internal sealed class PublicSharePageModelFactory
                 Math.Max(
                     Defaults.MinimumReceiveUploadChunkTargetSeconds,
                     settings.ReceiveUploadChunkTargetSeconds <= 0 ? Defaults.DefaultReceiveUploadChunkTargetSeconds : settings.ReceiveUploadChunkTargetSeconds),
+                Math.Max(
+                    Defaults.MinimumReceiveUploadAutoProbeChunkCount,
+                    settings.ReceiveUploadAutoProbeChunkCount <= 0 ? Defaults.DefaultReceiveUploadAutoProbeChunkCount : settings.ReceiveUploadAutoProbeChunkCount),
+                ShouldExposeBrowserTransferEncryption(context, settings) ? CreateBrowserTransferReceiveEncryptionExperiment() : null,
                 receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
+    }
+
+    private static bool ShouldExposeBrowserTransferEncryption(HttpContext context, AppSettings settings)
+    {
+        return settings.BrowserTransferEncryptionPolicy switch
+        {
+            BrowserTransferEncryptionPolicy.Always => true,
+            BrowserTransferEncryptionPolicy.Off => false,
+            _ => !context.Request.IsHttps,
+        };
+    }
+
+    private static BrowserTransferEncryptionExperimentModel CreateBrowserTransferReceiveEncryptionExperiment()
+    {
+        return new BrowserTransferEncryptionExperimentModel(
+            DownloadManifestUrl: null,
+            EncryptedDownloadUrl: null,
+            FragmentKeyParameter: "ifs-key",
+            Algorithm: "AES-GCM",
+            IvStrategy: "96-bit AES-GCM IV: 4 random nonce-prefix bytes plus an 8-byte big-endian chunk index; never reuse an IV with the same key.",
+            KeyDelivery: "Prototype keys are passed in the URL fragment so browsers do not include them in HTTP requests.",
+            ReceiveUploadModes: ["store-encrypted"]);
     }
 
     private static string ResolveReceivePageTitle(AppSettings settings)
@@ -212,6 +265,12 @@ internal sealed class PublicSharePageModelFactory
     private static string BuildCurrentUrl(HttpContext context)
     {
         return $"{context.Request.Scheme}://{context.Request.Host}{context.Request.PathBase}{context.Request.Path}";
+    }
+
+    private static string AppendQueryValue(string url, string name, string value)
+    {
+        var separator = url.Contains('?', StringComparison.Ordinal) ? "&" : "?";
+        return $"{url}{separator}{Uri.EscapeDataString(name)}={Uri.EscapeDataString(value)}";
     }
 
     private static string BuildCurrentPath(HttpContext context)

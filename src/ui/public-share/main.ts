@@ -17,7 +17,11 @@ const payload: PublicShareBootstrapPayload = window.__IFS_PUBLIC_SHARE__ ?? {
     file: {
       fileName: 'Unavailable',
       displaySize: '0 B',
+      sizeBytes: 0,
       preferInline: false,
+      canUseBrowserCompression: false,
+      rawDownloadUrl: window.location.href,
+      compressedDownloadUrl: null,
       actionVerb: 'Download',
       actionLabel: 'The public share payload is missing.',
     },
