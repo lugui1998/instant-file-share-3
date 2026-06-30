@@ -60,6 +60,44 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
+    public async Task EncryptedDownloadPlan_RejectsLiveFileSharesWithoutIvMetadata()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "secret.bin");
+            await File.WriteAllBytesAsync(filePath, [1, 2, 3, 4]);
+            await context.Store.AddShareAsync(context.CreateFileShare("file-token", filePath), CancellationToken.None);
+        });
+
+        using var response = await host.PublicClient.GetAsync("/s/file-token?ifs=encrypted-download-plan");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("no persisted AES-GCM IV metadata", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("ivBase64Url", body, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AAAAAAAAAAAAAAAA", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("encryptedDownloadUrl", body, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task EncryptedDownload_RejectsLiveFileSharesInsteadOfServingPlaintextAsCiphertext()
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var filePath = Path.Combine(context.FilesDirectory, "secret.bin");
+            await File.WriteAllBytesAsync(filePath, [1, 2, 3, 4]);
+            await context.Store.AddShareAsync(context.CreateFileShare("file-token", filePath), CancellationToken.None);
+        });
+
+        using var response = await host.PublicClient.GetAsync("/s/file-token?ifs=encrypted-download");
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.Conflict, response.StatusCode);
+        Assert.Contains("no persisted AES-GCM IV metadata", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("AQIDBA", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task CrawlerRequest_ReturnsMetadataHtmlShell()
     {
         await using var host = await AgentTestHost.StartAsync(async context =>

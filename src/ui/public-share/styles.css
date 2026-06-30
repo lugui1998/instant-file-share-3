@@ -343,6 +343,7 @@ a {
 
 .upload-dropzone,
 .upload-panel,
+.download-panel,
 .upload-item {
   border: 1px solid var(--line);
   background: var(--surface-strong);
@@ -350,8 +351,22 @@ a {
 }
 
 .upload-dropzone,
-.upload-panel {
+.upload-panel,
+.download-panel {
   padding: 18px;
+}
+
+.download-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.download-panel__header,
+.download-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
 }
 
 .upload-dropzone {

@@ -30,6 +30,7 @@ export type PublicShareFileModel = {
   actionVerb: string
   actionLabel: string
   managedDownload?: PublicShareManagedDownloadModel | null
+  encryptionExperiment?: BrowserTransferEncryptionExperimentModel | null
 }
 
 export type PublicShareManagedDownloadModel = {
@@ -65,6 +66,28 @@ export type BrowserManagedDownloadChunk = {
   sha256: string
 }
 
+export type BrowserTransferEncryptionExperimentModel = {
+  downloadManifestUrl?: string | null
+  encryptedDownloadUrl?: string | null
+  fragmentKeyParameter: string
+  algorithm: 'AES-GCM'
+  ivStrategy: string
+  keyDelivery: string
+  receiveUploadModes: BrowserTransferReceiveEncryptionMode[]
+}
+
+export type BrowserTransferReceiveEncryptionMode = 'store-encrypted'
+
+export type BrowserTransferEncryptedDownloadPlan = {
+  algorithm: 'AES-GCM'
+  encryptedDownloadUrl: string
+  fileName: string
+  contentType: string
+  chunkIndex: number
+  ivBase64Url: string
+  keyDelivery: string
+}
+
 export type PublicShareFolderModel = {
   name: string
   relativePath: string
@@ -94,6 +117,7 @@ export type PublicShareReceiveModel = {
   uploadMaxBodySizeBytes: number
   uploadChunkTargetSeconds: number
   uploadAutoProbeChunkCount: number
+  encryptionExperiment?: BrowserTransferEncryptionExperimentModel | null
   expiresAtLabel?: string | null
 }
 
