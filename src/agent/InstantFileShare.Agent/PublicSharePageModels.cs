@@ -19,7 +19,16 @@ internal sealed record PublicShareFileModel(
     string DisplaySize,
     bool PreferInline,
     string ActionVerb,
-    string ActionLabel);
+    string ActionLabel,
+    PublicShareManagedDownloadModel? ManagedDownload);
+
+internal sealed record PublicShareManagedDownloadModel(
+    string ManifestUrl,
+    string RawDownloadUrl,
+    long FileSizeBytes,
+    int DefaultChunkSizeBytes,
+    int MaxRetriesPerChunk,
+    string SaveLimitationNote);
 
 internal sealed record PublicShareFolderModel(
     string Name,

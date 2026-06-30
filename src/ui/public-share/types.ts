@@ -25,6 +25,40 @@ export type PublicShareFileModel = {
   preferInline: boolean
   actionVerb: string
   actionLabel: string
+  managedDownload?: PublicShareManagedDownloadModel | null
+}
+
+export type PublicShareManagedDownloadModel = {
+  manifestUrl: string
+  rawDownloadUrl: string
+  fileSizeBytes: number
+  defaultChunkSizeBytes: number
+  maxRetriesPerChunk: number
+  saveLimitationNote: string
+}
+
+export type BrowserManagedDownloadPlan = {
+  fileName: string
+  fileSizeBytes: number
+  contentType: string
+  rawDownloadUrl: string
+  rangeUnit: 'bytes'
+  integrityAlgorithm: 'sha-256'
+  lastModifiedUtc: string
+  lastModifiedUtcTicks: number
+  planHash: string
+  chunkSizeBytes: number
+  maxRetriesPerChunk: number
+  chunks: BrowserManagedDownloadChunk[]
+  saveLimitationNote: string
+}
+
+export type BrowserManagedDownloadChunk = {
+  index: number
+  start: number
+  end: number
+  sizeBytes: number
+  sha256: string
 }
 
 export type PublicShareFolderModel = {
