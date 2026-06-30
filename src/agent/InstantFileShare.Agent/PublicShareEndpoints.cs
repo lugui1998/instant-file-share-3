@@ -20,6 +20,7 @@ internal static class PublicShareEndpoints
     private const string FolderEventsQueryValue = "folder-events";
     private const string PartialUploadSuffix = ".downloadpart";
     private const string BinaryChunkContentType = "application/octet-stream";
+    private const string CompressedStreamContentType = "application/gzip";
     private const string UploadIdHeaderName = "X-IFS-Upload-Id";
     private const string BatchIdHeaderName = "X-IFS-Batch-Id";
     private const string RelativePathHeaderName = "X-IFS-Relative-Path";
@@ -33,6 +34,7 @@ internal static class PublicShareEndpoints
     private const int AdaptiveChunkGrowthFactor = 2;
     private const long MaximumAdaptiveChunkSizeBytes = 64L * 1024 * 1024;
     private const int ReceiveUploadBufferSizeBytes = 1024 * 1024;
+    private const int MaximumCompressedUploadExpansionRatio = 128;
     private static readonly JsonSerializerOptions WebSocketJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly ConcurrentDictionary<string, ReceiveUploadSpeedState> ReceiveUploadSpeedStates = new(StringComparer.Ordinal);
 
@@ -377,6 +379,19 @@ internal static class PublicShareEndpoints
             return HandleReceiveUploadBatchComplete(context, receiveLink, batchNotificationTracker);
         }
 
+        if (IsReceiveUploadCompressedStreamRequest(context.Request))
+        {
+            return await HandleReceiveCompressedStreamUploadAsync(
+                receiveLink,
+                context,
+                coordinator,
+                notificationService,
+                powerManagementService,
+                batchNotificationTracker,
+                chunkSessionStore,
+                cancellationToken);
+        }
+
         DisableRequestBodySizeLimit(context);
 
         if (IsReceiveUploadBinaryChunkRequest(context.Request))
@@ -583,6 +598,111 @@ internal static class PublicShareEndpoints
             results.Count - successfulUploadCount,
             remainingQuotaBytes,
             results));
+    }
+
+    private static async Task<IResult> HandleReceiveCompressedStreamUploadAsync(
+        ReceiveLinkRecord receiveLink,
+        HttpContext context,
+        IShareCoordinator coordinator,
+        INotificationService notificationService,
+        PowerManagementService powerManagementService,
+        ReceiveUploadBatchNotificationTracker batchNotificationTracker,
+        ReceiveUploadChunkSessionStore chunkSessionStore,
+        CancellationToken cancellationToken)
+    {
+        if (!TryReadCompressedStreamHeaders(
+            context.Request,
+            out var batchId,
+            out var uploadId,
+            out var clientRelativePath,
+            out var fileName,
+            out var expectedFileSize,
+            out var error))
+        {
+            return error!;
+        }
+
+        var settings = await coordinator.GetSettingsAsync(cancellationToken);
+        if (!TryValidateCompressedStreamUploadLimits(
+            context.Request,
+            receiveLink,
+            settings,
+            fileName,
+            clientRelativePath,
+            expectedFileSize,
+            out var limitError))
+        {
+            return limitError!;
+        }
+
+        var remoteAddress = RequestAddressResolver.ResolveClientIpAddress(context);
+        var clientFingerprint = RequestAddressResolver.BuildClientFingerprint(remoteAddress, context.Request.Headers.UserAgent.ToString());
+        var uploadPlanState = new ReceiveUploadPlanState(receiveLink.TargetDirectoryPath);
+        var keepAwakeNotified = false;
+
+        try
+        {
+            var candidate = new ReceiveUploadCandidate(fileName, expectedFileSize, clientRelativePath);
+            var (plannedUploads, rejectedUploads) = ReceiveUploadPlanner.Plan(receiveLink.TargetDirectoryPath, [candidate], uploadPlanState);
+            if (plannedUploads.Count == 0)
+            {
+                await context.Request.Body.CopyToAsync(Stream.Null, cancellationToken);
+                return CreateReceiveUploadBatchResponse(new ReceiveUploadBatchResult(0, rejectedUploads.Count, 0, rejectedUploads));
+            }
+
+            if (settings.KeepAwakeWhileTransferring)
+            {
+                powerManagementService.NotifyTransferStarted();
+                keepAwakeNotified = true;
+            }
+
+            await using var countingBody = new CountingReadStream(
+                context.Request.Body,
+                ResolveReceiveUploadMaxBodySizeBytes(settings.ReceiveUploadMaxBodySizeBytes));
+            await using var decodedStream = new GZipStream(countingBody, CompressionMode.Decompress, leaveOpen: false);
+            var streamResult = await SaveCompressedReceiveUploadSectionAsync(
+                decodedStream,
+                countingBody,
+                plannedUploads[0],
+                receiveLink,
+                coordinator,
+                chunkSessionStore,
+                uploadId,
+                remoteAddress,
+                clientFingerprint,
+                cancellationToken);
+
+            receiveLink = streamResult.ReceiveLink;
+            receiveLink = await coordinator.ResolveReceiveLinkAsync(receiveLink.Token, cancellationToken) ?? receiveLink;
+            var remainingQuotaBytes = receiveLink.MaxTotalBytes > 0
+                ? Math.Max(0, receiveLink.MaxTotalBytes - receiveLink.BytesReceived)
+                : 0;
+            var results = streamResult.Result is null
+                ? Array.Empty<ReceiveUploadFileResult>()
+                : new[] { streamResult.Result };
+            var successfulUploadCount = streamResult.Result?.Success == true ? 1 : 0;
+
+            RecordSuccessfulReceiveUploads(
+                receiveLink,
+                settings,
+                notificationService,
+                batchNotificationTracker,
+                batchId,
+                successfulUploadCount);
+
+            return CreateReceiveUploadBatchResponse(new ReceiveUploadBatchResult(
+                successfulUploadCount,
+                results.Length - successfulUploadCount,
+                remainingQuotaBytes,
+                results));
+        }
+        finally
+        {
+            if (keepAwakeNotified)
+            {
+                powerManagementService.NotifyTransferEnded();
+            }
+        }
     }
 
     private static async Task<IResult> HandleReceiveBinaryChunkUploadAsync(
@@ -1074,6 +1194,186 @@ internal static class PublicShareEndpoints
         }
     }
 
+    private static async Task<ReceiveUploadStreamResult> SaveCompressedReceiveUploadSectionAsync(
+        Stream decodedSourceStream,
+        CountingReadStream compressedWireStream,
+        PlannedReceiveUpload plannedUpload,
+        ReceiveLinkRecord receiveLink,
+        IShareCoordinator coordinator,
+        ReceiveUploadChunkSessionStore chunkSessionStore,
+        string? uploadId,
+        string? remoteAddress,
+        string? clientFingerprint,
+        CancellationToken cancellationToken)
+    {
+        var parentDirectoryPath = Path.GetDirectoryName(plannedUpload.DestinationPath);
+        if (!string.IsNullOrWhiteSpace(parentDirectoryPath))
+        {
+            Directory.CreateDirectory(parentDirectoryPath);
+        }
+
+        if (!string.IsNullOrWhiteSpace(uploadId) && chunkSessionStore.IsCanceled(uploadId))
+        {
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "Upload stopped.", 0));
+        }
+
+        TransferSnapshot? transfer = null;
+        long decodedBytesWritten = 0;
+        long reservedBytes = 0;
+        var expectedDecodedBytes = plannedUpload.Length;
+        var partialDestinationPath = GetPartialUploadPath(plannedUpload.DestinationPath);
+
+        try
+        {
+            transfer = await coordinator.StartTransferAsync(
+                receiveLink.Id,
+                receiveLink.Token,
+                plannedUpload.StoredRelativePath,
+                TransferKind.FileUpload,
+                clientSessionId: string.IsNullOrWhiteSpace(uploadId) ? null : uploadId,
+                clientFingerprint,
+                remoteAddress,
+                totalBytes: expectedDecodedBytes,
+                bytesSent: 0,
+                requesterName: null,
+                cancellationToken);
+
+            {
+                await using var destinationStream = new FileStream(
+                    partialDestinationPath,
+                    new FileStreamOptions
+                    {
+                        Mode = FileMode.CreateNew,
+                        Access = FileAccess.Write,
+                        Share = FileShare.None,
+                        Options = FileOptions.Asynchronous,
+                    });
+
+                var buffer = new byte[ReceiveUploadBufferSizeBytes];
+                int bytesRead;
+                while ((bytesRead = await decodedSourceStream.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+                {
+                    if (!string.IsNullOrWhiteSpace(uploadId) && chunkSessionStore.IsCanceled(uploadId))
+                    {
+                        throw new ReceiveUploadCanceledException();
+                    }
+
+                    if (decodedBytesWritten + bytesRead > expectedDecodedBytes)
+                    {
+                        throw new ReceiveUploadIncompleteException();
+                    }
+
+                    if (receiveLink.MaxTotalBytes > 0 &&
+                        receiveLink.BytesReceived + bytesRead > receiveLink.MaxTotalBytes)
+                    {
+                        throw new ReceiveUploadQuotaExceededException();
+                    }
+
+                    var reservedReceiveLink = await coordinator.AddReceivedBytesAsync(receiveLink.Id, bytesRead, cancellationToken);
+                    if (reservedReceiveLink is null)
+                    {
+                        throw new ReceiveUploadUnavailableException();
+                    }
+
+                    if (reservedReceiveLink.BytesReceived < receiveLink.BytesReceived + bytesRead)
+                    {
+                        throw new ReceiveUploadQuotaExceededException();
+                    }
+
+                    receiveLink = reservedReceiveLink;
+                    reservedBytes += bytesRead;
+                    await destinationStream.WriteAsync(buffer.AsMemory(0, bytesRead), cancellationToken);
+                    decodedBytesWritten += bytesRead;
+                    await coordinator.UpdateTransferProgressAsync(
+                        transfer.Id,
+                        compressedWireStream.BytesRead,
+                        cancellationToken,
+                        progressBytes: decodedBytesWritten,
+                        progressTotalBytes: expectedDecodedBytes);
+                }
+            }
+
+            if (decodedBytesWritten != expectedDecodedBytes)
+            {
+                throw new ReceiveUploadIncompleteException();
+            }
+
+            File.Move(partialDestinationPath, plannedUpload.DestinationPath, overwrite: false);
+
+            await coordinator.MarkTransferCompletedAsync(
+                transfer.Id,
+                receiveLink.Id,
+                receiveLink.Token,
+                plannedUpload.StoredRelativePath,
+                TransferKind.FileUpload,
+                remoteAddress,
+                compressedWireStream.BytesRead,
+                expectedDecodedBytes,
+                paused: false,
+                succeeded: true,
+                countsTowardUsage: false,
+                usageSessionKey: null,
+                error: null,
+                requesterName: null,
+                cancellationToken);
+
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, plannedUpload.StoredRelativePath, true, null, decodedBytesWritten));
+        }
+        catch (ReceiveUploadQuotaExceededException)
+        {
+            await RollBackFailedUploadAsync(coordinator, receiveLink.Id, reservedBytes, partialDestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, compressedWireStream.BytesRead);
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "This receive link has reached its upload limit.", decodedBytesWritten));
+        }
+        catch (ReceiveUploadIncompleteException)
+        {
+            await RollBackFailedUploadAsync(coordinator, receiveLink.Id, reservedBytes, partialDestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, compressedWireStream.BytesRead);
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "The decoded upload size did not match the declared file size.", decodedBytesWritten));
+        }
+        catch (ReceiveUploadCompressedBodyTooLargeException)
+        {
+            await RollBackFailedUploadAsync(coordinator, receiveLink.Id, reservedBytes, partialDestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, compressedWireStream.BytesRead);
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "The compressed upload body exceeds the configured size limit.", decodedBytesWritten));
+        }
+        catch (ReceiveUploadUnavailableException)
+        {
+            await RollBackFailedUploadAsync(coordinator, receiveLink.Id, reservedBytes, partialDestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, compressedWireStream.BytesRead);
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "The receive link is unavailable.", decodedBytesWritten));
+        }
+        catch (ReceiveUploadCanceledException)
+        {
+            await RollBackFailedUploadAsync(coordinator, receiveLink.Id, reservedBytes, partialDestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, compressedWireStream.BytesRead, paused: true, error: "Upload stopped.");
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "Upload stopped.", decodedBytesWritten));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await RollBackFailedUploadAsync(coordinator, receiveLink.Id, reservedBytes, partialDestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, compressedWireStream.BytesRead);
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "The upload was interrupted.", decodedBytesWritten));
+        }
+        catch (Exception)
+        {
+            await RollBackFailedUploadAsync(coordinator, receiveLink.Id, reservedBytes, partialDestinationPath, transfer, receiveLink.Token, plannedUpload.StoredRelativePath, remoteAddress, compressedWireStream.BytesRead);
+            return new ReceiveUploadStreamResult(
+                receiveLink,
+                new ReceiveUploadFileResult(plannedUpload.FileName, plannedUpload.ClientRelativePath, null, false, "The compressed upload could not be decoded.", decodedBytesWritten));
+        }
+    }
+
     private static async Task<ReceiveUploadStreamResult> SaveReceiveUploadChunkSectionAsync(
         Stream sourceStream,
         ReceiveUploadChunkMetadata chunkMetadata,
@@ -1367,6 +1667,99 @@ internal static class PublicShareEndpoints
         return !string.IsNullOrWhiteSpace(request.ContentType) &&
             MediaTypeHeaderValue.TryParse(request.ContentType, out var mediaTypeHeader) &&
             string.Equals(mediaTypeHeader.MediaType.Value, BinaryChunkContentType, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsReceiveUploadCompressedStreamRequest(HttpRequest request)
+    {
+        return !string.IsNullOrWhiteSpace(request.ContentType) &&
+            MediaTypeHeaderValue.TryParse(request.ContentType, out var mediaTypeHeader) &&
+            string.Equals(mediaTypeHeader.MediaType.Value, CompressedStreamContentType, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryReadCompressedStreamHeaders(
+        HttpRequest request,
+        out string? batchId,
+        out string uploadId,
+        out string clientRelativePath,
+        out string fileName,
+        out long expectedFileSize,
+        out IResult? error)
+    {
+        batchId = NormalizeReceiveUploadBatchId(ReadHeaderValue(request, BatchIdHeaderName));
+        uploadId = NormalizeReceiveUploadId(ReadHeaderValue(request, UploadIdHeaderName));
+        clientRelativePath = DecodeReceiveUploadHeaderValue(ReadHeaderValue(request, RelativePathHeaderName));
+        fileName = Path.GetFileName(DecodeReceiveUploadHeaderValue(ReadHeaderValue(request, FileNameHeaderName)));
+        expectedFileSize = ParseReceiveUploadFileSize(ReadHeaderValue(request, FileSizeHeaderName));
+        error = null;
+
+        if (string.IsNullOrWhiteSpace(clientRelativePath))
+        {
+            error = Results.BadRequest(new { message = "Compressed stream uploads require a relative path." });
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            fileName = ResolveFileNameFromRelativePath(clientRelativePath);
+        }
+
+        if (string.IsNullOrWhiteSpace(fileName) || expectedFileSize <= 0)
+        {
+            error = Results.BadRequest(new { message = "Compressed stream upload metadata is invalid." });
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryValidateCompressedStreamUploadLimits(
+        HttpRequest request,
+        ReceiveLinkRecord receiveLink,
+        AppSettings settings,
+        string fileName,
+        string clientRelativePath,
+        long expectedFileSize,
+        out IResult? error)
+    {
+        error = null;
+        var compressedBodyLimitBytes = ResolveReceiveUploadMaxBodySizeBytes(settings.ReceiveUploadMaxBodySizeBytes);
+        if (request.ContentLength is > 0 &&
+            request.ContentLength.Value > compressedBodyLimitBytes)
+        {
+            error = Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+            return false;
+        }
+
+        var remainingQuotaBytes = receiveLink.MaxTotalBytes > 0
+            ? Math.Max(0, receiveLink.MaxTotalBytes - receiveLink.BytesReceived)
+            : 0;
+        if (receiveLink.MaxTotalBytes > 0 && expectedFileSize > remainingQuotaBytes)
+        {
+            error = CreateReceiveUploadBatchResponse(new ReceiveUploadBatchResult(
+                0,
+                1,
+                remainingQuotaBytes,
+                [new ReceiveUploadFileResult(fileName, clientRelativePath, null, false, "This receive link has reached its upload limit.", 0)]));
+            return false;
+        }
+
+        if (request.ContentLength is > 0 &&
+            expectedFileSize / MaximumCompressedUploadExpansionRatio > request.ContentLength.Value)
+        {
+            error = CreateReceiveUploadBatchResponse(new ReceiveUploadBatchResult(
+                0,
+                1,
+                remainingQuotaBytes,
+                [new ReceiveUploadFileResult(fileName, clientRelativePath, null, false, "The declared decoded size exceeds the compressed upload expansion limit.", 0)]));
+            return false;
+        }
+
+        return true;
+    }
+
+    private static long ResolveReceiveUploadMaxBodySizeBytes(long maxBodySizeBytes)
+    {
+        return Math.Max(Defaults.MinimumReceiveUploadChunkSizeBytes, maxBodySizeBytes);
     }
 
     private static bool TryReadBinaryChunkHeaders(
@@ -1886,7 +2279,81 @@ internal static class PublicShareEndpoints
 
     private sealed class ReceiveUploadCanceledException : Exception;
 
+    private sealed class ReceiveUploadCompressedBodyTooLargeException : Exception;
+
     private sealed class ReceiveUploadUnavailableException : Exception;
+
+    private sealed class CountingReadStream(Stream inner, long? maxBytesRead = null) : Stream
+    {
+        public long BytesRead { get; private set; }
+
+        public override bool CanRead => inner.CanRead;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override void Flush()
+        {
+        }
+
+        public override int Read(byte[] buffer, int offset, int count)
+        {
+            var bytesRead = inner.Read(buffer, offset, count);
+            CountBytesRead(bytesRead);
+            return bytesRead;
+        }
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            var bytesRead = await inner.ReadAsync(buffer, cancellationToken);
+            CountBytesRead(bytesRead);
+            return bytesRead;
+        }
+
+        private void CountBytesRead(int bytesRead)
+        {
+            if (bytesRead <= 0)
+            {
+                return;
+            }
+
+            var nextBytesRead = BytesRead + bytesRead;
+            if (maxBytesRead is > 0 && nextBytesRead > maxBytesRead.Value)
+            {
+                throw new ReceiveUploadCompressedBodyTooLargeException();
+            }
+
+            BytesRead = nextBytesRead;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        public override async ValueTask DisposeAsync()
+        {
+            await inner.DisposeAsync();
+            await base.DisposeAsync();
+        }
+    }
 
     private static IResult CreateReceiveUploadBatchResponse(ReceiveUploadBatchResult response)
     {
@@ -1911,6 +2378,11 @@ internal static class PublicShareEndpoints
         }
 
         if (failedMessages.Any(message => message.Contains("upload limit", StringComparison.OrdinalIgnoreCase)))
+        {
+            return StatusCodes.Status413PayloadTooLarge;
+        }
+
+        if (failedMessages.Any(message => message.Contains("configured size limit", StringComparison.OrdinalIgnoreCase)))
         {
             return StatusCodes.Status413PayloadTooLarge;
         }
@@ -1940,6 +2412,7 @@ internal static class PublicShareEndpoints
     {
         return message.Contains("metadata is invalid", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("did not complete", StringComparison.OrdinalIgnoreCase) ||
+            message.Contains("decoded upload size did not match", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("interrupted", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("path traverses", StringComparison.OrdinalIgnoreCase) ||
             message.Contains("not allowed", StringComparison.OrdinalIgnoreCase);

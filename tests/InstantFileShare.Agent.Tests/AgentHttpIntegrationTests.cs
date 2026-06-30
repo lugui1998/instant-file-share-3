@@ -637,6 +637,129 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
+    public async Task ReceiveUpload_SavesCompressedStreamAndTracksDecodedProgress()
+    {
+        var contentBytes = System.Text.Encoding.UTF8.GetBytes(new string('a', 4096));
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var request = CreateCompressedStreamUploadRequest(
+            relativePath: "compressed/repeated.txt",
+            expectedDecodedBytes: contentBytes.Length,
+            contentBytes);
+        var compressedWireBytes = request.Content!.Headers.ContentLength!.Value;
+        using var response = await host.PublicClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        using var transfersResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var transfers = await transfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(contentBytes, await File.ReadAllBytesAsync(Path.Combine(host.FilesDirectory, "drop", "compressed", "repeated.txt")));
+        AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
+        Assert.Contains("\"uploadedCount\":1", body);
+        var uploadTransfer = Assert.Single(transfers!);
+        Assert.Equal(TransferState.Completed, uploadTransfer.State);
+        Assert.Equal(compressedWireBytes, uploadTransfer.BytesSent);
+        Assert.Equal(contentBytes.Length, uploadTransfer.TotalBytes);
+        Assert.Equal(contentBytes.Length, uploadTransfer.ProgressBytes);
+        Assert.Equal(contentBytes.Length, uploadTransfer.ProgressTotalBytes);
+    }
+
+    [Fact]
+    public async Task ReceiveUpload_RejectsCompressedStreamWhenDecodedSizeDoesNotMatch()
+    {
+        var contentBytes = System.Text.Encoding.UTF8.GetBytes("short");
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var request = CreateCompressedStreamUploadRequest(
+            relativePath: "compressed/mismatch.txt",
+            expectedDecodedBytes: contentBytes.Length + 1,
+            contentBytes);
+        using var response = await host.PublicClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        using var transfersResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var transfers = await transfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+        Assert.False(File.Exists(Path.Combine(host.FilesDirectory, "drop", "compressed", "mismatch.txt")));
+        AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
+        Assert.Contains("\"uploadedCount\":0", body);
+        Assert.Contains("The decoded upload size did not match the declared file size.", body);
+        var uploadTransfer = Assert.Single(transfers!);
+        Assert.Equal(TransferState.Failed, uploadTransfer.State);
+        Assert.Equal(contentBytes.Length + 1, uploadTransfer.TotalBytes);
+        Assert.Equal(contentBytes.Length, uploadTransfer.ProgressBytes);
+        Assert.Equal(contentBytes.Length + 1, uploadTransfer.ProgressTotalBytes);
+    }
+
+    [Fact]
+    public async Task ReceiveUpload_RejectsCompressedStreamWhenCompressedBodyExceedsConfiguredLimit()
+    {
+        var contentBytes = new byte[Defaults.MinimumReceiveUploadChunkSizeBytes + 1];
+        new Random(42).NextBytes(contentBytes);
+
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            await context.Store.SaveSettingsAsync(
+                context.Settings with { ReceiveUploadMaxBodySizeBytes = Defaults.MinimumReceiveUploadChunkSizeBytes },
+                CancellationToken.None);
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var request = CreateCompressedStreamUploadRequest(
+            relativePath: "compressed/too-large.gz",
+            expectedDecodedBytes: contentBytes.Length,
+            contentBytes);
+        using var response = await host.PublicClient.SendAsync(request);
+        using var transfersResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var transfers = await transfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.False(File.Exists(Path.Combine(host.FilesDirectory, "drop", "compressed", "too-large.gz")));
+        AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
+        Assert.Empty(transfers!);
+    }
+
+    [Fact]
+    public async Task ReceiveUpload_RejectsCompressedStreamWhenDeclaredDecodedSizeExceedsQuota()
+    {
+        var contentBytes = System.Text.Encoding.UTF8.GetBytes("small");
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLinkWithQuota("receive-token", dropPath, 8), CancellationToken.None);
+        });
+
+        using var request = CreateCompressedStreamUploadRequest(
+            relativePath: "compressed/quota.txt",
+            expectedDecodedBytes: 9,
+            contentBytes);
+        using var response = await host.PublicClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+        using var transfersResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var transfers = await transfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+        Assert.Contains("\"uploadedCount\":0", body);
+        Assert.Contains("This receive link has reached its upload limit.", body);
+        Assert.False(File.Exists(Path.Combine(host.FilesDirectory, "drop", "compressed", "quota.txt")));
+        AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
+        Assert.Empty(transfers!);
+    }
+
+    [Fact]
     public async Task ReceiveUpload_AssemblesWebSocketChunkedFile()
     {
         await using var host = await AgentTestHost.StartAsync(async context =>
@@ -1012,6 +1135,37 @@ public sealed class AgentHttpIntegrationTests
         request.Headers.Add("X-IFS-Chunk-Start", chunkStart.ToString());
         request.Headers.Add("X-IFS-Chunk-Size", System.Text.Encoding.UTF8.GetByteCount(chunkValue).ToString());
         return request;
+    }
+
+    private static HttpRequestMessage CreateCompressedStreamUploadRequest(
+        string relativePath,
+        long expectedDecodedBytes,
+        byte[] contentBytes)
+    {
+        var compressedBytes = CompressGzip(contentBytes);
+        var request = new HttpRequestMessage(HttpMethod.Post, "/r/receive-token")
+        {
+            Content = new ByteArrayContent(compressedBytes),
+        };
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/gzip");
+        request.Content.Headers.ContentLength = compressedBytes.Length;
+        request.Headers.Add("X-IFS-Upload-Id", "compressed-upload-1");
+        request.Headers.Add("X-IFS-Batch-Id", "batch-1");
+        request.Headers.Add("X-IFS-Relative-Path", Uri.EscapeDataString(relativePath));
+        request.Headers.Add("X-IFS-File-Name", Uri.EscapeDataString(Path.GetFileName(relativePath)));
+        request.Headers.Add("X-IFS-File-Size", expectedDecodedBytes.ToString());
+        return request;
+    }
+
+    private static byte[] CompressGzip(byte[] contentBytes)
+    {
+        using var output = new MemoryStream();
+        using (var gzip = new GZipStream(output, CompressionLevel.SmallestSize, leaveOpen: true))
+        {
+            gzip.Write(contentBytes);
+        }
+
+        return output.ToArray();
     }
 
     private static async Task SendWebSocketUploadChunkAsync(
