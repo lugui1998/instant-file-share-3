@@ -16,15 +16,17 @@ describe('PublicShareShell', () => {
     expect(wrapper.find('.public-shell__brand-link').attributes('href')).toBe('https://github.com/lugui1998/instant-file-share-3')
   })
 
-  it('keeps the description visible on file pages', () => {
+  it('uses a compact header without description copy on file pages', () => {
     const wrapper = mount(PublicShareShell, {
       props: {
         page: createPage('file'),
       },
     })
 
-    expect(wrapper.text()).toContain('Upload files through Instant File Share.')
-    expect(wrapper.find('.public-shell__inline-link').attributes('href')).toBe('https://github.com/lugui1998/instant-file-share-3')
+    expect(wrapper.classes()).toContain('public-shell--file')
+    expect(wrapper.text()).toContain('Upload to lugui')
+    expect(wrapper.text()).not.toContain('Upload files through Instant File Share.')
+    expect(wrapper.find('.public-shell__description').exists()).toBe(false)
   })
 })
 

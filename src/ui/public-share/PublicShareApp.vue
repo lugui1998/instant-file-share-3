@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PublicShareShell from './components/PublicShareShell.vue'
 import FileSharePage from './components/pages/FileSharePage.vue'
 import FolderSharePage from './components/pages/FolderSharePage.vue'
@@ -10,6 +10,8 @@ import type { PublicShareBootstrapPayload } from './types'
 const props = defineProps<PublicShareBootstrapPayload>()
 
 const receiveRemainingQuotaLabel = ref(props.page.receive?.remainingQuotaLabel ?? '')
+const fileHeaderSizeLabel = computed(() =>
+  props.page.kind === 'file' ? props.page.file?.displaySize ?? '' : '')
 
 watch(
   () => props.page.receive?.remainingQuotaLabel,
@@ -32,6 +34,15 @@ watch(
         <span v-if="props.page.receive.expiresAtLabel" class="receive-meta">
           Expires {{ props.page.receive.expiresAtLabel }}
         </span>
+      </div>
+    </template>
+    <template
+      v-else-if="fileHeaderSizeLabel"
+      #header-meta
+    >
+      <div class="file-header-meta">
+        <span class="label">Size</span>
+        <strong>{{ fileHeaderSizeLabel }}</strong>
       </div>
     </template>
 

@@ -60,6 +60,24 @@ describe('App settings normalization', () => {
       receiveUploadAutoProbeChunkCount: 1,
     })
   })
+
+  it('allows a one-second receive target request time when saving', async () => {
+    vi.useFakeTimers()
+    const wrapper = mount(App)
+    await vi.dynamicImportSettled()
+
+    await wrapper.findAll('button').find((button) => button.text() === 'Settings')!.trigger('click')
+    await wrapper.find('#receive-upload-chunk-sizing-mode').setValue('Auto')
+    await wrapper.find('#receive-upload-chunk-target-seconds').setValue('1')
+    await vi.advanceTimersByTimeAsync(450)
+    await vi.dynamicImportSettled()
+
+    expect(saveSettingsMock).toHaveBeenCalled()
+    expect(saveSettingsMock.mock.lastCall?.[0]).toMatchObject({
+      receiveUploadChunkSizingMode: 'Auto',
+      receiveUploadChunkTargetSeconds: 1,
+    })
+  })
 })
 
 function createSettings(): AppSettings {
@@ -79,12 +97,15 @@ function createSettings(): AppSettings {
     receiveUploadMaxBodySizeBytes: 95 * 1024 * 1024,
     receiveUploadChunkTargetSeconds: 30,
     receiveUploadAutoProbeChunkCount: 4,
+    receiveUploadCompressionEnabled: true,
     browserManagedDownloadsEnabled: true,
-    browserManagedDownloadMaxMemoryBytes: 512 * 1024 * 1024,
+    browserManagedDownloadMaxMemoryBytes: 64 * 1024 * 1024,
     browserManagedDownloadMaxParallelChunks: 4,
     browserManagedCompressionMode: 'Auto',
-    browserTransferEncryptionPolicy: 'HttpOnly',
+    browserDownloadEncryptionPolicy: 'HttpOnly',
+    receiveUploadEncryptionPolicy: 'HttpOnly',
     browserTransferDiagnosticsEnabled: false,
+    receiveTransferDiagnosticsEnabled: false,
     folderBrowsePageTitle: 'Browse files',
     receivePageTitle: 'Upload files',
     friendlyUrlsEnabled: true,

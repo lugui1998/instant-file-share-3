@@ -82,7 +82,7 @@ export function formatTransferBitsPerSecond(bytesPerSecond: number): string {
     unitIndex += 1
   }
 
-  return unitIndex === 0 ? `${size.toFixed(0)} ${units[unitIndex]}` : `${size.toFixed(1).replace(/\.0$/, '')} ${units[unitIndex]}`
+  return `${size.toFixed(2)} ${units[unitIndex]}`
 }
 
 export function createManagedCompressionProbeState(): ManagedCompressionProbeState {

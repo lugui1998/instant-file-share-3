@@ -38,6 +38,7 @@ internal static class PublicShareEndpoints
     private const string FileSizeHeaderName = "X-IFS-File-Size";
     private const string CompressionQueryName = "compression";
     private const string GzipCompressionQueryValue = "gzip";
+    private const string RawCompressionValue = "raw";
     private const string BrowserCompressionHeaderName = "X-IFS-Transfer-Compression";
     private const string UncompressedLengthHeaderName = "X-IFS-Uncompressed-Length";
     private const string ChunkIndexHeaderName = "X-IFS-Chunk-Index";
@@ -459,6 +460,7 @@ internal static class PublicShareEndpoints
         var chunkCounts = new Queue<int>();
         var chunkStarts = new Queue<long>();
         var chunkSizes = new Queue<long>();
+        var chunkEncodings = new Queue<string>();
         string? batchId = null;
         var settings = await coordinator.GetSettingsAsync(cancellationToken);
         var remoteAddress = RequestAddressResolver.ResolveClientIpAddress(context);
@@ -493,6 +495,7 @@ internal static class PublicShareEndpoints
                         chunkCounts,
                         chunkStarts,
                         chunkSizes,
+                        chunkEncodings,
                         out var chunkMetadata))
                     {
                         if (!keepAwakeNotified && settings.KeepAwakeWhileTransferring)
@@ -599,6 +602,10 @@ internal static class PublicShareEndpoints
                 else if (string.Equals(sectionName, "chunkSize", StringComparison.Ordinal))
                 {
                     chunkSizes.Enqueue(ParseReceiveUploadLong(await ReadMultipartFieldValueAsync(section.Body, cancellationToken)));
+                }
+                else if (string.Equals(sectionName, "chunkEncoding", StringComparison.Ordinal))
+                {
+                    chunkEncodings.Enqueue(NormalizeReceiveUploadChunkEncoding(await ReadMultipartFieldValueAsync(section.Body, cancellationToken)));
                 }
             }
         }
@@ -1638,6 +1645,8 @@ internal static class PublicShareEndpoints
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, session.CancellationToken);
         var sessionCancellationToken = linkedCancellation.Token;
         await session.Gate.WaitAsync(sessionCancellationToken);
+        GZipStream? decodedChunkStream = null;
+        var chunkSourceStream = sourceStream;
         long chunkBytesWritten = 0;
         try
         {
@@ -1666,10 +1675,16 @@ internal static class PublicShareEndpoints
                 return new ReceiveUploadStreamResult(receiveLink, null);
             }
 
+            if (string.Equals(chunkMetadata.Encoding, GzipCompressionQueryValue, StringComparison.OrdinalIgnoreCase))
+            {
+                decodedChunkStream = new GZipStream(sourceStream, CompressionMode.Decompress, leaveOpen: false);
+                chunkSourceStream = decodedChunkStream;
+            }
+
             if (session.BytesWritten > chunkMetadata.ChunkStart)
             {
                 var alreadyWrittenBytes = session.BytesWritten - chunkMetadata.ChunkStart;
-                var discardedBytes = await DiscardExactlyAsync(sourceStream, alreadyWrittenBytes, sessionCancellationToken);
+                var discardedBytes = await DiscardExactlyAsync(chunkSourceStream, alreadyWrittenBytes, sessionCancellationToken);
                 if (discardedBytes != alreadyWrittenBytes)
                 {
                     throw new ReceiveUploadIncompleteException();
@@ -1691,7 +1706,7 @@ internal static class PublicShareEndpoints
 
             var buffer = new byte[ReceiveUploadBufferSizeBytes];
             int bytesRead;
-            while ((bytesRead = await sourceStream.ReadAsync(buffer.AsMemory(0, buffer.Length), sessionCancellationToken)) > 0)
+            while ((bytesRead = await chunkSourceStream.ReadAsync(buffer.AsMemory(0, buffer.Length), sessionCancellationToken)) > 0)
             {
                 if (session.CancellationToken.IsCancellationRequested || chunkSessionStore.IsCanceled(session.UploadId))
                 {
@@ -1782,6 +1797,11 @@ internal static class PublicShareEndpoints
         }
         finally
         {
+            if (decodedChunkStream is not null)
+            {
+                await decodedChunkStream.DisposeAsync();
+            }
+
             session.Gate.Release();
         }
 
@@ -1986,7 +2006,8 @@ internal static class PublicShareEndpoints
             ParseReceiveUploadInt(ReadHeaderValue(request, ChunkIndexHeaderName)),
             ParseReceiveUploadInt(ReadHeaderValue(request, ChunkCountHeaderName)),
             ParseReceiveUploadLong(ReadHeaderValue(request, ChunkStartHeaderName)),
-            ParseReceiveUploadLong(ReadHeaderValue(request, ChunkSizeHeaderName)));
+            ParseReceiveUploadLong(ReadHeaderValue(request, ChunkSizeHeaderName)),
+            NormalizeReceiveUploadChunkEncoding(ReadHeaderValue(request, BrowserCompressionHeaderName)));
 
         if (string.IsNullOrWhiteSpace(clientRelativePath))
         {
@@ -2047,7 +2068,8 @@ internal static class PublicShareEndpoints
                 ReadJsonInt(root, "chunkIndex"),
                 ReadJsonInt(root, "chunkCount"),
                 ReadJsonLong(root, "chunkStart"),
-                ReadJsonLong(root, "chunkSize"));
+                ReadJsonLong(root, "chunkSize"),
+                NormalizeReceiveUploadChunkEncoding(ReadJsonString(root, "encoding")));
         }
         catch (JsonException)
         {
@@ -2289,19 +2311,41 @@ internal static class PublicShareEndpoints
             : value;
     }
 
+    private static string NormalizeReceiveUploadChunkEncoding(string value)
+    {
+        value = value.Trim();
+        if (string.IsNullOrWhiteSpace(value) ||
+            string.Equals(value, RawCompressionValue, StringComparison.OrdinalIgnoreCase))
+        {
+            return string.Empty;
+        }
+
+        return string.Equals(value, GzipCompressionQueryValue, StringComparison.OrdinalIgnoreCase)
+            ? GzipCompressionQueryValue
+            : value;
+    }
+
+    private static bool IsValidReceiveUploadChunkEncoding(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value) ||
+            string.Equals(value, GzipCompressionQueryValue, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool TryDequeueReceiveUploadChunkMetadata(
         string uploadId,
         Queue<int> chunkIndexes,
         Queue<int> chunkCounts,
         Queue<long> chunkStarts,
         Queue<long> chunkSizes,
+        Queue<string> chunkEncodings,
         out ReceiveUploadChunkMetadata metadata)
     {
         metadata = default;
         if (chunkIndexes.Count == 0 &&
             chunkCounts.Count == 0 &&
             chunkStarts.Count == 0 &&
-            chunkSizes.Count == 0)
+            chunkSizes.Count == 0 &&
+            chunkEncodings.Count == 0)
         {
             return false;
         }
@@ -2311,7 +2355,8 @@ internal static class PublicShareEndpoints
             chunkIndexes.Count > 0 ? chunkIndexes.Dequeue() : -1,
             chunkCounts.Count > 0 ? chunkCounts.Dequeue() : -1,
             chunkStarts.Count > 0 ? chunkStarts.Dequeue() : -1,
-            chunkSizes.Count > 0 ? chunkSizes.Dequeue() : -1);
+            chunkSizes.Count > 0 ? chunkSizes.Dequeue() : -1,
+            chunkEncodings.Count > 0 ? chunkEncodings.Dequeue() : string.Empty);
         return true;
     }
 
@@ -2445,7 +2490,8 @@ internal static class PublicShareEndpoints
         int ChunkIndex,
         int ChunkCount,
         long ChunkStart,
-        long ChunkSize)
+        long ChunkSize,
+        string? Encoding)
     {
         public bool IsValid =>
             !string.IsNullOrWhiteSpace(UploadId) &&
@@ -2453,7 +2499,8 @@ internal static class PublicShareEndpoints
             ChunkCount > 0 &&
             ChunkIndex < ChunkCount &&
             ChunkStart >= 0 &&
-            ChunkSize >= 0;
+            ChunkSize >= 0 &&
+            IsValidReceiveUploadChunkEncoding(Encoding);
     }
 
     private sealed record ReceiveUploadProgressEvent(
@@ -2713,7 +2760,7 @@ internal static class PublicShareEndpoints
             return CreateEncryptedDownloadUnavailableResult();
         }
 
-        if (settings.BrowserTransferEncryptionPolicy == BrowserTransferEncryptionPolicy.Always)
+        if (settings.BrowserDownloadEncryptionPolicy == BrowserTransferEncryptionPolicy.Always)
         {
             return CreateEncryptedDownloadRequiredResult();
         }
@@ -2929,7 +2976,7 @@ internal static class PublicShareEndpoints
             responseFileName,
             file.Length,
             fileResponseMetadata.ContentType,
-            BuildCurrentUrl(context, [
+            BuildCurrentPath(context, [
                 ("download", RawDownloadQueryValue),
                 (PlanHashQueryName, planHash),
                 (PlanSignatureQueryName, planSignature),
@@ -3100,13 +3147,10 @@ internal static class PublicShareEndpoints
         return accept.Contains("text/html", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string BuildCurrentUrl(HttpContext context, IReadOnlyList<(string Name, string Value)> queryValues)
+    private static string BuildCurrentPath(HttpContext context, IReadOnlyList<(string Name, string Value)> queryValues)
     {
         var builder = new StringBuilder();
-        builder.Append(context.Request.Scheme)
-            .Append("://")
-            .Append(context.Request.Host)
-            .Append(context.Request.PathBase)
+        builder.Append(context.Request.PathBase)
             .Append(context.Request.Path);
 
         for (var index = 0; index < queryValues.Count; index++)

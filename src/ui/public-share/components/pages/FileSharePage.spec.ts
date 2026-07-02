@@ -29,7 +29,8 @@ describe('FileSharePage', () => {
     vi.unstubAllGlobals()
   })
 
-  it('disables large browser-managed downloads with a direct-download fallback when streaming is unavailable', async () => {
+  it('starts the standard browser download when managed streaming is unavailable', async () => {
+    const clickedLinks = spyOnDownloadLinks()
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => createPlan({
@@ -48,10 +49,15 @@ describe('FileSharePage', () => {
     })
 
     await vi.waitFor(() => {
-      expect(wrapper.text()).toContain(largeFileStreamingRequiredMessage)
+      expect(clickedLinks).toEqual(['https://public.example/s/file-token?download=raw'])
     })
-    expect(wrapper.get('button.button--primary').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('a.button--ghost').attributes('href')).toBe('https://public.example/s/file-token?download=raw')
+    expect(wrapper.text()).not.toContain(largeFileStreamingRequiredMessage)
+    expect(wrapper.text()).not.toContain('Blob path buffers')
+    expect(wrapper.find('[role="progressbar"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Progress')
+    expect(wrapper.text()).not.toContain('Ready')
+    expect(wrapper.text()).not.toContain('Download in browser')
+    expect(wrapper.text()).not.toContain('Direct download')
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -91,19 +97,16 @@ describe('FileSharePage', () => {
     })
 
     await vi.waitFor(() => {
-      expect(wrapper.get('button.button--primary').attributes('disabled')).toBeUndefined()
-    })
-    await wrapper.get('button.button--primary').trigger('click')
-
-    await vi.waitFor(() => {
       expect(wrapper.text()).toContain('The shared file may have changed after the download plan was created.')
     })
+    expect(wrapper.text()).not.toContain('Download in browser')
+    expect(wrapper.text()).not.toContain('Direct download')
   })
 
   it('reports compression probe diagnostics and disables gzip when the chunk does not shrink', async () => {
     const bytes = new TextEncoder().encode('abc')
     vi.stubGlobal('DecompressionStream', IdentityDecompressionStream)
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    const clickedLinks = spyOnDownloadLinks()
     vi.stubGlobal('URL', class extends URL {
       static createObjectURL = vi.fn(() => 'blob:download')
       static revokeObjectURL = vi.fn()
@@ -142,11 +145,6 @@ describe('FileSharePage', () => {
     })
 
     await vi.waitFor(() => {
-      expect(wrapper.get('button.button--primary').attributes('disabled')).toBeUndefined()
-    })
-    await wrapper.get('button.button--primary').trigger('click')
-
-    await vi.waitFor(() => {
       expect(wrapper.text()).toContain('Complete')
     })
 
@@ -154,14 +152,17 @@ describe('FileSharePage', () => {
       headers: { Range: 'bytes=0-2' },
       cache: 'no-store',
     }))
+    expect(clickedLinks).toEqual(['blob:download'])
     expect(wrapper.text()).toContain('3 B wire / 3 B logical (100%)')
     expect(wrapper.text()).toContain('raw - gzip saved less than')
+    expect(wrapper.text()).not.toContain('Download in browser')
+    expect(wrapper.text()).not.toContain('Direct download')
   })
 
   it('automatically retries transient managed download plan failures', async () => {
     vi.useFakeTimers()
     const bytes = new TextEncoder().encode('abc')
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    spyOnDownloadLinks()
     vi.stubGlobal('URL', class extends URL {
       static createObjectURL = vi.fn(() => 'blob:download')
       static revokeObjectURL = vi.fn()
@@ -201,10 +202,6 @@ describe('FileSharePage', () => {
       },
     })
 
-    await vi.waitFor(() => {
-      expect(wrapper.get('button.button--primary').attributes('disabled')).toBeUndefined()
-    })
-    await wrapper.get('button.button--primary').trigger('click')
     await vi.dynamicImportSettled()
     await vi.advanceTimersByTimeAsync(1000)
     await vi.dynamicImportSettled()
@@ -218,7 +215,7 @@ describe('FileSharePage', () => {
   it('automatically retries transient managed download chunk failures', async () => {
     vi.useFakeTimers()
     const bytes = new TextEncoder().encode('abc')
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    spyOnDownloadLinks()
     vi.stubGlobal('URL', class extends URL {
       static createObjectURL = vi.fn(() => 'blob:download')
       static revokeObjectURL = vi.fn()
@@ -258,10 +255,6 @@ describe('FileSharePage', () => {
       },
     })
 
-    await vi.waitFor(() => {
-      expect(wrapper.get('button.button--primary').attributes('disabled')).toBeUndefined()
-    })
-    await wrapper.get('button.button--primary').trigger('click')
     await vi.dynamicImportSettled()
     await vi.advanceTimersByTimeAsync(1000)
     await vi.dynamicImportSettled()
@@ -273,6 +266,8 @@ describe('FileSharePage', () => {
   })
 
   it('hides transfer diagnostics unless the host enables them', async () => {
+    spyOnDownloadLinks()
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
     const hiddenWrapper = mount(FileSharePage, {
       props: {
         page: createPage(),
@@ -285,6 +280,10 @@ describe('FileSharePage', () => {
     })
 
     expect(hiddenWrapper.find('.transfer-diagnostics').exists()).toBe(false)
+    await vi.waitFor(() => {
+      expect(hiddenWrapper.text()).toContain('Progress')
+    })
+    expect(hiddenWrapper.text()).not.toContain('Browser download')
 
     const visibleWrapper = mount(FileSharePage, {
       props: {
@@ -301,10 +300,43 @@ describe('FileSharePage', () => {
     })
 
     expect(visibleWrapper.find('.transfer-diagnostics').exists()).toBe(true)
+    expect(visibleWrapper.find('.diagnostics-panel').exists()).toBe(true)
+    expect(visibleWrapper.find('.download-panel .transfer-diagnostics').exists()).toBe(false)
+    expect(visibleWrapper.find('.diagnostics-panel').text()).toContain('Diagnostics')
     expect(visibleWrapper.text()).toContain('Concurrency')
     expect(visibleWrapper.text()).toContain('Compression')
   })
+
+  it('does not repeat the filename in a secondary file card', () => {
+    spyOnDownloadLinks()
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})))
+
+    const wrapper = mount(FileSharePage, {
+      props: {
+        page: createPage(),
+        file: createFile({
+          fileName: 'A long video file.mkv',
+          displaySize: '2.4 GB',
+          sizeBytes: 2_400_000_000,
+          managedDownload: createSmallManagedDownload(),
+        }),
+      },
+    })
+
+    expect(wrapper.find('.hero-panel').exists()).toBe(false)
+    expect(wrapper.find('.body-copy').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('A long video file.mkv')
+    expect(wrapper.text()).not.toContain('2.4 GB')
+  })
 })
+
+function spyOnDownloadLinks() {
+  const clickedLinks: string[] = []
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    clickedLinks.push(this.href)
+  })
+  return clickedLinks
+}
 
 function createPage(): PublicSharePageModel {
   return {

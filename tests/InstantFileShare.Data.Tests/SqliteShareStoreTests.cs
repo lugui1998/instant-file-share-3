@@ -1,5 +1,6 @@
 using InstantFileShare.Core;
 using InstantFileShare.Data;
+using Microsoft.Data.Sqlite;
 
 namespace InstantFileShare.Data.Tests;
 
@@ -22,17 +23,79 @@ public sealed class SqliteShareStoreTests
         Assert.Equal(Defaults.DefaultReceiveUploadMaxBodySizeBytes, settings.ReceiveUploadMaxBodySizeBytes);
         Assert.Equal(Defaults.DefaultReceiveUploadChunkTargetSeconds, settings.ReceiveUploadChunkTargetSeconds);
         Assert.Equal(Defaults.DefaultReceiveUploadAutoProbeChunkCount, settings.ReceiveUploadAutoProbeChunkCount);
+        Assert.True(settings.ReceiveUploadCompressionEnabled);
         Assert.True(settings.BrowserManagedDownloadsEnabled);
-        Assert.Equal(Defaults.DefaultBrowserManagedDownloadMaxMemoryBytes, settings.BrowserManagedDownloadMaxMemoryBytes);
+        Assert.Equal(64L * 1024 * 1024, settings.BrowserManagedDownloadMaxMemoryBytes);
         Assert.Equal(Defaults.DefaultBrowserManagedDownloadMaxParallelChunks, settings.BrowserManagedDownloadMaxParallelChunks);
         Assert.Equal(BrowserManagedCompressionMode.Auto, settings.BrowserManagedCompressionMode);
-        Assert.Equal(BrowserTransferEncryptionPolicy.HttpOnly, settings.BrowserTransferEncryptionPolicy);
+        Assert.Equal(BrowserTransferEncryptionPolicy.HttpOnly, settings.BrowserDownloadEncryptionPolicy);
+        Assert.Equal(BrowserTransferEncryptionPolicy.HttpOnly, settings.ReceiveUploadEncryptionPolicy);
         Assert.False(settings.BrowserTransferDiagnosticsEnabled);
+        Assert.False(settings.ReceiveTransferDiagnosticsEnabled);
         Assert.False(cloudflaredState.ManagedTunnelRunning);
         Assert.Equal(3, profiles.Count);
         Assert.Contains(profiles, profile => profile.Mode == PublishMode.QuickTunnel && profile.Enabled);
         Assert.Contains(profiles, profile => profile.Mode == PublishMode.ManagedCloudflare && !profile.Enabled);
         Assert.Contains(profiles, profile => profile.Mode == PublishMode.Manual && profile.Enabled && profile.PublicPort == Defaults.PublicPort);
+    }
+
+    [Fact]
+    public async Task GetSettingsAsync_InheritsSplitEncryptionPoliciesFromLegacyBrowserTransferEncryptionSetting()
+    {
+        await using var fixture = await StoreFixture.CreateAsync();
+        await SetSettingsJsonAsync(
+            fixture.DatabasePath,
+            """
+            {
+              "browserTransferEncryptionPolicy": "Always"
+            }
+            """);
+
+        var settings = await fixture.Store.GetSettingsAsync(CancellationToken.None);
+
+        Assert.Equal(BrowserTransferEncryptionPolicy.Always, settings.BrowserDownloadEncryptionPolicy);
+        Assert.Equal(BrowserTransferEncryptionPolicy.Always, settings.ReceiveUploadEncryptionPolicy);
+    }
+
+    [Fact]
+    public async Task GetSettingsAsync_InheritsReceiveDiagnosticsFromLegacyBrowserDiagnosticsSetting()
+    {
+        await using var fixture = await StoreFixture.CreateAsync();
+        await SetSettingsJsonAsync(
+            fixture.DatabasePath,
+            """
+            {
+              "browserTransferDiagnosticsEnabled": true,
+              "showLogs": true
+            }
+            """);
+
+        var settings = await fixture.Store.GetSettingsAsync(CancellationToken.None);
+        var bootstrapSettings = BootstrapSettingsLoader.LoadOrDefault(new SqlitePaths(fixture.RootPath));
+
+        Assert.True(settings.BrowserTransferDiagnosticsEnabled);
+        Assert.True(settings.ReceiveTransferDiagnosticsEnabled);
+        Assert.True(settings.ShowLogs);
+        Assert.True(bootstrapSettings.ReceiveTransferDiagnosticsEnabled);
+    }
+
+    [Fact]
+    public async Task GetSettingsAsync_PreservesExplicitReceiveDiagnosticsSetting()
+    {
+        await using var fixture = await StoreFixture.CreateAsync();
+        await SetSettingsJsonAsync(
+            fixture.DatabasePath,
+            """
+            {
+              "browserTransferDiagnosticsEnabled": true,
+              "receiveTransferDiagnosticsEnabled": false
+            }
+            """);
+
+        var settings = await fixture.Store.GetSettingsAsync(CancellationToken.None);
+
+        Assert.True(settings.BrowserTransferDiagnosticsEnabled);
+        Assert.False(settings.ReceiveTransferDiagnosticsEnabled);
     }
 
     [Fact]
@@ -214,15 +277,29 @@ public sealed class SqliteShareStoreTests
         };
     }
 
+    private static async Task SetSettingsJsonAsync(string databasePath, string json)
+    {
+        await using var connection = new SqliteConnection($"Data Source={databasePath}");
+        await connection.OpenAsync();
+
+        await using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE settings SET json = $json WHERE key = 'settings';";
+        command.Parameters.AddWithValue("$json", json);
+        await command.ExecuteNonQueryAsync();
+    }
+
     private sealed class StoreFixture : IAsyncDisposable
     {
-        private StoreFixture(string rootPath, SqliteShareStore store)
+        private StoreFixture(string rootPath, string databasePath, SqliteShareStore store)
         {
             RootPath = rootPath;
+            DatabasePath = databasePath;
             Store = store;
         }
 
         public string RootPath { get; }
+
+        public string DatabasePath { get; }
 
         public SqliteShareStore Store { get; }
 
@@ -233,7 +310,7 @@ public sealed class SqliteShareStoreTests
             var databasePath = Path.Combine(rootPath, "instant-file-share.db");
             var store = new SqliteShareStore(databasePath);
             await store.InitializeAsync(CancellationToken.None);
-            return new StoreFixture(rootPath, store);
+            return new StoreFixture(rootPath, databasePath, store);
         }
 
         public ValueTask DisposeAsync()

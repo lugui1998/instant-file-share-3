@@ -150,12 +150,12 @@ public sealed class SqliteShareStore(string databasePath) : IShareStore
         await connection.OpenAsync(cancellationToken);
 
         var json = await ReadSingletonJsonAsync(connection, "settings", "settings", cancellationToken);
-        return DeserializeOrDefault(json, static () => new AppSettings());
+        return AppSettingsJson.DeserializeOrDefault(json);
     }
 
     public Task SaveSettingsAsync(AppSettings settings, CancellationToken cancellationToken)
     {
-        return SaveSingletonJsonAsync("settings", "settings", JsonSerializer.Serialize(settings, JsonOptions), cancellationToken);
+        return SaveSingletonJsonAsync("settings", "settings", AppSettingsJson.Serialize(settings), cancellationToken);
     }
 
     public async Task<IReadOnlyList<PublishProfile>> GetPublishProfilesAsync(CancellationToken cancellationToken)

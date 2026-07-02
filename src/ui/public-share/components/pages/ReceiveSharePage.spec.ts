@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import ReceiveSharePage from './ReceiveSharePage.vue'
 import type { PublicSharePageModel, PublicShareReceiveModel } from '../../types'
@@ -147,27 +147,6 @@ class FakeWebSocket {
   }
 }
 
-class FakeCompressionStream {
-  readonly readable: ReadableStream<Uint8Array>
-  readonly writable: WritableStream<Uint8Array>
-
-  constructor(format: CompressionFormat) {
-    expect(format).toBe('gzip')
-    const transform = new TransformStream<Uint8Array, Uint8Array>()
-    this.readable = transform.readable
-    this.writable = transform.writable
-  }
-}
-
-class FakeResponse {
-  constructor(_body: unknown) {
-  }
-
-  async blob() {
-    return new Blob(['compressed'], { type: 'application/gzip' })
-  }
-}
-
 describe('ReceiveSharePage', () => {
   afterEach(() => {
     window.location.hash = ''
@@ -213,6 +192,71 @@ describe('ReceiveSharePage', () => {
     expect(wrapper.text()).toContain('a.txt')
     expect(wrapper.text()).toContain('b.txt')
     expect(wrapper.text()).toContain('7 B')
+  })
+
+  it('shows upload diagnostics only when enabled', async () => {
+    vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
+    vi.stubGlobal('WebSocket', FakeWebSocket)
+    const hiddenWrapper = mount(ReceiveSharePage, {
+      props: {
+        page: createPage(),
+        receive: createReceive(),
+      },
+    })
+
+    expect(hiddenWrapper.find('.transfer-diagnostics').exists()).toBe(false)
+    hiddenWrapper.unmount()
+
+    const wrapper = mount(ReceiveSharePage, {
+      props: {
+        page: createPage({ transferDiagnosticsEnabled: true, uploadMode: 'Auto', uploadChunkSizingMode: 'Auto', uploadEventsUrl: '/r/token/events' }),
+        receive: createReceive({ transferDiagnosticsEnabled: true, uploadMode: 'Auto', uploadChunkSizingMode: 'Auto', uploadEventsUrl: '/r/token/events' }),
+      },
+    })
+    const input = wrapper.find('input[type="file"]')
+
+    expect(wrapper.find('.transfer-diagnostics').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Mode')
+    expect(wrapper.text()).toContain('auto transport')
+    expect(wrapper.text()).toContain('Events')
+    expect(wrapper.text()).toContain('websocket enabled')
+    expect(wrapper.text()).toContain('Selected')
+    expect(wrapper.text()).toContain('none')
+    expect(getDiagnosticsRows(wrapper)).toMatchObject({
+      'Current packet': 'not started',
+      'Host recommendation': 'not sampled',
+      'Recommendation use': 'waiting for host sample',
+      'Configured packet': '16 MB',
+    })
+
+    Object.defineProperty(input.element, 'files', {
+      configurable: true,
+      value: [createSizedFile('diagnostics.bin', 'diagnostics.bin', uploadChunkSizeBytes + 1)],
+    })
+    await input.trigger('change')
+
+    const uploadId = getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Upload-Id')
+    FakeWebSocket.instances[0].emitOpen()
+    FakeWebSocket.instances[0].emitMessage({
+      uploadId,
+      receivedBytes: 1024,
+      totalBytes: uploadChunkSizeBytes + 1,
+      state: 'InProgress',
+      succeeded: false,
+      recommendedChunkSizeBytes: 2 * 1024 * 1024,
+    })
+    await vi.dynamicImportSettled()
+
+    expect(wrapper.text()).toContain('1 file, 16 MB')
+    expect(wrapper.text()).toContain('Host received')
+    expect(wrapper.text()).toContain('1 KB')
+    expect(getDiagnosticsRows(wrapper)).toMatchObject({
+      'Current packet': '2 MB',
+      'Host recommendation': '2 MB',
+      'Recommendation use': 'applied to next packet',
+      'Configured packet': '16 MB',
+    })
+    wrapper.unmount()
   })
 
   it('accepts dropped files anywhere on the window', async () => {
@@ -319,7 +363,7 @@ describe('ReceiveSharePage', () => {
     }))
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.text()).toContain('16 Kb/s')
+    expect(wrapper.text()).toContain('16.00 Kb/s')
   })
 
   it('sends cancel and ignores later host speed updates when stopped', async () => {
@@ -355,7 +399,7 @@ describe('ReceiveSharePage', () => {
     }))
     await wrapper.vm.$nextTick()
 
-    expect(wrapper.text()).toContain('16 Kb/s')
+    expect(wrapper.text()).toContain('16.00 Kb/s')
 
     const stopButton = wrapper.findAll('button').find((button) => button.text() === 'Stop')
     expect(stopButton).toBeDefined()
@@ -367,7 +411,7 @@ describe('ReceiveSharePage', () => {
       { method: 'POST', keepalive: true },
     )
     expect(wrapper.text()).toContain('Stopped')
-    expect(wrapper.text()).not.toContain('16 Kb/s')
+    expect(wrapper.text()).not.toContain('16.00 Kb/s')
 
     nowSpy.mockReturnValue(5000)
     FakeWebSocket.instances[0].emitMessage({
@@ -414,7 +458,7 @@ describe('ReceiveSharePage', () => {
     expect(wrapper.text()).not.toContain('Saving...')
     expect(wrapper.text()).toContain('100%')
     expect(wrapper.text()).not.toContain('Stop')
-    expect(wrapper.text()).not.toContain('32 Kb/s')
+    expect(wrapper.text()).not.toContain('32.00 Kb/s')
     expect(wrapper.find('.success-icon').exists()).toBe(false)
     expect(wrapper.find('.progress-fill--client').exists()).toBe(true)
 
@@ -632,47 +676,95 @@ describe('ReceiveSharePage', () => {
     expect(wrapper.find('.success-icon').exists()).toBe(true)
   })
 
-  it('uploads files as compressed streams when configured', async () => {
+  it('compresses chunk payloads when compression is enabled', async () => {
     vi.stubGlobal('XMLHttpRequest', FakeXMLHttpRequest)
-    vi.stubGlobal('CompressionStream', FakeCompressionStream)
-    vi.stubGlobal('Response', FakeResponse)
-    const wrapper = mount(ReceiveSharePage, {
-      props: {
-        page: createPage({ uploadMode: 'CompressedStream' }),
-        receive: createReceive({ uploadMode: 'CompressedStream' }),
-      },
-    })
-    const file = createFile('report.txt', 'folder/report.txt', 'compress me')
-    Object.defineProperty(file, 'stream', {
+    class TestCompressionStream extends TransformStream<Uint8Array, Uint8Array> {
+      constructor(format: CompressionFormat) {
+        expect(format).toBe('gzip')
+        super({
+          transform(_chunk, controller) {
+            controller.enqueue(new TextEncoder().encode('compressed'))
+          },
+        })
+      }
+    }
+    class TestResponse {
+      constructor(_body: unknown) {
+      }
+
+      async blob() {
+        return new Blob(['compressed'], { type: 'application/gzip' })
+      }
+    }
+    const originalCompressionStream = window.CompressionStream
+    const originalResponse = window.Response
+    const originalGlobalCompressionStream = globalThis.CompressionStream
+    const originalGlobalResponse = globalThis.Response
+    vi.stubGlobal('CompressionStream', TestCompressionStream)
+    vi.stubGlobal('Response', TestResponse)
+    Object.defineProperty(globalThis, 'CompressionStream', { configurable: true, value: TestCompressionStream })
+    Object.defineProperty(globalThis, 'Response', { configurable: true, value: TestResponse })
+    Object.defineProperty(window, 'CompressionStream', { configurable: true, value: TestCompressionStream })
+    Object.defineProperty(window, 'Response', { configurable: true, value: TestResponse })
+    expect(globalThis.CompressionStream).toBe(TestCompressionStream)
+    expect(globalThis.Response).toBe(TestResponse)
+    const originalBlobStream = Object.getOwnPropertyDescriptor(Blob.prototype, 'stream')
+    Object.defineProperty(Blob.prototype, 'stream', {
       configurable: true,
       value: () => ({
         pipeThrough: () => ({}),
       }),
     })
-    const input = wrapper.find('input[type="file"]')
 
-    Object.defineProperty(input.element, 'files', {
-      configurable: true,
-      value: [file],
-    })
-    await input.trigger('change')
-    await waitForCondition(() => FakeXMLHttpRequest.instances.length === 1)
+    try {
+      const wrapper = mount(ReceiveSharePage, {
+        props: {
+          page: createPage({ uploadMode: 'BinaryChunks', uploadCompressionEnabled: true, transferDiagnosticsEnabled: true }),
+          receive: createReceive({ uploadMode: 'BinaryChunks', uploadCompressionEnabled: true, transferDiagnosticsEnabled: true }),
+        },
+      })
+      expect(wrapper.props('receive').uploadMode).toBe('BinaryChunks')
+      expect(wrapper.props('receive').uploadCompressionEnabled).toBe(true)
+      const file = createSizedFile('report.txt', 'folder/report.txt', 128 * 1024)
+      const input = wrapper.find('input[type="file"]')
 
-    expect(FakeXMLHttpRequest.instances).toHaveLength(1)
-    expect(FakeXMLHttpRequest.instances[0].sentBody).toBeInstanceOf(Blob)
-    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'Content-Type')).toBe('application/gzip')
-    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Relative-Path')).toBe(encodeURIComponent('folder/report.txt'))
-    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-File-Name')).toBe(encodeURIComponent('report.txt'))
-    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-File-Size')).toBe(file.size.toString())
-    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Upload-Id')).toBeTruthy()
-    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Batch-Id')).toBeTruthy()
-    expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Chunk-Index')).toBeUndefined()
+      Object.defineProperty(input.element, 'files', {
+        configurable: true,
+        value: [file],
+      })
+      await input.trigger('change')
+      await waitForCondition(() => FakeXMLHttpRequest.instances.length === 1)
 
-    FakeXMLHttpRequest.instances[0].response = createUploadResponse()
-    FakeXMLHttpRequest.instances[0].emit('load')
-    await vi.dynamicImportSettled()
+      expect(FakeXMLHttpRequest.instances).toHaveLength(1)
+      expect(FakeXMLHttpRequest.instances[0].sentBody).toBeInstanceOf(Blob)
+      expect((FakeXMLHttpRequest.instances[0].sentBody as Blob).size).toBe('compressed'.length)
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'Content-Type')).toBe('application/octet-stream')
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Transfer-Compression')).toBe('gzip')
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Relative-Path')).toBe(encodeURIComponent('folder/report.txt'))
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-File-Name')).toBe(encodeURIComponent('report.txt'))
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-File-Size')).toBe(file.size.toString())
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Upload-Id')).toBeTruthy()
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Batch-Id')).toBeTruthy()
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Chunk-Index')).toBe('0')
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Chunk-Count')).toBe('1')
+      expect(getRequestHeader(FakeXMLHttpRequest.instances[0], 'X-IFS-Chunk-Size')).toBe(file.size.toString())
 
-    expect(wrapper.find('.success-icon').exists()).toBe(true)
+      FakeXMLHttpRequest.instances[0].response = createUploadResponse()
+      FakeXMLHttpRequest.instances[0].emit('load')
+      await vi.dynamicImportSettled()
+
+      expect(wrapper.find('.success-icon').exists()).toBe(true)
+    } finally {
+      if (originalBlobStream) {
+        Object.defineProperty(Blob.prototype, 'stream', originalBlobStream)
+      } else {
+        delete (Blob.prototype as { stream?: unknown }).stream
+      }
+      Object.defineProperty(globalThis, 'CompressionStream', { configurable: true, value: originalGlobalCompressionStream })
+      Object.defineProperty(globalThis, 'Response', { configurable: true, value: originalGlobalResponse })
+      Object.defineProperty(window, 'CompressionStream', { configurable: true, value: originalCompressionStream })
+      Object.defineProperty(window, 'Response', { configurable: true, value: originalResponse })
+    }
   })
 
   it('uses the configured receive upload chunk size', async () => {
@@ -1209,7 +1301,7 @@ describe('ReceiveSharePage', () => {
     expect(progressBar.attributes('aria-label')).toBe('Upload progress')
     expect(progressBar.attributes('aria-valuenow')).toBe('40')
     expect(wrapper.text()).toContain('40%')
-    expect(wrapper.text()).toContain('128 b/s')
+    expect(wrapper.text()).toContain('128.00 b/s')
     expect(progressBar.get('.progress-fill--client').attributes('style')).toContain('width: 100%')
     expect(progressBar.get('.progress-fill--receive').attributes('style')).toContain('width: 40%')
   })
@@ -1396,9 +1488,17 @@ function createReceive(overrides: Partial<PublicShareReceiveModel> = {}): Public
     uploadMaxBodySizeBytes: 95 * 1024 * 1024,
     uploadChunkTargetSeconds: 30,
     uploadAutoProbeChunkCount: 4,
+    uploadCompressionEnabled: false,
+    transferDiagnosticsEnabled: false,
     expiresAtLabel: '6/30/2026 12:00 PM',
     ...overrides,
   }
+}
+
+function getDiagnosticsRows(wrapper: VueWrapper) {
+  return Object.fromEntries(wrapper.findAll('.transfer-diagnostics div').map((row) => {
+    return [row.find('dt').text(), row.find('dd').text()]
+  }))
 }
 
 function createEncryptionExperiment() {

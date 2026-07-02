@@ -91,12 +91,15 @@ type AppSettings = {
   receiveUploadMaxBodySizeBytes: number
   receiveUploadChunkTargetSeconds: number
   receiveUploadAutoProbeChunkCount: number
+  receiveUploadCompressionEnabled: boolean
   browserManagedDownloadsEnabled: boolean
   browserManagedDownloadMaxMemoryBytes: number
   browserManagedDownloadMaxParallelChunks: number
   browserManagedCompressionMode: BrowserManagedCompressionMode
-  browserTransferEncryptionPolicy: BrowserTransferEncryptionPolicy
+  browserDownloadEncryptionPolicy: BrowserTransferEncryptionPolicy
+  receiveUploadEncryptionPolicy: BrowserTransferEncryptionPolicy
   browserTransferDiagnosticsEnabled: boolean
+  receiveTransferDiagnosticsEnabled: boolean
   folderBrowsePageTitle: string
   receivePageTitle: string
   friendlyUrlsEnabled: boolean

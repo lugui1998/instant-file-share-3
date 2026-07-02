@@ -28,6 +28,7 @@ const descriptionSegments = computed(() => {
   <div
     class="public-shell"
     :class="{
+      'public-shell--file': page.kind === 'file',
       'public-shell--folder': page.kind === 'folder',
       'public-shell--receive': page.kind === 'receive',
     }"
@@ -40,7 +41,7 @@ const descriptionSegments = computed(() => {
           </a>
           <h1 class="public-shell__title">{{ page.title }}</h1>
           <p
-            v-if="page.kind !== 'folder' && page.kind !== 'receive'"
+            v-if="page.kind !== 'file' && page.kind !== 'folder' && page.kind !== 'receive'"
             class="public-shell__description"
           >
             <template v-for="(segment, index) in descriptionSegments" :key="`${index}-${segment.text}`">

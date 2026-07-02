@@ -88,9 +88,9 @@ const receiveUploadMaxBodySizeMb = computed({
   },
 })
 const browserManagedDownloadMaxMemoryMb = computed({
-  get: () => Math.max(1, Math.round((settingsDraft.value.browserManagedDownloadMaxMemoryBytes ?? 512 * bytesPerMegabyte) / bytesPerMegabyte)),
+  get: () => Math.max(1, Math.round((settingsDraft.value.browserManagedDownloadMaxMemoryBytes ?? 64 * bytesPerMegabyte) / bytesPerMegabyte)),
   set: (value: number) => {
-    const normalized = Number.isFinite(value) ? Math.max(1, Math.round(value)) : 512
+    const normalized = Number.isFinite(value) ? Math.max(1, Math.round(value)) : 64
     settingsDraft.value.browserManagedDownloadMaxMemoryBytes = normalized * bytesPerMegabyte
   },
 })
@@ -449,6 +449,183 @@ function resolveReceiveMaxTotalUnit(value: number) {
             help-text="When enabled, PDF shares are opened inline in browsers that support PDF viewing. When disabled, they are forced to download."
           />
         </SettingCard>
+
+        <SettingCard class="settings-card" eyebrow="Browser Managed Transfers">
+          <ToggleField
+            v-model="settingsDraft.browserManagedDownloadsEnabled"
+            input-id="browser-managed-downloads-enabled"
+            label="Browser-managed downloads"
+            help-text="Uses a browser page for non-inline file downloads so chunks can be verified, retried, paused, and resumed before falling back to direct download."
+          />
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="browser-managed-download-memory">Managed download memory limit</label>
+              <HelpTooltip text="Files at or below this size may be assembled in browser memory. Larger files require streaming save support or direct download fallback." />
+            </div>
+            <div class="input-group">
+              <input
+                id="browser-managed-download-memory"
+                v-model.number="browserManagedDownloadMaxMemoryMb"
+                type="number"
+                min="1"
+              />
+              <span class="unit-suffix">MB</span>
+            </div>
+            <span class="field-help">Default: 64 MB.</span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="browser-managed-download-parallel-chunks">Managed download parallel chunks</label>
+              <HelpTooltip text="Maximum number of file chunks the browser-managed downloader can fetch at once. It still starts at one and backs off after errors." />
+            </div>
+            <input
+              id="browser-managed-download-parallel-chunks"
+              v-model.number="settingsDraft.browserManagedDownloadMaxParallelChunks"
+              type="number"
+              min="1"
+            />
+            <span class="field-help">Default: 4 chunks.</span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="browser-managed-compression-mode">Download compression</label>
+              <HelpTooltip text="Auto allows browser-managed downloads to compare raw and gzip transfer paths for files that may compress well." />
+            </div>
+            <select id="browser-managed-compression-mode" v-model="settingsDraft.browserManagedCompressionMode">
+              <option value="Auto">Auto</option>
+              <option value="Off">Off</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="browser-download-encryption-policy">Download encryption</label>
+              <HelpTooltip text="Controls when browser-managed downloads should require application-level encryption. Raw direct downloads cannot satisfy Always until encrypted live-file downloads are available." />
+            </div>
+            <select id="browser-download-encryption-policy" v-model="settingsDraft.browserDownloadEncryptionPolicy">
+              <option value="HttpOnly">HTTP only</option>
+              <option value="Always">Always</option>
+              <option value="Off">Off</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-mode">Upload mode</label>
+              <HelpTooltip text="Auto keeps testing multipart, binary, and WebSocket chunks while uploads run, then shifts more chunks toward the fastest reliable method." />
+            </div>
+            <select id="receive-upload-mode" v-model="settingsDraft.receiveUploadMode">
+              <option value="Auto">Auto</option>
+              <option value="MultipartChunks">Multipart chunks</option>
+              <option value="BinaryChunks">Binary chunks</option>
+              <option value="WebSocket">WebSocket chunks</option>
+            </select>
+          </div>
+
+          <ToggleField
+            v-model="settingsDraft.receiveUploadCompressionEnabled"
+            input-id="receive-upload-compression-enabled"
+            label="Upload compression"
+            help-text="Compresses upload chunks when the browser and host measurements show gzip is faster than sending the raw chunk."
+          />
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-encryption-policy">Upload encryption</label>
+              <HelpTooltip text="Controls when receive-page uploads should use application-level encryption before data is stored on this machine." />
+            </div>
+            <select id="receive-upload-encryption-policy" v-model="settingsDraft.receiveUploadEncryptionPolicy">
+              <option value="HttpOnly">HTTP only</option>
+              <option value="Always">Always</option>
+              <option value="Off">Off</option>
+            </select>
+          </div>
+
+          <div v-if="settingsDraft.receiveUploadMode === 'Auto'" class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-auto-probe-chunks">Auto probing threshold</label>
+              <HelpTooltip text="How many chunks Auto mode uses to compare transports before it prefers the most reliable observed method." />
+            </div>
+            <input
+              id="receive-upload-auto-probe-chunks"
+              v-model.number="settingsDraft.receiveUploadAutoProbeChunkCount"
+              type="number"
+              min="1"
+            />
+            <span class="field-help">Default: 4 chunks. Minimum: 1 chunk.</span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-chunk-sizing-mode">Packet sizing</label>
+              <HelpTooltip text="Fixed uses the configured request size. Auto lets the host recommend the next packet size from the receive speed and target request time." />
+            </div>
+            <select id="receive-upload-chunk-sizing-mode" v-model="settingsDraft.receiveUploadChunkSizingMode">
+              <option value="Fixed">Fixed size</option>
+              <option value="Auto">Auto</option>
+            </select>
+          </div>
+
+          <div v-if="settingsDraft.receiveUploadChunkSizingMode !== 'Auto'" class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-chunk-size">Packet size</label>
+              <HelpTooltip text="Controls the request size used for large receive-page uploads. Smaller packets retry less data after a failure; larger packets reduce per-request overhead." />
+            </div>
+            <div class="input-group">
+              <input
+                id="receive-upload-chunk-size"
+                v-model.number="receiveUploadChunkSizeMb"
+                type="number"
+                min="1"
+              />
+              <span class="unit-suffix">MB</span>
+            </div>
+            <span class="field-help">Default: 16 MB. Minimum: 1 MB.</span>
+          </div>
+
+          <div v-else class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-chunk-target-seconds">Target request time</label>
+              <HelpTooltip text="The host uses receive speed to recommend packet sizes that should finish near this duration." />
+            </div>
+            <div class="input-group">
+              <input
+                id="receive-upload-chunk-target-seconds"
+                v-model.number="settingsDraft.receiveUploadChunkTargetSeconds"
+                type="number"
+                min="1"
+              />
+              <span class="unit-suffix">seconds</span>
+            </div>
+            <span class="field-help">Default: 30 seconds. Minimum: 1 second.</span>
+            <span v-if="showCloudflareTargetTimeoutWarning" class="field-warning">
+              Cloudflare can time out proxied requests after 120 seconds. Use a lower target when publishing through Cloudflare.
+            </span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-max-body-size">Max request body size</label>
+              <HelpTooltip text="Caps receive-page upload request bodies. Cloudflare Free and Pro allow up to 100 MB per request, so the default leaves a small safety margin." />
+            </div>
+            <div class="input-group">
+              <input
+                id="receive-upload-max-body-size"
+                v-model.number="receiveUploadMaxBodySizeMb"
+                type="number"
+                min="1"
+              />
+              <span class="unit-suffix">MB</span>
+            </div>
+            <span class="field-help">Default: 95 MB. Cloudflare Free/Pro limit: 100 MB.</span>
+            <span v-if="showCloudflareFreePlanBodySizeWarning" class="field-warning">
+              The logged-in Cloudflare zone is on the Free plan. Requests over 100 MB can fail with 413.
+            </span>
+          </div>
+        </SettingCard>
       </div>
     </section>
 
@@ -523,175 +700,11 @@ function resolveReceiveMaxTotalUnit(value: number) {
             <span class="field-help">Default: 4 files at a time. Use 0 for no limit.</span>
           </div>
 
-          <div class="field">
-            <div class="field-label-row">
-              <label for="receive-upload-mode">Upload mode</label>
-              <HelpTooltip text="Auto probes the available upload transports and keeps one server upload session per file. Multipart chunks sends each piece as multipart form data. Binary chunks sends raw binary requests. WebSocket uploads send chunks through a dedicated upload socket. Compressed stream is an experimental single-request gzip upload path." />
-            </div>
-            <select id="receive-upload-mode" v-model="settingsDraft.receiveUploadMode">
-              <option value="Auto">Auto</option>
-              <option value="MultipartChunks">Multipart chunks</option>
-              <option value="BinaryChunks">Binary chunks</option>
-              <option value="WebSocket">WebSocket chunks</option>
-              <option value="CompressedStream">Compressed stream (experimental)</option>
-            </select>
-          </div>
-
-          <div v-if="settingsDraft.receiveUploadMode === 'Auto'" class="field">
-            <div class="field-label-row">
-              <label for="receive-upload-auto-probe-chunks">Auto probing threshold</label>
-              <HelpTooltip text="How many chunks Auto mode uses to compare transports before it prefers the most reliable observed method." />
-            </div>
-            <input
-              id="receive-upload-auto-probe-chunks"
-              v-model.number="settingsDraft.receiveUploadAutoProbeChunkCount"
-              type="number"
-              min="1"
-            />
-            <span class="field-help">Default: 4 chunks. Minimum: 1 chunk.</span>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="receive-upload-chunk-sizing-mode">Packet sizing</label>
-              <HelpTooltip text="Fixed uses the configured request size. Auto lets the host recommend the next packet size from the receive speed and target request time." />
-            </div>
-            <select id="receive-upload-chunk-sizing-mode" v-model="settingsDraft.receiveUploadChunkSizingMode">
-              <option value="Fixed">Fixed size</option>
-              <option value="Auto">Auto</option>
-            </select>
-          </div>
-
-          <div v-if="settingsDraft.receiveUploadChunkSizingMode !== 'Auto'" class="field">
-            <div class="field-label-row">
-              <label for="receive-upload-chunk-size">Packet size</label>
-              <HelpTooltip text="Controls the request size used for large receive-page uploads. Smaller packets retry less data after a failure; larger packets reduce per-request overhead." />
-            </div>
-            <div class="input-group">
-              <input
-                id="receive-upload-chunk-size"
-                v-model.number="receiveUploadChunkSizeMb"
-                type="number"
-                min="1"
-              />
-              <span class="unit-suffix">MB</span>
-            </div>
-            <span class="field-help">Default: 16 MB. Minimum: 1 MB.</span>
-          </div>
-
-          <div v-else class="field">
-            <div class="field-label-row">
-              <label for="receive-upload-chunk-target-seconds">Target request time</label>
-              <HelpTooltip text="The host uses receive speed to recommend packet sizes that should finish near this duration." />
-            </div>
-            <div class="input-group">
-              <input
-                id="receive-upload-chunk-target-seconds"
-                v-model.number="settingsDraft.receiveUploadChunkTargetSeconds"
-                type="number"
-                min="5"
-              />
-              <span class="unit-suffix">seconds</span>
-            </div>
-            <span class="field-help">Default: 30 seconds. Minimum: 5 seconds.</span>
-            <span v-if="showCloudflareTargetTimeoutWarning" class="field-warning">
-              Cloudflare can time out proxied requests after 120 seconds. Use a lower target when publishing through Cloudflare.
-            </span>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="receive-upload-max-body-size">Max request body size</label>
-              <HelpTooltip text="Caps receive-page upload request bodies. Cloudflare Free and Pro allow up to 100 MB per request, so the default leaves a small safety margin." />
-            </div>
-            <div class="input-group">
-              <input
-                id="receive-upload-max-body-size"
-                v-model.number="receiveUploadMaxBodySizeMb"
-                type="number"
-                min="1"
-              />
-              <span class="unit-suffix">MB</span>
-            </div>
-            <span class="field-help">Default: 95 MB. Cloudflare Free/Pro limit: 100 MB.</span>
-            <span v-if="showCloudflareFreePlanBodySizeWarning" class="field-warning">
-              The logged-in Cloudflare zone is on the Free plan. Requests over 100 MB can fail with 413.
-            </span>
-          </div>
-
           <ToggleField
             v-model="settingsDraft.receiveNotificationsEnabled"
             input-id="receive-notifications-enabled"
             label="Receive notifications"
             help-text="Shows a local notification when uploads finish on this machine."
-          />
-
-          <ToggleField
-            v-model="settingsDraft.browserManagedDownloadsEnabled"
-            input-id="browser-managed-downloads-enabled"
-            label="Browser-managed downloads"
-            help-text="Uses a browser page for non-inline file downloads so chunks can be verified, retried, paused, and resumed before falling back to direct download."
-          />
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="browser-managed-download-memory">Managed download memory limit</label>
-              <HelpTooltip text="Files at or below this size may be assembled in browser memory. Larger files require streaming save support or direct download fallback." />
-            </div>
-            <div class="input-group">
-              <input
-                id="browser-managed-download-memory"
-                v-model.number="browserManagedDownloadMaxMemoryMb"
-                type="number"
-                min="1"
-              />
-              <span class="unit-suffix">MB</span>
-            </div>
-            <span class="field-help">Default: 512 MB.</span>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="browser-managed-download-parallel-chunks">Managed download parallel chunks</label>
-              <HelpTooltip text="Maximum number of file chunks the browser-managed downloader can fetch at once. It still starts at one and backs off after errors." />
-            </div>
-            <input
-              id="browser-managed-download-parallel-chunks"
-              v-model.number="settingsDraft.browserManagedDownloadMaxParallelChunks"
-              type="number"
-              min="1"
-            />
-            <span class="field-help">Default: 4 chunks.</span>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="browser-managed-compression-mode">Managed compression</label>
-              <HelpTooltip text="Auto allows browser-managed transfers to compare raw and gzip transfer paths for files that may compress well." />
-            </div>
-            <select id="browser-managed-compression-mode" v-model="settingsDraft.browserManagedCompressionMode">
-              <option value="Auto">Auto</option>
-              <option value="Off">Off</option>
-            </select>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="browser-transfer-encryption-policy">Browser transfer encryption</label>
-              <HelpTooltip text="Controls when browser-managed transfers should use application-level encryption. Raw direct downloads cannot be encrypted by this setting." />
-            </div>
-            <select id="browser-transfer-encryption-policy" v-model="settingsDraft.browserTransferEncryptionPolicy">
-              <option value="HttpOnly">HTTP only</option>
-              <option value="Always">Always</option>
-              <option value="Off">Off</option>
-            </select>
-          </div>
-
-          <ToggleField
-            v-model="settingsDraft.browserTransferDiagnosticsEnabled"
-            input-id="browser-transfer-diagnostics-enabled"
-            label="Transfer diagnostics"
-            help-text="Shows browser-managed transfer decisions, chunk sizing, compression status, retry counts, and fallback reasons on public transfer pages."
           />
 
           <ToggleField
@@ -776,6 +789,18 @@ function resolveReceiveMaxTotalUnit(value: number) {
         </SettingCard>
 
         <SettingCard class="settings-card" eyebrow="Debug">
+          <ToggleField
+            v-model="settingsDraft.browserTransferDiagnosticsEnabled"
+            input-id="browser-transfer-diagnostics-enabled"
+            label="Download diagnostics"
+            help-text="Shows browser-managed download decisions, chunk sizing, compression status, retry counts, and fallback reasons on public download pages."
+          />
+          <ToggleField
+            v-model="settingsDraft.receiveTransferDiagnosticsEnabled"
+            input-id="receive-transfer-diagnostics-enabled"
+            label="Upload diagnostics"
+            help-text="Shows receive-page upload mode, request sizing, progress source, event connection, and host recommendation details on public upload pages."
+          />
           <ToggleField
             v-model="settingsDraft.showLogs"
             input-id="show-logs"

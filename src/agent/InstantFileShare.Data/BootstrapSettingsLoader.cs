@@ -1,6 +1,5 @@
 using InstantFileShare.Core;
 using Microsoft.Data.Sqlite;
-using System.Text.Json;
 
 namespace InstantFileShare.Data;
 
@@ -20,8 +19,6 @@ public static class BootstrapSettingsLoader
         command.CommandText = "SELECT json FROM settings WHERE key = 'settings' LIMIT 1;";
 
         var json = command.ExecuteScalar() as string;
-        return string.IsNullOrWhiteSpace(json)
-            ? new AppSettings()
-            : JsonSerializer.Deserialize<AppSettings>(json, new JsonSerializerOptions(JsonSerializerDefaults.Web)) ?? new AppSettings();
+        return AppSettingsJson.DeserializeOrDefault(json);
     }
 }

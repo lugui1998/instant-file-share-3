@@ -21,7 +21,8 @@ internal sealed class PublicSharePageModelFactory
             ? $"Open this link to view {responseFileName} in your browser or download it."
             : $"Open this link to download {responseFileName}.";
         var currentUrl = BuildCurrentUrl(context);
-        var rawDownloadUrl = AppendQueryValue(currentUrl, "download", "raw");
+        var currentPath = BuildCurrentPath(context);
+        var rawDownloadUrl = AppendQueryValue(currentPath, "download", "raw");
         var canUseBrowserCompression = settings.BrowserManagedCompressionMode == BrowserManagedCompressionMode.Auto &&
             ShareFileResponsePolicy.IsBrowserCompressionCandidate(responseFileName, fileResponseMetadata);
         var managedDownloadsEnabled = settings.BrowserManagedDownloadsEnabled && !fileResponseMetadata.PreferInline;
@@ -33,8 +34,8 @@ internal sealed class PublicSharePageModelFactory
             CanonicalUrl: currentUrl,
             SiteName: "Instant File Share",
             RepositoryUrl: Defaults.RepositoryUrl,
-            PrimaryActionLabel: fileResponseMetadata.PreferInline ? $"{actionVerb} file" : "Direct download",
-            PrimaryActionUrl: fileResponseMetadata.PreferInline ? currentUrl : rawDownloadUrl,
+            PrimaryActionLabel: fileResponseMetadata.PreferInline ? $"{actionVerb} file" : null,
+            PrimaryActionUrl: fileResponseMetadata.PreferInline ? currentPath : null,
             File: new PublicShareFileModel(
                 responseFileName,
                 FormatFileSize(file.Length),
@@ -47,7 +48,7 @@ internal sealed class PublicSharePageModelFactory
                 actionLabel,
                 managedDownloadsEnabled
                     ? new PublicShareManagedDownloadModel(
-                        ManifestUrl: AppendQueryValue(currentUrl, "ifs", "download-plan"),
+                        ManifestUrl: AppendQueryValue(currentPath, "ifs", "download-plan"),
                         RawDownloadUrl: rawDownloadUrl,
                         FileSizeBytes: file.Length,
                         DefaultChunkSizeBytes: BrowserManagedDownloadChunkSizeBytes,
@@ -56,7 +57,7 @@ internal sealed class PublicSharePageModelFactory
                         MaxParallelChunks: Math.Max(Defaults.MinimumBrowserManagedDownloadMaxParallelChunks, settings.BrowserManagedDownloadMaxParallelChunks),
                         CompressionMode: settings.BrowserManagedCompressionMode.ToString(),
                         TransferDiagnosticsEnabled: settings.BrowserTransferDiagnosticsEnabled,
-                        SaveLimitationNote: "The browser-managed downloader verifies Range chunks and assembles a Blob before saving. Very large files may require substantial browser memory; direct download remains available.")
+                        SaveLimitationNote: "The browser-managed downloader verifies Range chunks and assembles a Blob before saving. Very large files may fall back to the standard browser download.")
                     : null,
                 EncryptionExperiment: null),
             Folder: null,
@@ -74,15 +75,18 @@ internal sealed class PublicSharePageModelFactory
             : $"{share.FileName} / {directoryEntry.RelativePath.Replace('/', '\\')}";
         var description = $"Download a ZIP archive of {folderLabel}. Shared via Instant File Share.";
 
+        var currentUrl = BuildCurrentUrl(context);
+        var currentPath = BuildCurrentPath(context);
+
         return new PublicSharePageModel(
             Kind: "zip",
             Title: folderLabel,
             Description: description,
-            CanonicalUrl: BuildCurrentUrl(context),
+            CanonicalUrl: currentUrl,
             SiteName: "Instant File Share",
             RepositoryUrl: Defaults.RepositoryUrl,
             PrimaryActionLabel: "Download ZIP",
-            PrimaryActionUrl: BuildCurrentUrl(context),
+            PrimaryActionUrl: currentPath,
             File: null,
             Folder: null,
             Zip: new PublicShareZipModel(
@@ -102,7 +106,7 @@ internal sealed class PublicSharePageModelFactory
         var browseRootPath = $"/s/{share.Token}";
         var currentRelativePath = directoryEntry.RelativePath;
         var showDownloadAll = share.CanBrowseFolderContents && share.CanDownloadFolderAsZip;
-        var downloadAllUrl = showDownloadAll ? $"{BuildCurrentUrl(context)}?download=zip" : null;
+        var downloadAllUrl = showDownloadAll ? AppendQueryValue(BuildCurrentPath(context), "download", "zip") : null;
         var breadcrumbs = BuildBreadcrumbs(share.FileName, browseRootPath, currentRelativePath);
         var folderEntries = BuildFolderEntries(browseRootPath, currentRelativePath, entries);
 
@@ -135,7 +139,9 @@ internal sealed class PublicSharePageModelFactory
             : 0;
         var uploadMode = settings.ReceiveUploadMode == ReceiveUploadMode.AdaptiveBinaryChunks
             ? ReceiveUploadMode.BinaryChunks
-            : settings.ReceiveUploadMode;
+            : settings.ReceiveUploadMode == ReceiveUploadMode.CompressedStream
+                ? ReceiveUploadMode.Auto
+                : settings.ReceiveUploadMode;
         var uploadChunkSizingMode = settings.ReceiveUploadMode == ReceiveUploadMode.AdaptiveBinaryChunks
             ? ReceiveUploadChunkSizingMode.Auto
             : settings.ReceiveUploadChunkSizingMode;
@@ -169,13 +175,15 @@ internal sealed class PublicSharePageModelFactory
                 Math.Max(
                     Defaults.MinimumReceiveUploadAutoProbeChunkCount,
                     settings.ReceiveUploadAutoProbeChunkCount <= 0 ? Defaults.DefaultReceiveUploadAutoProbeChunkCount : settings.ReceiveUploadAutoProbeChunkCount),
-                ShouldExposeBrowserTransferEncryption(context, settings) ? CreateBrowserTransferReceiveEncryptionExperiment() : null,
+                settings.ReceiveUploadCompressionEnabled,
+                settings.ReceiveTransferDiagnosticsEnabled,
+                ShouldExposeReceiveUploadEncryption(context, settings) ? CreateBrowserTransferReceiveEncryptionExperiment() : null,
                 receiveLink.ExpiresAtUtc?.ToLocalTime().ToString("g")));
     }
 
-    private static bool ShouldExposeBrowserTransferEncryption(HttpContext context, AppSettings settings)
+    private static bool ShouldExposeReceiveUploadEncryption(HttpContext context, AppSettings settings)
     {
-        return settings.BrowserTransferEncryptionPolicy switch
+        return settings.ReceiveUploadEncryptionPolicy switch
         {
             BrowserTransferEncryptionPolicy.Always => true,
             BrowserTransferEncryptionPolicy.Off => false,

@@ -364,8 +364,53 @@ public sealed class PublicShareHelpersTests
         Assert.NotNull(page.File);
         Assert.True(page.File!.CanUseBrowserCompression);
         Assert.Equal(fileInfo.Length, page.File.SizeBytes);
-        Assert.Equal("https://share.example.test/s/file-token/report.csv?download=raw", page.File.RawDownloadUrl);
-        Assert.Equal("https://share.example.test/s/file-token/report.csv?download=raw&compression=gzip", page.File.CompressedDownloadUrl);
+        Assert.Equal("/s/file-token/report.csv?download=raw", page.File.RawDownloadUrl);
+        Assert.Equal("/s/file-token/report.csv?download=raw&compression=gzip", page.File.CompressedDownloadUrl);
+    }
+
+    [Fact]
+    public void BuildFileMetadataPage_UsesRelativeDownloadUrls_WhenProxyTerminatesHttps()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "http";
+        context.Request.Host = new HostString("share.example.test");
+        context.Request.PathBase = "/proxy";
+        context.Request.Path = "/s/file-token/report.zip";
+
+        using var tempDirectory = new TemporaryDirectory();
+        var filePath = Path.Combine(tempDirectory.RootPath, "report.zip");
+        File.WriteAllText(filePath, "hello");
+        var fileInfo = new FileInfo(filePath);
+        var share = new ShareRecord
+        {
+            Id = "1",
+            Token = "file-token",
+            FilePath = filePath,
+            FileName = fileInfo.Name,
+            PublicBaseUrl = "http://share.example.test",
+            FileSize = fileInfo.Length,
+            FileModifiedAtUtc = new DateTimeOffset(fileInfo.LastWriteTimeUtc),
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            PublishMode = PublishMode.Manual,
+            State = ShareState.Active,
+        };
+
+        var page = new PublicSharePageModelFactory().BuildFileMetadataPage(
+            context,
+            share,
+            fileInfo.Name,
+            fileInfo,
+            ShareFileResponsePolicy.Resolve(fileInfo.Name),
+            new AppSettings());
+
+        Assert.NotNull(page.File);
+        Assert.Equal("http://share.example.test/proxy/s/file-token/report.zip", page.CanonicalUrl);
+        Assert.Null(page.PrimaryActionLabel);
+        Assert.Null(page.PrimaryActionUrl);
+        Assert.Equal("/proxy/s/file-token/report.zip?download=raw", page.File!.RawDownloadUrl);
+        Assert.NotNull(page.File.ManagedDownload);
+        Assert.Equal("/proxy/s/file-token/report.zip?ifs=download-plan", page.File.ManagedDownload!.ManifestUrl);
+        Assert.Equal("/proxy/s/file-token/report.zip?download=raw", page.File.ManagedDownload.RawDownloadUrl);
     }
 
     [Fact]
@@ -411,6 +456,39 @@ public sealed class PublicShareHelpersTests
         Assert.Equal(Defaults.DefaultReceiveUploadMaxBodySizeBytes, page.Receive.UploadMaxBodySizeBytes);
         Assert.Equal(Defaults.DefaultReceiveUploadChunkTargetSeconds, page.Receive.UploadChunkTargetSeconds);
         Assert.Equal(Defaults.DefaultReceiveUploadAutoProbeChunkCount, page.Receive.UploadAutoProbeChunkCount);
+        Assert.True(page.Receive.UploadCompressionEnabled);
+        Assert.False(page.Receive.TransferDiagnosticsEnabled);
+    }
+
+    [Fact]
+    public void BuildReceivePage_PropagatesTransferDiagnosticsSetting()
+    {
+        var context = new DefaultHttpContext();
+        context.Request.Scheme = "https";
+        context.Request.Host = new HostString("share.example.test");
+        context.Request.Path = "/r/receive-token";
+
+        var receiveLink = new ReceiveLinkRecord
+        {
+            Id = "receive-1",
+            Token = "receive-token",
+            TargetDirectoryPath = @"C:\Uploads\drop",
+            TargetDisplayName = "drop",
+            PublicBaseUrl = "https://share.example.test",
+            CreatedAtUtc = DateTimeOffset.UtcNow,
+            MaxTotalBytes = 1024,
+            BytesReceived = 0,
+            PublishMode = PublishMode.Manual,
+            State = ReceiveLinkState.Active,
+        };
+
+        var page = new PublicSharePageModelFactory().BuildReceivePage(
+            context,
+            receiveLink,
+            new AppSettings { ReceiveTransferDiagnosticsEnabled = true });
+
+        Assert.NotNull(page.Receive);
+        Assert.True(page.Receive!.TransferDiagnosticsEnabled);
     }
 
     [Fact]
