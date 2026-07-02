@@ -79,6 +79,12 @@ internal static class ReceiveUploadPlanner
                         continue;
                     }
 
+                    if (IsLinkedDirectory(rootPath))
+                    {
+                        rejected.Add(new ReceiveUploadFileResult(candidate.FileName, normalizedRelativePath, null, false, LinkedDirectoryErrorMessage, candidate.Length));
+                        continue;
+                    }
+
                     rootPath = EnsureUniqueDirectoryPath(rootPath, reservedDirectories, reservedFiles);
                     aliasedRoot = Path.GetFileName(rootPath);
                     rootAliases[originalRoot] = aliasedRoot;
@@ -139,7 +145,7 @@ internal static class ReceiveUploadPlanner
 
             if (IsLinkedDirectory(currentPath))
             {
-                error = "The uploaded path traverses a linked folder, which is not allowed.";
+                error = LinkedDirectoryErrorMessage;
                 return false;
             }
 
@@ -167,6 +173,8 @@ internal static class ReceiveUploadPlanner
             !string.IsNullOrWhiteSpace(directoryInfo.LinkTarget) ||
             directoryInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
     }
+
+    private const string LinkedDirectoryErrorMessage = "The uploaded path traverses a linked folder, which is not allowed.";
 
     private static string EnsureUniqueDirectoryPath(string directoryPath, ISet<string> reservedDirectories, ISet<string> reservedFiles)
     {
