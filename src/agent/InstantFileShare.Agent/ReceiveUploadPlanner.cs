@@ -137,8 +137,7 @@ internal static class ReceiveUploadPlanner
             currentPath = Path.Combine(currentPath, segment);
             var normalizedCurrentPath = NormalizePath(currentPath);
 
-            if (Directory.Exists(currentPath) &&
-                (File.GetAttributes(currentPath) & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint)
+            if (IsLinkedDirectory(currentPath))
             {
                 error = "The uploaded path traverses a linked folder, which is not allowed.";
                 return false;
@@ -154,6 +153,19 @@ internal static class ReceiveUploadPlanner
         }
 
         return true;
+    }
+
+    private static bool IsLinkedDirectory(string path)
+    {
+        if (!Directory.Exists(path))
+        {
+            return false;
+        }
+
+        var directoryInfo = new DirectoryInfo(path);
+        return
+            !string.IsNullOrWhiteSpace(directoryInfo.LinkTarget) ||
+            directoryInfo.Attributes.HasFlag(FileAttributes.ReparsePoint);
     }
 
     private static string EnsureUniqueDirectoryPath(string directoryPath, ISet<string> reservedDirectories, ISet<string> reservedFiles)
