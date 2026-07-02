@@ -1941,7 +1941,7 @@ public sealed class AgentHttpIntegrationTests
                 {
                     DatabasePath = databasePath,
                     LogsDirectory = logsDirectory,
-                    RepositoryRoot = Directory.GetCurrentDirectory(),
+                    RepositoryRoot = AgentPaths.GetRepositoryRoot(),
                     PublicShareAssetsDirectory = assetsDirectory,
                     BootstrapSettingsPath = Path.Combine(rootPath, "bootstrap-settings.json"),
                     RunStartupTasks = false,

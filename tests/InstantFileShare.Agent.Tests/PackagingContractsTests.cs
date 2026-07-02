@@ -1,5 +1,3 @@
-using System.Diagnostics;
-
 namespace InstantFileShare.Agent.Tests;
 
 public sealed class PackagingContractsTests
@@ -105,47 +103,40 @@ public sealed class PackagingContractsTests
     }
 
     [Fact]
-    public void RepositoryMetadata_DoesNotTrackLocalWorktreesOrGithubWorkflows()
+    public void GitHubActions_RunWindowsCi_AndPublishTaggedReleases()
     {
         var repoRoot = AgentPaths.GetRepositoryRoot();
-        var gitignore = File.ReadAllText(Path.Combine(repoRoot, ".gitignore"));
+        var ciWorkflow = File.ReadAllText(Path.Combine(repoRoot, ".github", "workflows", "ci.yml"));
+        var releaseWorkflow = File.ReadAllText(Path.Combine(repoRoot, ".github", "workflows", "release.yml"));
 
-        Assert.Contains(".codex-worktrees/", gitignore);
-        Assert.Contains(".github/workflows/", gitignore);
+        Assert.Contains("runs-on: windows-latest", ciWorkflow);
+        Assert.Contains("- master", ciWorkflow);
+        Assert.Contains("dotnet build InstantFileShare.slnx", ciWorkflow);
+        Assert.Contains("dotnet test InstantFileShare.slnx", ciWorkflow);
+        Assert.Contains("npm test", ciWorkflow);
+        Assert.Contains("npm run build", ciWorkflow);
+        Assert.Contains("cmake --build build/shell-extension --config Debug", ciWorkflow);
 
-        var trackedFiles = RunGit(repoRoot, "ls-files", ".codex-worktrees", ".github/workflows");
-        Assert.True(string.IsNullOrWhiteSpace(trackedFiles), $"These local-only paths must not be tracked:{Environment.NewLine}{trackedFiles}");
+        Assert.Contains("contents: write", releaseWorkflow);
+        Assert.Contains("- v*.*.*", releaseWorkflow);
+        Assert.Contains("choco install innosetup --yes --no-progress", releaseWorkflow);
+        Assert.Contains("dotnet test InstantFileShare.slnx", releaseWorkflow);
+        Assert.Contains("npm test", releaseWorkflow);
+        Assert.Contains(".\\scripts\\build-installer.ps1", releaseWorkflow);
+        Assert.Contains("gh release create", releaseWorkflow);
+        Assert.Contains("gh release upload", releaseWorkflow);
     }
 
-    private static string RunGit(string workingDirectory, params string[] arguments)
+    [Fact]
+    public void TestScript_FailsWhenNativeCommandsFail()
     {
-        using var process = new Process();
-        process.StartInfo = new ProcessStartInfo("git")
-        {
-            WorkingDirectory = workingDirectory,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false
-        };
+        var testScript = File.ReadAllText(Path.Combine(AgentPaths.GetRepositoryRoot(), "scripts", "test.ps1"));
 
-        foreach (var argument in arguments)
-        {
-            process.StartInfo.ArgumentList.Add(argument);
-        }
-
-        Assert.True(process.Start(), "Failed to start git.");
-
-        var output = process.StandardOutput.ReadToEnd();
-        var error = process.StandardError.ReadToEnd();
-
-        if (!process.WaitForExit(10000))
-        {
-            process.Kill(entireProcessTree: true);
-            throw new TimeoutException("git did not exit within 10 seconds.");
-        }
-
-        Assert.True(process.ExitCode == 0, $"git exited with code {process.ExitCode}:{Environment.NewLine}{error}");
-
-        return output;
+        Assert.Contains("Invoke-ExternalCommand", testScript);
+        Assert.Contains("$LASTEXITCODE -ne 0", testScript);
+        Assert.Contains("throw \"$Description failed with exit code $LASTEXITCODE.\"", testScript);
+        Assert.Contains("-Description '.NET solution tests'", testScript);
+        Assert.Contains("-Description 'UI tests'", testScript);
     }
+
 }

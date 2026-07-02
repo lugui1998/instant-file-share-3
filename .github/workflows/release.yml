@@ -1,0 +1,123 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - v*.*.*
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to release, for example v1.3.0
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/ui/package-lock.json
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Install UI dependencies
+        working-directory: src/ui
+        run: npm ci
+
+      - name: Run .NET tests
+        run: dotnet test InstantFileShare.slnx --configuration Release --logger "trx;LogFileName=dotnet-tests.trx" --results-directory artifacts/test-results/dotnet
+
+      - name: Run UI tests
+        working-directory: src/ui
+        run: npm test
+
+      - name: Build installer package
+        shell: pwsh
+        run: .\scripts\build-installer.ps1
+
+      - name: Collect release assets
+        id: assets
+        shell: pwsh
+        run: |
+          $tagName = '${{ inputs.tag || github.ref_name }}'
+          $packageRoot = Resolve-Path '.\artifacts\package'
+          $installerRoot = Join-Path $packageRoot 'installer'
+          $stageRoot = Join-Path $packageRoot 'stage'
+          $installer = Get-ChildItem -Path $installerRoot -Filter '*.exe' | Select-Object -First 1
+
+          if ($null -eq $installer) {
+            throw "No installer executable was produced in $installerRoot."
+          }
+
+          if (-not (Test-Path $stageRoot)) {
+            throw "No staged package directory was produced at $stageRoot."
+          }
+
+          $stageZip = Join-Path $packageRoot "InstantFileShare-$tagName-stage.zip"
+          Compress-Archive -Path (Join-Path $stageRoot '*') -DestinationPath $stageZip -Force
+
+          "installer_path=$($installer.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "stage_zip=$stageZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: instant-file-share-${{ inputs.tag || github.ref_name }}
+          path: |
+            ${{ steps.assets.outputs.installer_path }}
+            ${{ steps.assets.outputs.stage_zip }}
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          INSTALLER_PATH: ${{ steps.assets.outputs.installer_path }}
+          STAGE_ZIP: ${{ steps.assets.outputs.stage_zip }}
+        run: |
+          $releaseTitle = "Instant File Share $env:RELEASE_TAG"
+          $releaseNotes = "Automated release for commit $env:GITHUB_SHA."
+
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY *> $null
+          $releaseExists = $LASTEXITCODE -eq 0
+
+          if ($releaseExists) {
+            gh release upload $env:RELEASE_TAG $env:INSTALLER_PATH $env:STAGE_ZIP --repo $env:GITHUB_REPOSITORY --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Uploading release assets failed."
+            }
+
+            gh release edit $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY --title $releaseTitle --notes $releaseNotes
+            if ($LASTEXITCODE -ne 0) {
+              throw "Updating the GitHub release failed."
+            }
+          } else {
+            gh release create $env:RELEASE_TAG $env:INSTALLER_PATH $env:STAGE_ZIP --repo $env:GITHUB_REPOSITORY --title $releaseTitle --notes $releaseNotes
+            if ($LASTEXITCODE -ne 0) {
+              throw "Creating the GitHub release failed."
+            }
+          }

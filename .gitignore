@@ -5,7 +5,6 @@ obj/
 .tmp/
 .codex/
 .codex-worktrees/
-.github/workflows/
 .idea/
 .DS_Store
 

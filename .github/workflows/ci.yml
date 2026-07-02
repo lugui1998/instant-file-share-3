@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+      - main
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    name: Build and test
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: src/ui/package-lock.json
+
+      - name: Restore .NET dependencies
+        run: dotnet restore InstantFileShare.slnx
+
+      - name: Build .NET solution
+        run: dotnet build InstantFileShare.slnx --configuration Release --no-restore
+
+      - name: Test .NET solution
+        run: dotnet test InstantFileShare.slnx --configuration Release --no-build --logger "trx;LogFileName=dotnet-tests.trx" --results-directory artifacts/test-results/dotnet
+
+      - name: Install UI dependencies
+        working-directory: src/ui
+        run: npm ci
+
+      - name: Test UI
+        working-directory: src/ui
+        run: npm test
+
+      - name: Build UI
+        working-directory: src/ui
+        run: npm run build
+
+      - name: Configure shell helper
+        run: cmake -S src/shell-extension -B build/shell-extension
+
+      - name: Build shell helper
+        run: cmake --build build/shell-extension --config Debug
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dotnet-test-results
+          path: artifacts/test-results/dotnet
+          if-no-files-found: ignore
