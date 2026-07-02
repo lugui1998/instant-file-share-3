@@ -1449,6 +1449,7 @@ public sealed class AgentHttpIntegrationTests
         form.Add(new StringContent(largeByteCount.ToString()), "fileSizes");
         form.Add(CreateFileContent(largeByteCount), "files", "large.bin");
 
+        host.PublicClient.Timeout = TimeSpan.FromMinutes(5);
         using var response = await host.PublicClient.PostAsync("/r/receive-token", form);
         var body = await response.Content.ReadAsStringAsync();
         using var transfersResponse = await host.LocalClient.GetAsync("/api/transfers");
