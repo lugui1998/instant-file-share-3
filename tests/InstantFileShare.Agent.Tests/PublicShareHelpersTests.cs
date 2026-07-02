@@ -632,7 +632,7 @@ public sealed class PublicShareHelpersTests
         try
         {
             Directory.CreateSymbolicLink(linkPath, targetPath);
-            return true;
+            return (File.GetAttributes(linkPath) & FileAttributes.ReparsePoint) == FileAttributes.ReparsePoint;
         }
         catch (IOException)
         {
