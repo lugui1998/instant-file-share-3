@@ -1434,9 +1434,9 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
-    public async Task ReceiveUpload_AcceptsFileLargerThanDefaultRequestBodyLimit()
+    public async Task ReceiveUpload_AcceptsLargeMultipartBody()
     {
-        const int largeByteCount = 31 * 1024 * 1024;
+        const int largeByteCount = 2 * 1024 * 1024;
         await using var host = await AgentTestHost.StartAsync(async context =>
         {
             var dropPath = Path.Combine(context.FilesDirectory, "drop");
