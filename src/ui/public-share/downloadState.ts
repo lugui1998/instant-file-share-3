@@ -1,9 +1,9 @@
 export type ManagedDownloadStatus = 'idle' | 'planning' | 'downloading' | 'paused' | 'saving' | 'complete' | 'failed'
 
 // Above this size, buffering chunks plus a final Blob can briefly require more than 2x the file size.
-export const blobManagedDownloadMaxBytes = 512 * 1024 * 1024
+export const blobManagedDownloadMaxBytes = 64 * 1024 * 1024
 export const largeFileStreamingRequiredMessage =
-  'This file is too large for in-memory browser assembly. Choose a save location when prompted, or use Direct download.'
+  'This file is too large for in-memory browser assembly. Starting the standard browser download instead.'
 
 export type ManagedDownloadState = {
   status: ManagedDownloadStatus

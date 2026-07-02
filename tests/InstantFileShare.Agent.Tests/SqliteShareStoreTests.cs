@@ -28,12 +28,15 @@ public sealed class SqliteShareStoreTests
         Assert.Equal(Defaults.DefaultReceiveUploadMaxBodySizeBytes, settings.ReceiveUploadMaxBodySizeBytes);
         Assert.Equal(Defaults.DefaultReceiveUploadChunkTargetSeconds, settings.ReceiveUploadChunkTargetSeconds);
         Assert.Equal(Defaults.DefaultReceiveUploadAutoProbeChunkCount, settings.ReceiveUploadAutoProbeChunkCount);
+        Assert.True(settings.ReceiveUploadCompressionEnabled);
         Assert.True(settings.BrowserManagedDownloadsEnabled);
-        Assert.Equal(Defaults.DefaultBrowserManagedDownloadMaxMemoryBytes, settings.BrowserManagedDownloadMaxMemoryBytes);
+        Assert.Equal(64L * 1024 * 1024, settings.BrowserManagedDownloadMaxMemoryBytes);
         Assert.Equal(Defaults.DefaultBrowserManagedDownloadMaxParallelChunks, settings.BrowserManagedDownloadMaxParallelChunks);
         Assert.Equal(BrowserManagedCompressionMode.Auto, settings.BrowserManagedCompressionMode);
-        Assert.Equal(BrowserTransferEncryptionPolicy.HttpOnly, settings.BrowserTransferEncryptionPolicy);
+        Assert.Equal(BrowserTransferEncryptionPolicy.HttpOnly, settings.BrowserDownloadEncryptionPolicy);
+        Assert.Equal(BrowserTransferEncryptionPolicy.HttpOnly, settings.ReceiveUploadEncryptionPolicy);
         Assert.False(settings.BrowserTransferDiagnosticsEnabled);
+        Assert.False(settings.ReceiveTransferDiagnosticsEnabled);
         Assert.Equal(Defaults.PublicBindAddress, settings.ManualBindAddress);
         Assert.Null(cloudflaredState.ExecutablePath);
         Assert.Equal(3, profiles.Count);
@@ -464,6 +467,7 @@ public sealed class SqliteShareStoreTests
             ManualBaseUrl = "https://example.com",
             FolderBrowsePageTitle = "Browse files from Team",
             ReceivePageTitle = "Upload to Team",
+            ReceiveTransferDiagnosticsEnabled = true,
             ShowLogs = true,
         };
         var cloudflaredState = new CloudflaredState
@@ -486,6 +490,7 @@ public sealed class SqliteShareStoreTests
         Assert.Equal("Browse files from Team", storedSettings.FolderBrowsePageTitle);
         Assert.Equal("Upload to Team", storedSettings.ReceivePageTitle);
         Assert.Equal(settings.ManualBaseUrl, storedSettings.ManualBaseUrl);
+        Assert.True(storedSettings.ReceiveTransferDiagnosticsEnabled);
         Assert.True(storedSettings.ShowLogs);
         Assert.Equal(cloudflaredState.ExecutablePath, storedState.ExecutablePath);
         Assert.Equal(cloudflaredState.QuickTunnelUrl, storedState.QuickTunnelUrl);

@@ -75,6 +75,8 @@ internal sealed record PublicShareReceiveModel(
     long UploadMaxBodySizeBytes,
     int UploadChunkTargetSeconds,
     int UploadAutoProbeChunkCount,
+    bool UploadCompressionEnabled,
+    bool TransferDiagnosticsEnabled,
     BrowserTransferEncryptionExperimentModel? EncryptionExperiment,
     string? ExpiresAtLabel);
 

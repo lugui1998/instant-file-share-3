@@ -83,6 +83,7 @@ public sealed class ShareUtilitiesTests
     [Theory]
     [InlineData("photo.JPG", "image/jpeg", ShareFileTypeCategory.Image, true)]
     [InlineData("clip.mp4", "video/mp4", ShareFileTypeCategory.Video, true)]
+    [InlineData("clip.mkv", "video/x-matroska", ShareFileTypeCategory.Video, true)]
     [InlineData("report.pdf", "application/pdf", ShareFileTypeCategory.Pdf, true)]
     [InlineData("archive.zip", ShareFileResponsePolicy.DefaultContentType, ShareFileTypeCategory.Other, false)]
     [InlineData("README", ShareFileResponsePolicy.DefaultContentType, ShareFileTypeCategory.Other, false)]
@@ -110,7 +111,7 @@ public sealed class ShareUtilitiesTests
         };
 
         var imageMetadata = ShareFileResponsePolicy.Resolve("photo.jpg", settings);
-        var videoMetadata = ShareFileResponsePolicy.Resolve("clip.mp4", settings);
+        var videoMetadata = ShareFileResponsePolicy.Resolve("clip.mkv", settings);
         var pdfMetadata = ShareFileResponsePolicy.Resolve("report.pdf", settings);
 
         Assert.False(imageMetadata.PreferInline);
@@ -132,6 +133,7 @@ public sealed class ShareUtilitiesTests
     [Theory]
     [InlineData("photo.jpg")]
     [InlineData("clip.mp4")]
+    [InlineData("clip.mkv")]
     [InlineData("report.pdf")]
     [InlineData("archive.zip")]
     [InlineData("workbook.xlsx")]

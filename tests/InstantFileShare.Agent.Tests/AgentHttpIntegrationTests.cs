@@ -131,7 +131,7 @@ public sealed class AgentHttpIntegrationTests
             var filePath = Path.Combine(context.FilesDirectory, "secret.txt");
             await File.WriteAllTextAsync(filePath, "plain secret");
             await context.Store.SaveSettingsAsync(
-                context.Settings with { BrowserTransferEncryptionPolicy = BrowserTransferEncryptionPolicy.Always },
+                context.Settings with { BrowserDownloadEncryptionPolicy = BrowserTransferEncryptionPolicy.Always },
                 CancellationToken.None);
             await context.Store.AddShareAsync(context.CreateFileShare("file-token", filePath), CancellationToken.None);
         });
@@ -195,9 +195,9 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal(HttpStatusCode.OK, pageResponse.StatusCode);
         Assert.Equal("text/html; charset=utf-8", pageResponse.Content.Headers.ContentType?.ToString());
         Assert.Contains("\"managedDownload\"", pageBody);
-        Assert.Contains("\"manifestUrl\":\"http://127.0.0.1:", pageBody);
+        Assert.Contains("\"manifestUrl\":\"/s/managed-token?ifs=download-plan\"", pageBody);
         Assert.Contains("ifs=download-plan", pageBody);
-        Assert.Contains("\"rawDownloadUrl\":\"http://127.0.0.1:", pageBody);
+        Assert.Contains("\"rawDownloadUrl\":\"/s/managed-token?download=raw\"", pageBody);
         Assert.Contains("download=raw", pageBody);
         Assert.Equal(HttpStatusCode.OK, rawBrowserResponse.StatusCode);
         Assert.Equal("managed body", rawBrowserBody);
@@ -221,6 +221,40 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.Equal("application/pdf", response.Content.Headers.ContentType?.MediaType);
         Assert.Equal("%PDF-1.7", body);
+    }
+
+    [Theory]
+    [InlineData(true, "video/x-matroska")]
+    [InlineData(false, "text/html")]
+    public async Task BrowserManagedDownloadPageRequest_RespectsOpenVideosSettingForMkv(bool openVideosInBrowser, string expectedContentType)
+    {
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            await context.Store.SaveSettingsAsync(
+                context.Settings with { OpenVideosInBrowser = openVideosInBrowser },
+                CancellationToken.None);
+            var filePath = Path.Combine(context.FilesDirectory, "clip.mkv");
+            await File.WriteAllTextAsync(filePath, "mkv body");
+            await context.Store.AddShareAsync(context.CreateFileShare("mkv-token", filePath), CancellationToken.None);
+        });
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, "/s/mkv-token");
+        request.Headers.Accept.ParseAdd("text/html");
+        using var response = await host.PublicClient.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(expectedContentType, response.Content.Headers.ContentType?.MediaType);
+        if (openVideosInBrowser)
+        {
+            Assert.Equal("mkv body", body);
+            Assert.Equal("inline", response.Content.Headers.ContentDisposition?.DispositionType);
+        }
+        else
+        {
+            Assert.Contains("window.__IFS_PUBLIC_SHARE__", body);
+            Assert.Contains("\"managedDownload\"", body);
+        }
     }
 
     [Fact]
@@ -250,6 +284,7 @@ public sealed class AgentHttpIntegrationTests
         Assert.Equal(64, plan.GetProperty("planSignature").GetString()?.Length);
         Assert.Equal(65536, plan.GetProperty("chunkSizeBytes").GetInt32());
         Assert.Contains("download=raw", plan.GetProperty("rawDownloadUrl").GetString());
+        Assert.StartsWith("/s/chunks-token?", plan.GetProperty("rawDownloadUrl").GetString());
         Assert.Contains("ifsPlanHash=", plan.GetProperty("rawDownloadUrl").GetString());
         Assert.Contains("ifsPlanSignature=", plan.GetProperty("rawDownloadUrl").GetString());
         Assert.Contains("ifsPlanSize=", plan.GetProperty("rawDownloadUrl").GetString());
@@ -287,7 +322,7 @@ public sealed class AgentHttpIntegrationTests
             $"ifsPlanSignature={new string('0', 64)}",
             StringComparison.Ordinal);
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(tamperedRawDownloadUrl).PathAndQuery);
+        using var request = new HttpRequestMessage(HttpMethod.Get, tamperedRawDownloadUrl);
         request.Headers.Range = new RangeHeaderValue(0, 3);
         using var response = await host.PublicClient.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
@@ -317,7 +352,7 @@ public sealed class AgentHttpIntegrationTests
         await File.WriteAllBytesAsync(filePath, [9, 8, 7, 6]);
         File.SetLastWriteTimeUtc(filePath, DateTime.UtcNow.AddSeconds(1));
 
-        using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(rawDownloadUrl!).PathAndQuery);
+        using var request = new HttpRequestMessage(HttpMethod.Get, rawDownloadUrl);
         request.Headers.Range = new RangeHeaderValue(0, 3);
         using var response = await host.PublicClient.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
@@ -666,6 +701,7 @@ public sealed class AgentHttpIntegrationTests
         Assert.Contains("\"uploadUrl\":\"/r/receive-token\"", body);
         Assert.Contains("\"uploadEventsUrl\":\"/r/receive-token/events\"", body);
         Assert.Contains("\"uploadMode\":\"BinaryChunks\"", body);
+        Assert.Contains("\"uploadCompressionEnabled\":true", body);
         Assert.Contains("\"uploadChunkSizeBytes\":8388608", body);
         Assert.DoesNotContain("Upload to drop", body);
         Assert.Contains("window.__IFS_PUBLIC_SHARE__", body);
@@ -960,6 +996,75 @@ public sealed class AgentHttpIntegrationTests
     }
 
     [Fact]
+    public async Task ReceiveUpload_DecodesCompressedMultipartChunk()
+    {
+        var chunkBytes = System.Text.Encoding.UTF8.GetBytes("helloworld");
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var chunkForm = CreateChunkUploadForm(
+            uploadId: "upload-1",
+            relativePath: "compressed/multipart.txt",
+            totalBytes: chunkBytes.Length,
+            chunkIndex: 0,
+            chunkCount: 1,
+            chunkStart: 0,
+            chunkValue: "helloworld",
+            declaredChunkSize: chunkBytes.Length,
+            chunkEncoding: "gzip",
+            bodyBytes: CompressGzip(chunkBytes));
+        using var response = await host.PublicClient.PostAsync("/r/receive-token", chunkForm);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("helloworld", await File.ReadAllTextAsync(Path.Combine(host.FilesDirectory, "drop", "compressed", "multipart.txt")));
+        AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
+        Assert.Contains("\"uploadedCount\":1", body);
+
+        using var completedTransfersResponse = await host.LocalClient.GetAsync("/api/transfers");
+        var completedTransfers = await completedTransfersResponse.Content.ReadFromJsonAsync<List<TransferSnapshot>>(JsonOptions);
+        var completedTransfer = Assert.Single(completedTransfers!);
+        Assert.Equal(TransferState.Completed, completedTransfer.State);
+        Assert.Equal(chunkBytes.Length, completedTransfer.ProgressBytes);
+        Assert.Equal(chunkBytes.Length, completedTransfer.ProgressTotalBytes);
+    }
+
+    [Fact]
+    public async Task ReceiveUpload_DecodesCompressedBinaryChunk()
+    {
+        var chunkBytes = System.Text.Encoding.UTF8.GetBytes("helloworld");
+        await using var host = await AgentTestHost.StartAsync(async context =>
+        {
+            var dropPath = Path.Combine(context.FilesDirectory, "drop");
+            Directory.CreateDirectory(dropPath);
+            await context.Store.AddReceiveLinkAsync(context.CreateReceiveLink("receive-token", dropPath), CancellationToken.None);
+        });
+
+        using var chunkRequest = CreateBinaryChunkUploadRequest(
+            uploadId: "upload-1",
+            relativePath: "compressed/binary.txt",
+            totalBytes: chunkBytes.Length,
+            chunkIndex: 0,
+            chunkCount: 1,
+            chunkStart: 0,
+            chunkValue: "helloworld",
+            declaredChunkSize: chunkBytes.Length,
+            transferCompression: "gzip",
+            bodyBytes: CompressGzip(chunkBytes));
+        using var response = await host.PublicClient.SendAsync(chunkRequest);
+        var body = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("helloworld", await File.ReadAllTextAsync(Path.Combine(host.FilesDirectory, "drop", "compressed", "binary.txt")));
+        AssertNoPartialUploads(Path.Combine(host.FilesDirectory, "drop"));
+        Assert.Contains("\"uploadedCount\":1", body);
+    }
+
+    [Fact]
     public async Task ReceiveUpload_SavesCompressedStreamAndTracksDecodedProgress()
     {
         var contentBytes = System.Text.Encoding.UTF8.GetBytes(new string('a', 4096));
@@ -1096,6 +1201,7 @@ public sealed class AgentHttpIntegrationTests
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await socket.ConnectAsync(new Uri($"ws://127.0.0.1:{host.Settings.ManualPublicPort}/r/receive-token/upload-socket"), timeout.Token);
 
+        var firstChunkBytes = System.Text.Encoding.UTF8.GetBytes("hello");
         await SendWebSocketUploadChunkAsync(
             socket,
             uploadId: "upload-1",
@@ -1105,7 +1211,10 @@ public sealed class AgentHttpIntegrationTests
             chunkCount: int.MaxValue,
             chunkStart: 0,
             chunkValue: "hello",
-            timeout.Token);
+            timeout.Token,
+            encoding: "gzip",
+            bodyBytes: CompressGzip(firstChunkBytes),
+            declaredChunkSize: firstChunkBytes.Length);
         using var firstAck = await ReceiveWebSocketJsonDocumentAsync(socket, timeout.Token);
 
         Assert.Equal(0, firstAck.RootElement.GetProperty("uploadedCount").GetInt32());
@@ -1481,7 +1590,9 @@ public sealed class AgentHttpIntegrationTests
         int chunkCount,
         long chunkStart,
         string chunkValue,
-        long? declaredChunkSize = null)
+        long? declaredChunkSize = null,
+        string? chunkEncoding = null,
+        byte[]? bodyBytes = null)
     {
         var form = new MultipartFormDataContent();
         form.Add(new StringContent(relativePath), "relativePaths");
@@ -1491,7 +1602,12 @@ public sealed class AgentHttpIntegrationTests
         form.Add(new StringContent(chunkCount.ToString()), "chunkCount");
         form.Add(new StringContent(chunkStart.ToString()), "chunkStart");
         form.Add(new StringContent((declaredChunkSize ?? System.Text.Encoding.UTF8.GetByteCount(chunkValue)).ToString()), "chunkSize");
-        form.Add(CreateFileContent(chunkValue), "files", Path.GetFileName(relativePath));
+        if (!string.IsNullOrWhiteSpace(chunkEncoding))
+        {
+            form.Add(new StringContent(chunkEncoding), "chunkEncoding");
+        }
+
+        form.Add(bodyBytes is null ? CreateFileContent(chunkValue) : new ByteArrayContent(bodyBytes), "files", Path.GetFileName(relativePath));
         return form;
     }
 
@@ -1502,11 +1618,14 @@ public sealed class AgentHttpIntegrationTests
         int chunkIndex,
         int chunkCount,
         long chunkStart,
-        string chunkValue)
+        string chunkValue,
+        long? declaredChunkSize = null,
+        string? transferCompression = null,
+        byte[]? bodyBytes = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, "/r/receive-token")
         {
-            Content = CreateFileContent(chunkValue),
+            Content = bodyBytes is null ? CreateFileContent(chunkValue) : new ByteArrayContent(bodyBytes),
         };
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
         request.Headers.Add("X-IFS-Upload-Id", uploadId);
@@ -1517,7 +1636,12 @@ public sealed class AgentHttpIntegrationTests
         request.Headers.Add("X-IFS-Chunk-Index", chunkIndex.ToString());
         request.Headers.Add("X-IFS-Chunk-Count", chunkCount.ToString());
         request.Headers.Add("X-IFS-Chunk-Start", chunkStart.ToString());
-        request.Headers.Add("X-IFS-Chunk-Size", System.Text.Encoding.UTF8.GetByteCount(chunkValue).ToString());
+        request.Headers.Add("X-IFS-Chunk-Size", (declaredChunkSize ?? System.Text.Encoding.UTF8.GetByteCount(chunkValue)).ToString());
+        if (!string.IsNullOrWhiteSpace(transferCompression))
+        {
+            request.Headers.Add("X-IFS-Transfer-Compression", transferCompression);
+        }
+
         return request;
     }
 
@@ -1561,7 +1685,10 @@ public sealed class AgentHttpIntegrationTests
         int chunkCount,
         long chunkStart,
         string chunkValue,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? encoding = null,
+        byte[]? bodyBytes = null,
+        long? declaredChunkSize = null)
     {
         var chunkBytes = System.Text.Encoding.UTF8.GetBytes(chunkValue);
         var metadata = JsonSerializer.Serialize(new
@@ -1575,10 +1702,11 @@ public sealed class AgentHttpIntegrationTests
             chunkIndex,
             chunkCount,
             chunkStart,
-            chunkSize = chunkBytes.Length,
+            chunkSize = declaredChunkSize ?? chunkBytes.Length,
+            encoding = encoding ?? "raw",
         }, JsonOptions);
         await socket.SendAsync(System.Text.Encoding.UTF8.GetBytes(metadata), WebSocketMessageType.Text, true, cancellationToken);
-        await socket.SendAsync(chunkBytes, WebSocketMessageType.Binary, true, cancellationToken);
+        await socket.SendAsync(bodyBytes ?? chunkBytes, WebSocketMessageType.Binary, true, cancellationToken);
     }
 
     private static async Task<JsonDocument> ReceiveWebSocketJsonDocumentAsync(ClientWebSocket socket, CancellationToken cancellationToken)

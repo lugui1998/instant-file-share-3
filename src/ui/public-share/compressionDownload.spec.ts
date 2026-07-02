@@ -157,9 +157,9 @@ describe('compressionDownload', () => {
   })
 
   it('formats transfer speeds in bits per second', () => {
-    expect(formatTransferBitsPerSecond(16)).toBe('128 b/s')
-    expect(formatTransferBitsPerSecond(2048)).toBe('16 Kb/s')
-    expect(formatTransferBitsPerSecond(1024 * 1024)).toBe('8 Mb/s')
+    expect(formatTransferBitsPerSecond(16)).toBe('128.00 b/s')
+    expect(formatTransferBitsPerSecond(2048)).toBe('16.00 Kb/s')
+    expect(formatTransferBitsPerSecond(1024 * 1024)).toBe('8.00 Mb/s')
   })
 
   it('adds managed gzip to signed raw chunk URLs without dropping plan query parameters', () => {

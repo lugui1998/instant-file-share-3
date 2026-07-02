@@ -155,12 +155,14 @@ export type PublicShareReceiveModel = {
   remainingQuotaBytes: number
   remainingQuotaLabel: string
   parallelUploadLimit: number
-  uploadMode: 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket' | 'Auto' | 'CompressedStream'
+  uploadMode: 'MultipartChunks' | 'BinaryChunks' | 'AdaptiveBinaryChunks' | 'WebSocket' | 'Auto'
   uploadChunkSizingMode: 'Fixed' | 'Auto'
   uploadChunkSizeBytes: number
   uploadMaxBodySizeBytes: number
   uploadChunkTargetSeconds: number
   uploadAutoProbeChunkCount: number
+  uploadCompressionEnabled: boolean
+  transferDiagnosticsEnabled: boolean
   encryptionExperiment?: BrowserTransferEncryptionExperimentModel | null
   expiresAtLabel?: string | null
 }

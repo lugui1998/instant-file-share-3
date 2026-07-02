@@ -20,12 +20,15 @@ function createSettingsDraft(): AppSettings {
     receiveUploadMaxBodySizeBytes: 95 * 1024 * 1024,
     receiveUploadChunkTargetSeconds: 30,
     receiveUploadAutoProbeChunkCount: 4,
+    receiveUploadCompressionEnabled: true,
     browserManagedDownloadsEnabled: true,
-    browserManagedDownloadMaxMemoryBytes: 512 * 1024 * 1024,
+    browserManagedDownloadMaxMemoryBytes: 64 * 1024 * 1024,
     browserManagedDownloadMaxParallelChunks: 4,
     browserManagedCompressionMode: 'Auto',
-    browserTransferEncryptionPolicy: 'HttpOnly',
+    browserDownloadEncryptionPolicy: 'HttpOnly',
+    receiveUploadEncryptionPolicy: 'HttpOnly',
     browserTransferDiagnosticsEnabled: false,
+    receiveTransferDiagnosticsEnabled: false,
     folderBrowsePageTitle: '',
     receivePageTitle: '',
     friendlyUrlsEnabled: true,
@@ -92,7 +95,7 @@ describe('SettingsView', () => {
       .findAll('.setting-card > .eyebrow')
       .map((eyebrow) => eyebrow.text())
 
-    expect(cardEyebrows.slice(-3)).toEqual(['Receiving', 'Cloudflare', 'Debug'])
+    expect(cardEyebrows.slice(-4)).toEqual(['Browser Managed Transfers', 'Receiving', 'Cloudflare', 'Debug'])
   })
 
   it('shows the receive parallel upload limit setting', () => {
@@ -145,11 +148,12 @@ describe('SettingsView', () => {
       'MultipartChunks',
       'BinaryChunks',
       'WebSocket',
-      'CompressedStream',
     ])
+    expect(wrapper.find('#receive-upload-compression-enabled').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Upload compression')
   })
 
-  it('shows browser-managed transfer settings', () => {
+  it('groups browser-managed download and upload settings together', () => {
     const wrapper = mount(SettingsView, {
       props: {
         settingsDraft: createSettingsDraft(),
@@ -165,12 +169,59 @@ describe('SettingsView', () => {
       },
     })
 
-    expect(wrapper.find('#browser-managed-downloads-enabled').exists()).toBe(true)
-    expect(wrapper.find('#browser-managed-download-memory').exists()).toBe(true)
-    expect(wrapper.find('#browser-managed-download-parallel-chunks').exists()).toBe(true)
-    expect(wrapper.find('#browser-managed-compression-mode').exists()).toBe(true)
-    expect(wrapper.find('#browser-transfer-encryption-policy').exists()).toBe(true)
-    expect(wrapper.find('#browser-transfer-diagnostics-enabled').exists()).toBe(true)
+    const browserManagedTransfersCard = wrapper
+      .findAll('.setting-card')
+      .find((card) => card.find('.eyebrow').text() === 'Browser Managed Transfers')
+    const receivingCard = wrapper
+      .findAll('.setting-card')
+      .find((card) => card.find('.eyebrow').text() === 'Receiving')
+
+    expect(browserManagedTransfersCard?.find('#browser-managed-downloads-enabled').exists()).toBe(true)
+    expect(browserManagedTransfersCard?.find('#browser-managed-download-memory').exists()).toBe(true)
+    expect(browserManagedTransfersCard?.text()).toContain('Default: 64 MB.')
+    expect(browserManagedTransfersCard?.find('#browser-managed-download-parallel-chunks').exists()).toBe(true)
+    expect(browserManagedTransfersCard?.find('#browser-managed-compression-mode').exists()).toBe(true)
+    expect(browserManagedTransfersCard?.find('#browser-download-encryption-policy').exists()).toBe(true)
+    expect(browserManagedTransfersCard?.find('#receive-upload-mode').exists()).toBe(true)
+    expect(browserManagedTransfersCard?.find('#receive-upload-compression-enabled').exists()).toBe(true)
+    expect(browserManagedTransfersCard?.find('#receive-upload-encryption-policy').exists()).toBe(true)
+    expect(browserManagedTransfersCard?.find('#receive-upload-chunk-sizing-mode').exists()).toBe(true)
+    expect(browserManagedTransfersCard?.find('#receive-upload-max-body-size').exists()).toBe(true)
+
+    expect(receivingCard?.find('#receive-upload-mode').exists()).toBe(false)
+    expect(receivingCard?.find('#receive-upload-compression-enabled').exists()).toBe(false)
+    expect(receivingCard?.find('#receive-upload-encryption-policy').exists()).toBe(false)
+    expect(receivingCard?.find('#browser-managed-downloads-enabled').exists()).toBe(false)
+    expect(receivingCard?.find('#browser-download-encryption-policy').exists()).toBe(false)
+  })
+
+  it('keeps public transfer diagnostics toggles in Debug', () => {
+    const wrapper = mount(SettingsView, {
+      props: {
+        settingsDraft: createSettingsDraft(),
+        bandwidthValue: null,
+        bandwidthUnit: 'MB/s',
+        selectedDomain: '',
+        managedSubdomain: 'share',
+        cloudflaredStatus: null,
+        clearingTransferHistory: false,
+        managedStatus: null,
+        managedAvailability: null,
+        saveMessage: '',
+      },
+    })
+
+    const debugCard = wrapper
+      .findAll('.setting-card')
+      .find((card) => card.find('.eyebrow').text() === 'Debug')
+    const receivingCard = wrapper
+      .findAll('.setting-card')
+      .find((card) => card.find('.eyebrow').text() === 'Receiving')
+
+    expect(debugCard?.find('#browser-transfer-diagnostics-enabled').exists()).toBe(true)
+    expect(debugCard?.find('#receive-transfer-diagnostics-enabled').exists()).toBe(true)
+    expect(receivingCard?.find('#browser-transfer-diagnostics-enabled').exists()).toBe(false)
+    expect(receivingCard?.find('#receive-transfer-diagnostics-enabled').exists()).toBe(false)
   })
 
   it('shows the auto probing threshold only for auto receive uploads', async () => {
@@ -231,9 +282,9 @@ describe('SettingsView', () => {
     expect(wrapper.find('#receive-upload-chunk-size').exists()).toBe(false)
     const targetInput = wrapper.find('#receive-upload-chunk-target-seconds')
     expect(targetInput.exists()).toBe(true)
-    expect(targetInput.attributes('min')).toBe('5')
+    expect(targetInput.attributes('min')).toBe('1')
     expect(targetInput.attributes('max')).toBeUndefined()
-    expect(wrapper.text()).toContain('Minimum: 5 seconds')
+    expect(wrapper.text()).toContain('Minimum: 1 second')
   })
 
   it('warns when Cloudflare auto target request time is above 120 seconds', () => {

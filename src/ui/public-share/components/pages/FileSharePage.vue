@@ -14,7 +14,6 @@ import {
   chooseManagedCompressionMethod,
   createManagedCompressionProbeState,
   createRawCompressionSample,
-  estimateBlobFallbackMemoryCost,
   formatTransferBitsPerSecond,
   formatTransferBytes,
   readManagedGzipResponseAsBuffer,
@@ -39,6 +38,7 @@ const plan = ref<BrowserManagedDownloadPlan | null>(null)
 const chunks = ref<Array<Blob | null>>([])
 const activeControllers = ref<AbortController[]>([])
 const isPaused = ref(false)
+const automaticDownloadStarted = ref(false)
 const compressionProbe = ref(createManagedCompressionProbeState())
 const capabilities = ref({
   blobAssembly: true,
@@ -74,10 +74,6 @@ const compressionSupportLabel = computed(() => {
   }
 
   return hasStreamingFileSave.value ? 'Managed gzip stream available' : 'Managed gzip Blob fallback available'
-})
-const blobMemoryLabel = computed(() => {
-  const estimate = estimateBlobFallbackMemoryCost(Math.min(props.file.sizeBytes, managedDownload.value?.maxMemoryBytes ?? props.file.sizeBytes))
-  return formatTransferBytes(estimate.minimumTransientBytes)
 })
 const managedMemoryLimitLabel = computed(() => formatTransferBytes(managedDownload.value?.maxMemoryBytes ?? 0))
 const compressionBytesLabel = computed(() => {
@@ -115,7 +111,7 @@ const managedUnavailableReason = computed(() => {
   }
 
   if (!capabilities.value.webCrypto) {
-    return 'Browser-managed download needs Web Crypto to verify chunk integrity. Use Direct download.'
+    return 'Browser-managed download needs Web Crypto to verify chunk integrity. Starting the standard browser download instead.'
   }
 
   if (
@@ -127,6 +123,8 @@ const managedUnavailableReason = computed(() => {
 
   return null
 })
+const downloadNoteLabel = computed(() => managedUnavailableReason.value ? null : compressionSupportLabel.value)
+const showManagedDownloadProgress = computed(() => Boolean(managedDownload.value && !managedUnavailableReason.value))
 const progressPercent = computed(() => {
   if (state.value.totalBytes <= 0) {
     return state.value.status === 'complete' ? 100 : 0
@@ -134,10 +132,9 @@ const progressPercent = computed(() => {
 
   return Math.min(100, Math.round((state.value.downloadedBytes / state.value.totalBytes) * 100))
 })
-const canShowStart = computed(() => managedDownload.value !== null && ['idle', 'complete'].includes(state.value.status))
-const canStart = computed(() => canShowStart.value && managedUnavailableReason.value === null)
 const canPause = computed(() => canPauseManagedDownload(state.value))
 const canResume = computed(() => canResumeManagedDownload(state.value))
+const shouldShowInlineFileAction = computed(() => !managedDownload.value && props.file.preferInline)
 const statusLabel = computed(() => {
   switch (state.value.status) {
     case 'planning':
@@ -165,7 +162,30 @@ onMounted(() => {
     streamingSave: supportsStreamingFileSave(),
     webCrypto: typeof crypto !== 'undefined' && typeof crypto.subtle?.digest === 'function',
   }
+  startAutomaticDownload()
 })
+
+function startAutomaticDownload() {
+  if (automaticDownloadStarted.value) {
+    return
+  }
+
+  automaticDownloadStarted.value = true
+
+  if (!managedDownload.value) {
+    if (!props.file.preferInline) {
+      startRawDownload(props.file.rawDownloadUrl)
+    }
+    return
+  }
+
+  if (managedUnavailableReason.value) {
+    startRawDownload(managedDownload.value.rawDownloadUrl)
+    return
+  }
+
+  void startManagedDownload()
+}
 
 async function startManagedDownload() {
   if (!managedDownload.value) {
@@ -510,7 +530,7 @@ async function fetchCompressedVerifiedChunkBuffer(downloadPlan: BrowserManagedDo
 }
 
 function throwChunkIntegrityError(chunkIndex: number): never {
-  throw new Error(`Chunk ${chunkIndex} failed integrity verification. The shared file may have changed after the download plan was created. Restart the download or use Direct download.`)
+  throw new Error(`Chunk ${chunkIndex} failed integrity verification. The shared file may have changed after the download plan was created. Restart the download.`)
 }
 
 async function fetchManagedDownloadPlanWithRetry(manifestUrl: string) {
@@ -587,6 +607,16 @@ function saveBlob(blob: Blob, fileName: string) {
   URL.revokeObjectURL(url)
 }
 
+function startRawDownload(url: string) {
+  const link = document.createElement('a')
+  link.href = url
+  link.rel = 'noreferrer'
+  link.style.display = 'none'
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
 function readTimestamp() {
   return globalThis.performance?.now?.() ?? Date.now()
 }
@@ -594,21 +624,10 @@ function readTimestamp() {
 
 <template>
   <section class="stack">
-    <div class="hero-panel">
-      <div>
-        <p class="label">File</p>
-        <h2>{{ file.fileName }}</h2>
-      </div>
-
-      <span class="badge">{{ file.displaySize }}</span>
-    </div>
-
-    <p class="body-copy">{{ file.actionLabel }}</p>
-
-    <div v-if="managedDownload" class="download-panel">
+    <div v-if="showManagedDownloadProgress" class="download-panel">
       <div class="download-panel__header">
         <div>
-          <span class="label">Browser download</span>
+          <span class="label">Progress</span>
           <strong>{{ statusLabel }}</strong>
         </div>
 
@@ -625,14 +644,26 @@ function readTimestamp() {
         <span :style="{ width: `${progressPercent}%` }" />
       </div>
 
-      <p class="download-note" role="status">
-        {{ managedUnavailableReason ?? compressionSupportLabel }}
-        <template v-if="canAttemptCompressedDownload && !hasStreamingFileSave">
-          - Blob path buffers about {{ blobMemoryLabel }} before saving.
-        </template>
-      </p>
+      <p v-if="downloadNoteLabel" class="download-note" role="status">{{ downloadNoteLabel }}</p>
 
-      <dl v-if="showTransferDiagnostics" class="transfer-diagnostics">
+      <p v-if="state.error" class="download-error">{{ state.error }}</p>
+
+      <div v-if="canPause || canResume" class="download-actions">
+        <button v-if="canPause" class="button" type="button" @click="pauseManagedDownload">
+          Pause
+        </button>
+        <button v-if="canResume" class="button button--primary" type="button" @click="resumeManagedDownload">
+          {{ state.status === 'failed' ? 'Retry' : 'Resume' }}
+        </button>
+      </div>
+    </div>
+
+    <section v-if="managedDownload && showTransferDiagnostics" class="diagnostics-panel">
+      <div class="diagnostics-panel__header">
+        <span class="label">Diagnostics</span>
+      </div>
+
+      <dl class="transfer-diagnostics">
         <div>
           <dt>Method</dt>
           <dd>{{ requiresStreamingManagedDownload(file.sizeBytes, managedDownload.maxMemoryBytes) ? 'streaming save' : 'Blob assembly' }}</dd>
@@ -678,32 +709,9 @@ function readTimestamp() {
           <dd>{{ state.retryCount }}</dd>
         </div>
       </dl>
+    </section>
 
-      <p v-if="state.error" class="download-error">{{ state.error }}</p>
-
-      <div class="download-actions">
-        <button
-          v-if="canShowStart"
-          class="button button--primary"
-          type="button"
-          :disabled="!canStart"
-          @click="startManagedDownload"
-        >
-          Download in browser
-        </button>
-        <button v-if="canPause" class="button" type="button" @click="pauseManagedDownload">
-          Pause
-        </button>
-        <button v-if="canResume" class="button button--primary" type="button" @click="resumeManagedDownload">
-          {{ state.status === 'failed' ? 'Retry' : 'Resume' }}
-        </button>
-        <a class="button button--ghost" :href="managedDownload.rawDownloadUrl">
-          Direct download
-        </a>
-      </div>
-    </div>
-
-    <div v-else class="download-actions">
+    <div v-else-if="shouldShowInlineFileAction" class="download-actions">
       <a class="public-shell__action" :href="file.rawDownloadUrl">
         {{ file.actionVerb }} file
       </a>

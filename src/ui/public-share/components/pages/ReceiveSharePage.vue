@@ -9,6 +9,7 @@ import {
   maxBrowserTransferBufferedBytes,
   parseBrowserTransferKeyFragment,
 } from '../../crypto/browserTransferCrypto'
+import { formatTransferBitsPerSecond } from '../../compressionDownload'
 import type {
   PublicReceiveUploadResponse,
   PublicSharePageModel,
@@ -38,9 +39,20 @@ type UploadEntry = {
   socket?: WebSocket | null
   recommendedChunkSizeBytes?: number | null
   autoTransportScores?: Record<ReceiveUploadTransport, AutoUploadTransportScore>
+  compressionStats?: UploadCompressionStats
 }
 
 type ReceiveUploadTransport = 'MultipartChunks' | 'BinaryChunks' | 'WebSocket'
+
+type UploadChunkEncoding = 'raw' | 'gzip'
+
+type UploadChunkPayload = {
+  body: Blob
+  logicalSize: number
+  wireSize: number
+  encoding: UploadChunkEncoding
+  compressionDurationMs: number
+}
 
 type AutoUploadTransportScore = {
   successes: number
@@ -49,6 +61,19 @@ type AutoUploadTransportScore = {
   durationMs: number
   receiveBytes: number
   receiveDurationMs: number
+}
+
+type UploadCompressionStats = {
+  rawBytes: number
+  rawUploadDurationMs: number
+  rawProbeCount: number
+  gzipLogicalBytes: number
+  gzipWireBytes: number
+  gzipCompressionDurationMs: number
+  gzipUploadDurationMs: number
+  gzipCount: number
+  skippedCount: number
+  disabledReason: string | null
 }
 
 type UploadListItem =
@@ -64,6 +89,11 @@ type UploadListItem =
       expanded: boolean
     }
 
+type UploadDiagnosticRow = {
+  label: string
+  value: string
+}
+
 const props = defineProps<{
   page: PublicSharePageModel
   receive: PublicShareReceiveModel
@@ -77,6 +107,10 @@ const receiveProgressUpdateIntervalMs = 250
 const maxAutomaticUploadRetries = 8
 const baseAutomaticUploadRetryDelayMs = 1000
 const maxAutomaticUploadRetryDelayMs = 30000
+const minimumCompressionChunkSizeBytes = 64 * 1024
+const compressionRawProbeInterval = 5
+const minimumCompressionSavingsRatio = 0.98
+const minimumCompressionComparisonBytes = 2 * 1024 * 1024
 const autoUploadTransports: ReceiveUploadTransport[] = ['BinaryChunks', 'WebSocket', 'MultipartChunks']
 
 const emit = defineEmits<{
@@ -132,8 +166,38 @@ const parallelUploadLimit = computed(() => normalizeParallelUploadLimit(props.re
 const uploadChunkSizeBytes = computed(() => normalizeUploadChunkSizeBytes(props.receive.uploadChunkSizeBytes))
 const uploadMaxBodySizeBytes = computed(() => normalizeUploadMaxBodySizeBytes(props.receive.uploadMaxBodySizeBytes))
 const uploadPacketSizeBytes = computed(() => Math.min(uploadChunkSizeBytes.value, uploadMaxBodySizeBytes.value))
+const usesAdaptivePacketSizing = computed(() =>
+  props.receive.uploadChunkSizingMode === 'Auto' || props.receive.uploadMode === 'AdaptiveBinaryChunks')
+const showUploadDiagnostics = computed(() => props.receive.transferDiagnosticsEnabled)
 const encryptionFragment = computed(() =>
   props.receive.encryptionExperiment ? parseBrowserTransferKeyFragment(window.location.hash) : null)
+const uploadDiagnosticRows = computed<UploadDiagnosticRow[]>(() => {
+  const rows: UploadDiagnosticRow[] = [
+    { label: 'Mode', value: formatUploadMode(props.receive.uploadMode) },
+    { label: 'Compression', value: getCompressionDiagnosticLabel() },
+    { label: 'Packet sizing', value: props.receive.uploadChunkSizingMode === 'Auto' ? 'auto' : 'fixed' },
+    { label: 'Current packet', value: getCurrentPacketLabel() },
+    { label: 'Host recommendation', value: getRecommendedPacketLabel() },
+    { label: 'Recommendation use', value: getRecommendationUseLabel() },
+    { label: 'Configured packet', value: formatBytes(uploadPacketSizeBytes.value) },
+    { label: 'Max request', value: formatBytes(uploadMaxBodySizeBytes.value) },
+    { label: 'Parallel uploads', value: formatParallelUploadLimit(parallelUploadLimit.value) },
+    { label: 'Events', value: props.receive.uploadEventsUrl ? 'websocket enabled' : 'unavailable' },
+    { label: 'Progress source', value: hasOverallReceiveProgress.value ? 'host received bytes' : 'browser sent bytes' },
+    { label: 'Selected', value: uploadEntries.value.length > 0 ? `${uploadEntries.value.length} file${uploadEntries.value.length === 1 ? '' : 's'}, ${formatBytes(totalBytes.value)}` : 'none' },
+    { label: 'Host received', value: hostReceivedBytes.value > 0 ? formatBytes(hostReceivedBytes.value) : 'not sampled' },
+  ]
+
+  if (props.receive.uploadMode === 'Auto') {
+    rows.splice(2, 0, { label: 'Auto probe', value: `${normalizeAutoProbeChunkCount(props.receive.uploadAutoProbeChunkCount)} chunk${normalizeAutoProbeChunkCount(props.receive.uploadAutoProbeChunkCount) === 1 ? '' : 's'}` })
+  }
+
+  if (props.receive.encryptionExperiment) {
+    rows.push({ label: 'Encryption', value: 'fragment key available' })
+  }
+
+  return rows
+})
 const uploadListItems = computed<UploadListItem[]>(() => {
   const items: UploadListItem[] = []
   const folderItems = new Map<string, UploadEntry[]>()
@@ -194,6 +258,7 @@ function createUploadEntries(files: Array<{ file: File; relativePath: string }>,
     socket: null,
     recommendedChunkSizeBytes: null,
     autoTransportScores: undefined,
+    compressionStats: undefined,
   }))
 }
 
@@ -300,6 +365,7 @@ async function uploadEntry(entry: UploadEntry) {
   entry.receiveLastUpdatedAtMs = null
   entry.recommendedChunkSizeBytes = null
   entry.autoTransportScores = undefined
+  entry.compressionStats = undefined
   entry.state = 'uploading'
   entry.message = 'Uploading...'
   entry.uploadedBytes = 0
@@ -328,10 +394,6 @@ function sendUploadForEntry(entry: UploadEntry) {
     return sendEncryptedStoreUploadRequest(entry)
   }
 
-  if (props.receive.uploadMode === 'CompressedStream') {
-    return sendCompressedStreamUploadRequest(entry)
-  }
-
   if (props.receive.uploadMode === 'Auto') {
     return sendAutoChunkedUploadRequest(entry)
   }
@@ -340,7 +402,7 @@ function sendUploadForEntry(entry: UploadEntry) {
     return sendWebSocketChunkedUploadRequest(entry)
   }
 
-  if (entry.file.size <= resolveNextChunkSizeBytes(entry)) {
+  if (props.receive.uploadMode === 'MultipartChunks' && !props.receive.uploadCompressionEnabled && entry.file.size <= resolveNextChunkSizeBytes(entry)) {
     return sendUploadRequest(entry, createUploadFormData(entry, entry.file))
   }
 
@@ -432,7 +494,7 @@ function createConfirmedUploadResponse(entry: UploadEntry): PublicReceiveUploadR
   }
 }
 
-function sendChunkWithTransport(
+async function sendChunkWithTransport(
   entry: UploadEntry,
   transport: ReceiveUploadTransport,
   chunkIndex: number,
@@ -440,21 +502,26 @@ function sendChunkWithTransport(
   chunkStart: number,
   chunkSizeBytes: number,
 ) {
+  const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
+  const payload = await prepareUploadChunkPayload(entry, entry.file.slice(chunkStart, chunkEnd), chunkIndex)
+  const uploadStartedAtMs = Date.now()
+  let response: PublicReceiveUploadResponse
   if (transport === 'BinaryChunks') {
-    const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
-    return sendBinaryChunkUploadRequest(entry, entry.file.slice(chunkStart, chunkEnd), chunkIndex, chunkCount, chunkStart, false)
+    response = await sendBinaryChunkUploadRequest(entry, payload, chunkIndex, chunkCount, chunkStart, false)
+  } else if (transport === 'WebSocket') {
+    response = await sendWebSocketChunkUploadRequest(entry, payload, chunkIndex, chunkCount, chunkStart, false)
+  } else {
+    response = await sendUploadRequest(
+      entry,
+      createChunkUploadFormData(entry, entry.uploadId, payload, chunkIndex, chunkCount, chunkStart),
+      chunkStart,
+      false,
+      payload.logicalSize,
+    )
   }
 
-  if (transport === 'WebSocket') {
-    return sendWebSocketChunkUploadRequest(entry, chunkIndex, chunkCount, chunkStart, chunkSizeBytes, false)
-  }
-
-  return sendUploadRequest(
-    entry,
-    createChunkUploadFormData(entry, entry.uploadId, chunkIndex, chunkCount, chunkStart, chunkSizeBytes),
-    chunkStart,
-    false,
-  )
+  recordUploadChunkPayloadResult(entry, payload, Date.now() - uploadStartedAtMs)
+  return response
 }
 
 function createAutoTransportScores(): Record<ReceiveUploadTransport, AutoUploadTransportScore> {
@@ -494,21 +561,21 @@ function chooseAutoUploadTransport(
   }
 
   const scores = entry.autoTransportScores ?? createAutoTransportScores()
-  let bestTransport: ReceiveUploadTransport = 'MultipartChunks'
-  let bestScore = Number.NEGATIVE_INFINITY
+  const weightedTransports: ReceiveUploadTransport[] = []
   for (const transport of autoUploadTransports) {
     if (failedTransportsAtBoundary.has(transport)) {
       continue
     }
 
-    const score = calculateAutoTransportScore(scores[transport], transport)
-    if (score > bestScore) {
-      bestScore = score
-      bestTransport = transport
+    const weight = calculateAutoTransportWeight(scores[transport], transport)
+    for (let index = 0; index < weight; index += 1) {
+      weightedTransports.push(transport)
     }
   }
 
-  return bestTransport
+  return weightedTransports.length > 0
+    ? weightedTransports[chunkIndex % weightedTransports.length]
+    : 'MultipartChunks'
 }
 
 function chooseAutoProbeTransport(
@@ -531,6 +598,19 @@ function calculateAutoTransportScore(score: AutoUploadTransportScore, transport:
   const bytesPerSecond = measuredDurationMs > 0 ? measuredBytes / (measuredDurationMs / 1000) : 0
   const conservativeBias = transport === 'MultipartChunks' ? 100 : 0
   return score.successes * 1000 - score.failures * 5000 + conservativeBias + Math.min(bytesPerSecond / 1024, 1000)
+}
+
+function calculateAutoTransportWeight(score: AutoUploadTransportScore, transport: ReceiveUploadTransport) {
+  if (score.failures > 0 && score.successes === 0) {
+    return 1
+  }
+
+  const scoreValue = calculateAutoTransportScore(score, transport)
+  const successWeight = Math.min(6, Math.max(0, score.successes))
+  const speedWeight = Math.min(8, Math.max(0, Math.floor(scoreValue / 400)))
+  const reliabilityPenalty = Math.min(6, score.failures * 2)
+  const conservativeBias = transport === 'MultipartChunks' ? 1 : 0
+  return Math.max(1, Math.min(12, 1 + conservativeBias + successWeight + speedWeight - reliabilityPenalty))
 }
 
 function recordAutoTransportSuccess(
@@ -677,13 +757,11 @@ function createUploadFormData(entry: UploadEntry, file: Blob) {
 function createChunkUploadFormData(
   entry: UploadEntry,
   uploadId: string,
+  payload: UploadChunkPayload,
   chunkIndex: number,
   chunkCount: number,
   chunkStart: number,
-  chunkSizeBytes: number,
 ) {
-  const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
-  const chunk = entry.file.slice(chunkStart, chunkEnd)
   const formData = new FormData()
   formData.append('relativePaths', entry.relativePath)
   formData.append('batchId', entry.batchId)
@@ -692,8 +770,9 @@ function createChunkUploadFormData(
   formData.append('chunkIndex', chunkIndex.toString())
   formData.append('chunkCount', chunkCount.toString())
   formData.append('chunkStart', chunkStart.toString())
-  formData.append('chunkSize', chunk.size.toString())
-  formData.append('files', chunk, entry.file.name)
+  formData.append('chunkSize', payload.logicalSize.toString())
+  formData.append('chunkEncoding', payload.encoding)
+  formData.append('files', payload.body, entry.file.name)
   return formData
 }
 
@@ -711,18 +790,23 @@ async function sendChunkedUploadRequest(entry: UploadEntry) {
 
     const chunkSizeBytes = resolveNextChunkSizeBytes(entry)
     const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
+    const payload = await prepareUploadChunkPayload(entry, entry.file.slice(chunkStart, chunkEnd), chunkIndex)
+    const uploadStartedAtMs = Date.now()
     finalResponse = await sendUploadRequest(
       entry,
       createChunkUploadFormData(
         entry,
         entry.uploadId,
+        payload,
         chunkIndex,
-        resolveChunkCountForRequest(entry.file.size, chunkStart, chunkEnd - chunkStart, chunkSizeBytes, chunkIndex),
+        resolveChunkCountForRequest(entry.file.size, chunkStart, payload.logicalSize, chunkSizeBytes, chunkIndex),
         chunkStart,
-        chunkSizeBytes,
       ),
       chunkStart,
+      true,
+      payload.logicalSize,
     )
+    recordUploadChunkPayloadResult(entry, payload, Date.now() - uploadStartedAtMs)
     assertUploadResponseSucceeded(finalResponse)
 
     const nextChunkStart = Math.max(chunkEnd, resolveConfirmedChunkStart(entry, chunkEnd))
@@ -752,14 +836,16 @@ async function sendBinaryChunkedUploadRequest(entry: UploadEntry) {
 
     const chunkSizeBytes = resolveNextChunkSizeBytes(entry)
     const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
-    const chunk = entry.file.slice(chunkStart, chunkEnd)
+    const payload = await prepareUploadChunkPayload(entry, entry.file.slice(chunkStart, chunkEnd), chunkIndex)
+    const uploadStartedAtMs = Date.now()
     finalResponse = await sendBinaryChunkUploadRequest(
       entry,
-      chunk,
+      payload,
       chunkIndex,
-      resolveChunkCountForRequest(entry.file.size, chunkStart, chunk.size, chunkSizeBytes, chunkIndex),
+      resolveChunkCountForRequest(entry.file.size, chunkStart, payload.logicalSize, chunkSizeBytes, chunkIndex),
       chunkStart,
     )
+    recordUploadChunkPayloadResult(entry, payload, Date.now() - uploadStartedAtMs)
     assertUploadResponseSucceeded(finalResponse)
     const nextChunkStart = Math.max(chunkEnd, resolveConfirmedChunkStart(entry, chunkEnd))
     updateEntryUploadProgress(entry, nextChunkStart)
@@ -774,18 +860,149 @@ async function sendBinaryChunkedUploadRequest(entry: UploadEntry) {
   return finalResponse
 }
 
-async function sendCompressedStreamUploadRequest(entry: UploadEntry) {
-  const compressedBlob = await createGzipBlob(entry.file)
-  return sendCompressedStreamRequest(entry, compressedBlob)
-}
-
-async function createGzipBlob(file: File) {
-  if (typeof CompressionStream === 'undefined') {
+async function createGzipBlob(file: Blob) {
+  const CompressionStreamConstructor = resolveCompressionStreamConstructor()
+  const ResponseConstructor = resolveResponseConstructor()
+  if (!CompressionStreamConstructor || !ResponseConstructor) {
     throw new Error('Compressed uploads are not supported by this browser.')
   }
 
-  const compressedStream = file.stream().pipeThrough(new CompressionStream('gzip'))
-  return await new Response(compressedStream).blob()
+  const compressedStream = file.stream().pipeThrough(new CompressionStreamConstructor('gzip'))
+  return await new ResponseConstructor(compressedStream).blob()
+}
+
+function resolveCompressionStreamConstructor() {
+  return globalThis.CompressionStream
+}
+
+function resolveResponseConstructor() {
+  return globalThis.Response
+}
+
+async function prepareUploadChunkPayload(
+  entry: UploadEntry,
+  chunk: Blob,
+  chunkIndex: number,
+): Promise<UploadChunkPayload> {
+  const rawPayload = createRawUploadChunkPayload(chunk)
+  if (!shouldAttemptChunkCompression(entry, chunk, chunkIndex)) {
+    return rawPayload
+  }
+
+  const startedAtMs = performance.now()
+  let compressedBlob: Blob
+  try {
+    compressedBlob = await createGzipBlob(chunk)
+  } catch {
+    getUploadCompressionStats(entry).disabledReason = 'browser compression unavailable'
+    return rawPayload
+  }
+
+  const compressionDurationMs = Math.max(1, performance.now() - startedAtMs)
+  if (compressedBlob.size <= 0 || compressedBlob.size >= chunk.size * minimumCompressionSavingsRatio) {
+    getUploadCompressionStats(entry).skippedCount += 1
+    return rawPayload
+  }
+
+  return {
+    body: compressedBlob,
+    logicalSize: chunk.size,
+    wireSize: compressedBlob.size,
+    encoding: 'gzip',
+    compressionDurationMs,
+  }
+}
+
+function createRawUploadChunkPayload(chunk: Blob): UploadChunkPayload {
+  return {
+    body: chunk,
+    logicalSize: chunk.size,
+    wireSize: chunk.size,
+    encoding: 'raw',
+    compressionDurationMs: 0,
+  }
+}
+
+function shouldAttemptChunkCompression(entry: UploadEntry, chunk: Blob, chunkIndex: number) {
+  if (!props.receive.uploadCompressionEnabled ||
+      chunk.size < minimumCompressionChunkSizeBytes ||
+      !resolveCompressionStreamConstructor() ||
+      !resolveResponseConstructor()) {
+    return false
+  }
+
+  const stats = getUploadCompressionStats(entry)
+  if (stats.disabledReason) {
+    return false
+  }
+
+  if (stats.gzipCount === 0) {
+    return true
+  }
+
+  if (stats.rawProbeCount === 0) {
+    return false
+  }
+
+  return chunkIndex % compressionRawProbeInterval !== 0
+}
+
+function recordUploadChunkPayloadResult(
+  entry: UploadEntry,
+  payload: UploadChunkPayload,
+  uploadDurationMs: number,
+) {
+  if (!props.receive.uploadCompressionEnabled) {
+    return
+  }
+
+  const stats = getUploadCompressionStats(entry)
+  const normalizedUploadDurationMs = Math.max(1, uploadDurationMs)
+  if (payload.encoding === 'gzip') {
+    stats.gzipCount += 1
+    stats.gzipLogicalBytes += payload.logicalSize
+    stats.gzipWireBytes += payload.wireSize
+    stats.gzipCompressionDurationMs += payload.compressionDurationMs
+    stats.gzipUploadDurationMs += normalizedUploadDurationMs
+  } else {
+    stats.rawProbeCount += 1
+    stats.rawBytes += payload.logicalSize
+    stats.rawUploadDurationMs += normalizedUploadDurationMs
+  }
+
+  updateCompressionDecision(stats)
+}
+
+function updateCompressionDecision(stats: UploadCompressionStats) {
+  if (stats.disabledReason ||
+      stats.rawBytes < minimumCompressionComparisonBytes ||
+      stats.gzipLogicalBytes < minimumCompressionComparisonBytes) {
+    return
+  }
+
+  const rawBytesPerSecond = stats.rawBytes / (stats.rawUploadDurationMs / 1000)
+  const gzipEffectiveBytesPerSecond = stats.gzipLogicalBytes /
+    ((stats.gzipUploadDurationMs + stats.gzipCompressionDurationMs) / 1000)
+  if (gzipEffectiveBytesPerSecond < rawBytesPerSecond * 0.95) {
+    stats.disabledReason = 'raw chunks are faster'
+  }
+}
+
+function getUploadCompressionStats(entry: UploadEntry) {
+  entry.compressionStats ??= {
+    rawBytes: 0,
+    rawUploadDurationMs: 0,
+    rawProbeCount: 0,
+    gzipLogicalBytes: 0,
+    gzipWireBytes: 0,
+    gzipCompressionDurationMs: 0,
+    gzipUploadDurationMs: 0,
+    gzipCount: 0,
+    skippedCount: 0,
+    disabledReason: null,
+  }
+
+  return entry.compressionStats
 }
 
 async function sendWebSocketChunkedUploadRequest(entry: UploadEntry) {
@@ -802,13 +1019,16 @@ async function sendWebSocketChunkedUploadRequest(entry: UploadEntry) {
 
     const chunkSizeBytes = resolveNextChunkSizeBytes(entry)
     const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
+    const payload = await prepareUploadChunkPayload(entry, entry.file.slice(chunkStart, chunkEnd), chunkIndex)
+    const uploadStartedAtMs = Date.now()
     finalResponse = await sendWebSocketChunkUploadRequest(
       entry,
+      payload,
       chunkIndex,
-      resolveChunkCountForRequest(entry.file.size, chunkStart, chunkEnd - chunkStart, chunkSizeBytes, chunkIndex),
+      resolveChunkCountForRequest(entry.file.size, chunkStart, payload.logicalSize, chunkSizeBytes, chunkIndex),
       chunkStart,
-      chunkSizeBytes,
     )
+    recordUploadChunkPayloadResult(entry, payload, Date.now() - uploadStartedAtMs)
     assertUploadResponseSucceeded(finalResponse)
     const nextChunkStart = Math.max(chunkEnd, resolveConfirmedChunkStart(entry, chunkEnd))
     updateEntryUploadProgress(entry, nextChunkStart)
@@ -825,30 +1045,28 @@ async function sendWebSocketChunkedUploadRequest(entry: UploadEntry) {
 
 async function sendWebSocketChunkUploadRequest(
   entry: UploadEntry,
+  payload: UploadChunkPayload,
   chunkIndex: number,
   chunkCount: number,
   chunkStart: number,
-  chunkSizeBytes: number,
   automaticRetry = true,
 ) {
   return withOptionalAutomaticUploadRetry(
     entry,
     automaticRetry,
-    () => sendWebSocketChunkUploadOnce(entry, chunkIndex, chunkCount, chunkStart, chunkSizeBytes),
+    () => sendWebSocketChunkUploadOnce(entry, payload, chunkIndex, chunkCount, chunkStart),
   )
 }
 
 async function sendWebSocketChunkUploadOnce(
   entry: UploadEntry,
+  payload: UploadChunkPayload,
   chunkIndex: number,
   chunkCount: number,
   chunkStart: number,
-  chunkSizeBytes: number,
 ) {
   const socket = await openUploadSocket(entry)
   try {
-    const chunkEnd = Math.min(entry.file.size, chunkStart + chunkSizeBytes)
-    const chunk = entry.file.slice(chunkStart, chunkEnd)
     socket.send(JSON.stringify({
       type: 'chunk',
       uploadId: entry.uploadId,
@@ -859,9 +1077,10 @@ async function sendWebSocketChunkUploadOnce(
       chunkIndex,
       chunkCount,
       chunkStart,
-      chunkSize: chunk.size,
+      chunkSize: payload.logicalSize,
+      encoding: payload.encoding,
     }))
-    socket.send(chunk)
+    socket.send(payload.body)
     return await waitForUploadSocketResponse(socket)
   } finally {
     socket.close()
@@ -1063,7 +1282,13 @@ function waitForUploadSocketResponse(socket: WebSocket) {
   })
 }
 
-function sendUploadRequest(entry: UploadEntry, formData: FormData, uploadedBytesOffset = 0, automaticRetry = true) {
+function sendUploadRequest(
+  entry: UploadEntry,
+  formData: FormData,
+  uploadedBytesOffset = 0,
+  automaticRetry = true,
+  logicalRequestBytes: number | null = null,
+) {
   return withOptionalAutomaticUploadRetry(entry, automaticRetry, () => new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
     const request = new XMLHttpRequest()
     entry.request = request
@@ -1075,7 +1300,10 @@ function sendUploadRequest(entry: UploadEntry, formData: FormData, uploadedBytes
         return
       }
 
-      const uploadedBytes = Math.min(entry.file.size, uploadedBytesOffset + event.loaded)
+      const sentBytes = logicalRequestBytes !== null && event.total > 0
+        ? logicalRequestBytes * (event.loaded / event.total)
+        : event.loaded
+      const uploadedBytes = Math.min(entry.file.size, uploadedBytesOffset + sentBytes)
       updateEntryUploadProgress(entry, uploadedBytes)
     })
 
@@ -1109,7 +1337,7 @@ function sendUploadRequest(entry: UploadEntry, formData: FormData, uploadedBytes
 
 function sendBinaryChunkUploadRequest(
   entry: UploadEntry,
-  chunk: Blob,
+  payload: UploadChunkPayload,
   chunkIndex: number,
   chunkCount: number,
   chunkStart: number,
@@ -1129,14 +1357,19 @@ function sendBinaryChunkUploadRequest(
     request.setRequestHeader('X-IFS-Chunk-Index', chunkIndex.toString())
     request.setRequestHeader('X-IFS-Chunk-Count', chunkCount.toString())
     request.setRequestHeader('X-IFS-Chunk-Start', chunkStart.toString())
-    request.setRequestHeader('X-IFS-Chunk-Size', chunk.size.toString())
+    request.setRequestHeader('X-IFS-Chunk-Size', payload.logicalSize.toString())
+    if (payload.encoding !== 'raw') {
+      request.setRequestHeader('X-IFS-Transfer-Compression', payload.encoding)
+    }
 
     request.upload.addEventListener('progress', (event) => {
       if (!event.lengthComputable || entry.state !== 'uploading') {
         return
       }
 
-      const uploadedBytes = Math.min(entry.file.size, chunkStart + event.loaded)
+      const totalWireBytes = Math.max(1, event.total || payload.wireSize)
+      const logicalBytes = payload.logicalSize * (event.loaded / totalWireBytes)
+      const uploadedBytes = Math.min(entry.file.size, chunkStart + logicalBytes)
       updateEntryUploadProgress(entry, uploadedBytes)
     })
 
@@ -1164,58 +1397,7 @@ function sendBinaryChunkUploadRequest(
       reject(createTransientUploadError('Upload connection lost.'))
     })
 
-    request.send(chunk)
-  }))
-}
-
-function sendCompressedStreamRequest(entry: UploadEntry, compressedBlob: Blob) {
-  return withAutomaticUploadRetry(entry, () => new Promise<PublicReceiveUploadResponse>((resolve, reject) => {
-    const request = new XMLHttpRequest()
-    entry.request = request
-    request.open('POST', props.receive.uploadUrl, true)
-    request.responseType = 'json'
-    request.setRequestHeader('Content-Type', 'application/gzip')
-    request.setRequestHeader('X-IFS-Upload-Id', entry.uploadId)
-    request.setRequestHeader('X-IFS-Batch-Id', entry.batchId)
-    request.setRequestHeader('X-IFS-Relative-Path', encodeURIComponent(entry.relativePath))
-    request.setRequestHeader('X-IFS-File-Name', encodeURIComponent(entry.file.name))
-    request.setRequestHeader('X-IFS-File-Size', entry.file.size.toString())
-
-    request.upload.addEventListener('progress', (event) => {
-      if (!event.lengthComputable || entry.state !== 'uploading') {
-        return
-      }
-
-      const totalWireBytes = Math.max(1, event.total || compressedBlob.size)
-      const logicalBytes = Math.min(entry.file.size, entry.file.size * (event.loaded / totalWireBytes))
-      updateEntryUploadProgress(entry, logicalBytes)
-    })
-
-    request.addEventListener('load', () => {
-      const response = request.response as PublicReceiveUploadResponse | null
-
-      if (request.status < 200 || request.status >= 300) {
-        reject(createUploadHttpError(request.status, getUploadFailureMessage(response)))
-        return
-      }
-
-      if (!response) {
-        reject(new Error('Upload failed.'))
-        return
-      }
-
-      resolve(response)
-    })
-
-    request.addEventListener('abort', () => {
-      reject(new UploadRequestError('Upload stopped.', false))
-    })
-
-    request.addEventListener('error', () => {
-      reject(createTransientUploadError('Upload connection lost.'))
-    })
-
-    request.send(compressedBlob)
+    request.send(payload.body)
   }))
 }
 
@@ -1286,6 +1468,8 @@ function restartEntry(entry: UploadEntry) {
   entry.receiveSpeedBytesPerSecond = null
   entry.receiveLastUpdatedAtMs = null
   entry.recommendedChunkSizeBytes = null
+  entry.autoTransportScores = undefined
+  entry.compressionStats = undefined
   entry.state = 'queued'
   entry.message = ''
   entry.uploadedBytes = 0
@@ -1459,18 +1643,101 @@ function formatBytes(value: number) {
   return unitIndex === 0 ? `${Math.round(normalized)} ${units[unitIndex]}` : `${normalized.toFixed(1).replace(/\.0$/, '')} ${units[unitIndex]}`
 }
 
-function formatUploadSpeed(bytesPerSecond: number) {
-  const bitsPerSecond = Math.max(0, bytesPerSecond * 8)
-  const units = ['b/s', 'Kb/s', 'Mb/s', 'Gb/s', 'Tb/s']
-  let normalized = bitsPerSecond
-  let unitIndex = 0
+function formatUploadMode(mode: PublicShareReceiveModel['uploadMode']) {
+  switch (mode) {
+    case 'Auto':
+      return 'auto transport'
+    case 'MultipartChunks':
+      return 'multipart chunks'
+    case 'BinaryChunks':
+      return 'binary chunks'
+    case 'WebSocket':
+      return 'websocket chunks'
+    case 'AdaptiveBinaryChunks':
+      return 'adaptive binary chunks'
+    default:
+      return mode
+  }
+}
 
-  while (normalized >= 1024 && unitIndex < units.length - 1) {
-    normalized /= 1024
-    unitIndex++
+function formatParallelUploadLimit(limit: number) {
+  return Number.isFinite(limit) ? `${limit}` : 'unlimited'
+}
+
+function getCurrentPacketLabel() {
+  const activeEntries = uploadEntries.value.filter((entry) =>
+    entry.state === 'queued' || entry.state === 'uploading')
+
+  if (activeEntries.length === 0) {
+    if (uploadEntries.value.length === 0) {
+      return 'not started'
+    }
+
+    return 'complete'
   }
 
-  return unitIndex === 0 ? `${Math.round(normalized)} ${units[unitIndex]}` : `${normalized.toFixed(1).replace(/\.0$/, '')} ${units[unitIndex]}`
+  const currentPacketBytes = activeEntries.reduce((largest, entry) => {
+    return Math.max(largest, resolveNextChunkSizeBytes(entry))
+  }, 0)
+
+  return currentPacketBytes > 0 ? formatBytes(currentPacketBytes) : 'not started'
+}
+
+function getRecommendedPacketBytes() {
+  return uploadEntries.value.reduce((largest, entry) => {
+    return Math.max(largest, entry.recommendedChunkSizeBytes ?? 0)
+  }, 0)
+}
+
+function getRecommendedPacketLabel() {
+  const recommendedBytes = getRecommendedPacketBytes()
+
+  return recommendedBytes > 0 ? formatBytes(recommendedBytes) : 'not sampled'
+}
+
+function getCompressionDiagnosticLabel() {
+  if (!props.receive.uploadCompressionEnabled) {
+    return 'off'
+  }
+
+  if (!resolveCompressionStreamConstructor() || !resolveResponseConstructor()) {
+    return 'unavailable'
+  }
+
+  const activeStats = uploadEntries.value
+    .map((entry) => entry.compressionStats)
+    .find((stats): stats is UploadCompressionStats => Boolean(stats))
+  if (!activeStats) {
+    return 'on, not sampled'
+  }
+
+  if (activeStats.disabledReason) {
+    return `disabled, ${activeStats.disabledReason}`
+  }
+
+  if (activeStats.gzipCount > 0 && activeStats.rawProbeCount > 0) {
+    const savedBytes = Math.max(0, activeStats.gzipLogicalBytes - activeStats.gzipWireBytes)
+    return `adaptive, ${formatBytes(savedBytes)} saved`
+  }
+
+  if (activeStats.gzipCount > 0) {
+    return 'gzip active, raw probe pending'
+  }
+
+  if (activeStats.rawProbeCount > 0) {
+    return 'raw probe active'
+  }
+
+  return 'on, not sampled'
+}
+
+function getRecommendationUseLabel() {
+  const hasRecommendation = getRecommendedPacketBytes() > 0
+  if (!usesAdaptivePacketSizing.value) {
+    return hasRecommendation ? 'ignored by fixed sizing' : 'fixed sizing'
+  }
+
+  return hasRecommendation ? 'applied to next packet' : 'waiting for host sample'
 }
 
 function normalizeParallelUploadLimit(value: number | null | undefined) {
@@ -1627,11 +1894,11 @@ function getEntryActionLabel(entry: UploadEntry) {
 
 function getEntrySpeedLabel(entry: UploadEntry) {
   if (entry.receiveProgress !== null) {
-    return entry.receiveSpeedBytesPerSecond ? formatUploadSpeed(entry.receiveSpeedBytesPerSecond) : ''
+    return entry.receiveSpeedBytesPerSecond ? formatTransferBitsPerSecond(entry.receiveSpeedBytesPerSecond) : ''
   }
 
   return entry.state === 'uploading' && entry.speedBytesPerSecond
-    ? formatUploadSpeed(entry.speedBytesPerSecond)
+    ? formatTransferBitsPerSecond(entry.speedBytesPerSecond)
     : ''
 }
 
@@ -1652,11 +1919,11 @@ function getGroupSpeedLabel(entries: UploadEntry[]) {
 
       return sum + (entry.receiveSpeedBytesPerSecond ?? 0)
     }, 0)
-    return receiveBytesPerSecond > 0 ? formatUploadSpeed(receiveBytesPerSecond) : ''
+    return receiveBytesPerSecond > 0 ? formatTransferBitsPerSecond(receiveBytesPerSecond) : ''
   }
 
   const bytesPerSecond = entries.reduce((sum, entry) => sum + (entry.state === 'uploading' ? entry.speedBytesPerSecond ?? 0 : 0), 0)
-  return bytesPerSecond > 0 ? formatUploadSpeed(bytesPerSecond) : ''
+  return bytesPerSecond > 0 ? formatTransferBitsPerSecond(bytesPerSecond) : ''
 }
 
 async function collectDroppedFiles(item: DataTransferItem): Promise<Array<{ file: File; relativePath: string }>> {
@@ -1897,6 +2164,13 @@ onUnmounted(() => {
         </svg>
       </span>
     </div>
+
+    <dl v-if="showUploadDiagnostics" class="transfer-diagnostics">
+      <div v-for="row in uploadDiagnosticRows" :key="row.label">
+        <dt>{{ row.label }}</dt>
+        <dd>{{ row.value }}</dd>
+      </div>
+    </dl>
 
     <div v-if="uploadEntries.length > 0" class="upload-panel">
       <template v-if="showOverallProgress">

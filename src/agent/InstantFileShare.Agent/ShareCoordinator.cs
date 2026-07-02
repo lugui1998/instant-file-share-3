@@ -423,7 +423,8 @@ internal sealed class ShareCoordinator(
             BrowserManagedDownloadMaxMemoryBytes = NormalizeBrowserManagedDownloadMaxMemoryBytes(settings.BrowserManagedDownloadMaxMemoryBytes),
             BrowserManagedDownloadMaxParallelChunks = NormalizeBrowserManagedDownloadMaxParallelChunks(settings.BrowserManagedDownloadMaxParallelChunks),
             BrowserManagedCompressionMode = NormalizeBrowserManagedCompressionMode(settings.BrowserManagedCompressionMode),
-            BrowserTransferEncryptionPolicy = NormalizeBrowserTransferEncryptionPolicy(settings.BrowserTransferEncryptionPolicy),
+            BrowserDownloadEncryptionPolicy = NormalizeBrowserTransferEncryptionPolicy(settings.BrowserDownloadEncryptionPolicy),
+            ReceiveUploadEncryptionPolicy = NormalizeBrowserTransferEncryptionPolicy(settings.ReceiveUploadEncryptionPolicy),
             FolderBrowsePageTitle = NormalizeFolderBrowsePageTitle(settings.FolderBrowsePageTitle),
             ReceivePageTitle = NormalizeReceivePageTitle(settings.ReceivePageTitle),
             HistoryRetentionValue = Math.Max(0, settings.HistoryRetentionValue),
@@ -1388,6 +1389,11 @@ internal sealed class ShareCoordinator(
 
     private static ReceiveUploadMode NormalizeReceiveUploadMode(ReceiveUploadMode uploadMode)
     {
+        if (uploadMode == ReceiveUploadMode.CompressedStream)
+        {
+            return ReceiveUploadMode.Auto;
+        }
+
         return Enum.IsDefined(uploadMode)
             ? uploadMode
             : Defaults.DefaultReceiveUploadMode;

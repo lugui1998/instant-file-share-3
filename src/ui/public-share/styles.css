@@ -82,6 +82,22 @@ a {
   line-height: 0.96;
 }
 
+.public-shell--file .public-shell__card {
+  max-width: 860px;
+}
+
+.public-shell--file .public-shell__header {
+  align-items: flex-end;
+  margin-bottom: 18px;
+}
+
+.public-shell--file .public-shell__title {
+  max-width: 48rem;
+  font-size: 1.85rem;
+  line-height: 1.16;
+  overflow-wrap: anywhere;
+}
+
 .public-shell--folder .public-shell__title {
   font-size: clamp(1.45rem, 3.2vw, 2.15rem);
   line-height: 1.08;
@@ -195,6 +211,19 @@ a {
   background: var(--surface-strong);
 }
 
+.diagnostics-panel {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(3, 11, 15, 0.28);
+}
+
+.diagnostics-panel__header .label {
+  margin-bottom: 0;
+}
+
 .download-panel__header,
 .download-actions {
   display: flex;
@@ -284,10 +313,7 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 10px;
   margin: 0;
-  padding: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
-  background: rgba(3, 11, 15, 0.36);
+  padding: 0;
 }
 
 .transfer-diagnostics div {
@@ -383,6 +409,23 @@ a {
   color: var(--muted);
   font-size: 0.9rem;
   text-align: right;
+}
+
+.file-header-meta {
+  display: grid;
+  justify-items: end;
+  flex-shrink: 0;
+  color: var(--muted);
+  text-align: right;
+}
+
+.file-header-meta .label {
+  margin-bottom: 4px;
+}
+
+.file-header-meta strong {
+  color: var(--text);
+  font-size: 1rem;
 }
 
 .upload-dropzone,
@@ -686,8 +729,19 @@ a {
   }
 
   .receive-header-meta,
+  .file-header-meta,
   .upload-item__actions {
     align-items: flex-start;
+    justify-items: start;
+    text-align: left;
+  }
+
+  .public-shell--file .public-shell__header {
+    align-items: stretch;
+  }
+
+  .public-shell--file .public-shell__title {
+    font-size: 1.45rem;
   }
 
   .folder-table th:nth-child(2),
