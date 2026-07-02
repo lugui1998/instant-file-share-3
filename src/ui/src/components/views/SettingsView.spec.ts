@@ -1,4 +1,4 @@
-import { mount } from '@vue/test-utils'
+import { mount, type VueWrapper } from '@vue/test-utils'
 import { describe, expect, it } from 'vitest'
 import type { AppSettings } from '../../agentBridge'
 import SettingsView from './SettingsView.vue'
@@ -61,185 +61,152 @@ function createSettingsDraft(): AppSettings {
   }
 }
 
-describe('SettingsView', () => {
-  it('keeps Cloudflare after Receiving and Debug as the final settings card', () => {
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft: createSettingsDraft(),
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: {
-          installed: true,
-          executablePath: 'C:\\Tools\\cloudflared.exe',
-          installedVersion: '2026.1.0',
-          latestVersion: '2026.1.0',
-          updateAvailable: false,
-          ownership: 'Path',
-          loggedIn: false,
-          loginMessage: 'Not logged in',
-        },
-        clearingTransferHistory: false,
-        managedStatus: {
-          loggedIn: false,
-          message: 'Not logged in',
-          domains: [],
-        },
-        managedAvailability: null,
-        saveMessage: '',
+function mountSettingsView(settingsDraft = createSettingsDraft()) {
+  return mount(SettingsView, {
+    props: {
+      settingsDraft,
+      bandwidthValue: null,
+      bandwidthUnit: 'MB/s',
+      selectedDomain: '',
+      managedSubdomain: 'share',
+      cloudflaredStatus: {
+        installed: true,
+        executablePath: 'C:\\Tools\\cloudflared.exe',
+        installedVersion: '2026.1.0',
+        latestVersion: '2026.1.0',
+        updateAvailable: false,
+        ownership: 'Path',
+        loggedIn: false,
+        loginMessage: 'Not logged in',
       },
-    })
+      clearingTransferHistory: false,
+      managedStatus: {
+        loggedIn: false,
+        message: 'Not logged in',
+        domains: [],
+      },
+      managedAvailability: null,
+      saveMessage: '',
+    },
+  })
+}
 
-    const cardEyebrows = wrapper
-      .findAll('.setting-card > .eyebrow')
-      .map((eyebrow) => eyebrow.text())
+async function openSettingsSection(wrapper: VueWrapper, label: string) {
+  const sectionButton = wrapper
+    .findAll('.settings-nav-button')
+    .find((button) => button.text() === label)
 
-    expect(cardEyebrows.slice(-4)).toEqual(['Browser Managed Transfers', 'Receiving', 'Cloudflare', 'Debug'])
+  expect(sectionButton).toBeTruthy()
+  await sectionButton!.trigger('click')
+}
+
+function activePanelTitle(wrapper: VueWrapper) {
+  return wrapper.find('.settings-panel-header h2').text()
+}
+
+describe('SettingsView', () => {
+  it('starts on General and exposes the settings category navigation', () => {
+    const wrapper = mountSettingsView()
+
+    const sectionLabels = wrapper.findAll('.settings-nav-button').map((button) => button.text())
+    const selectedSection = wrapper.find('.settings-nav-button.active')
+
+    expect(sectionLabels).toEqual([
+      'General',
+      'Connection',
+      'Sending',
+      'Receiving',
+      'Transfer Engine',
+      'Windows Integration',
+      'History',
+      'Diagnostics',
+    ])
+    expect(selectedSection.text()).toBe('General')
+    expect(selectedSection.attributes('aria-selected')).toBe('true')
+    expect(activePanelTitle(wrapper)).toBe('General')
+    expect(wrapper.find('#keep-awake').exists()).toBe(true)
+    expect(wrapper.find('#local-api-port').exists()).toBe(true)
+    expect(wrapper.find('#default-publish-mode').exists()).toBe(false)
   })
 
-  it('shows the receive parallel upload limit setting', () => {
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft: createSettingsDraft(),
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: null,
-        clearingTransferHistory: false,
-        managedStatus: null,
-        managedAvailability: null,
-        saveMessage: '',
-      },
-    })
+  it('groups publishing, manual listener, and Cloudflare settings under Connection', async () => {
+    const wrapper = mountSettingsView()
+
+    await openSettingsSection(wrapper, 'Connection')
+
+    expect(activePanelTitle(wrapper)).toBe('Connection')
+    expect(wrapper.find('#default-publish-mode').exists()).toBe(true)
+    expect(wrapper.find('#public-token-length').exists()).toBe(true)
+    expect(wrapper.find('#bandwidth-limit').exists()).toBe(true)
+    expect(wrapper.find('#manual-bind-address').exists()).toBe(true)
+    expect(wrapper.find('#manual-public-port').exists()).toBe(true)
+    expect(wrapper.find('#managed-domain').exists()).toBe(true)
+    expect(wrapper.find('#cloudflared-path').exists()).toBe(true)
+    expect(wrapper.find('#receive-upload-mode').exists()).toBe(false)
+  })
+
+  it('groups link, folder, and public display defaults under Sending', async () => {
+    const wrapper = mountSettingsView()
+
+    await openSettingsSection(wrapper, 'Sending')
+
+    expect(activePanelTitle(wrapper)).toBe('Sending')
+    expect(wrapper.find('#default-expiry-value').exists()).toBe(true)
+    expect(wrapper.find('#default-max-uses').exists()).toBe(true)
+    expect(wrapper.find('#file-change-behavior').exists()).toBe(true)
+    expect(wrapper.find('#folder-browse-page-title').exists()).toBe(true)
+    expect(wrapper.find('#folder-share-capability-policy').exists()).toBe(true)
+    expect(wrapper.find('#folder-zip-compression-level').exists()).toBe(true)
+    expect(wrapper.find('#send-metadata-to-crawlers').exists()).toBe(true)
+    expect(wrapper.find('#open-pdf-in-browser').exists()).toBe(true)
+    expect(wrapper.find('#file-context-button').exists()).toBe(false)
+  })
+
+  it('keeps receive-link defaults separate from upload transfer tuning', async () => {
+    const wrapper = mountSettingsView()
+
+    await openSettingsSection(wrapper, 'Receiving')
 
     const input = wrapper.find('#receive-parallel-upload-limit')
 
-    expect(wrapper.text()).toContain('Parallel uploads')
+    expect(activePanelTitle(wrapper)).toBe('Receiving')
+    expect(wrapper.find('#receive-page-title').exists()).toBe(true)
+    expect(wrapper.find('#default-receive-expiry-value').exists()).toBe(true)
+    expect(wrapper.find('#default-receive-max-total-bytes').exists()).toBe(true)
     expect(input.exists()).toBe(true)
     expect(input.attributes('min')).toBe('0')
     expect(input.attributes('max')).toBeUndefined()
     expect(wrapper.text()).toContain('Use 0 for no limit.')
+    expect(wrapper.find('#receive-notifications-enabled').exists()).toBe(true)
+    expect(wrapper.find('#receive-upload-mode').exists()).toBe(false)
+    expect(wrapper.find('#receive-upload-compression-enabled').exists()).toBe(false)
   })
 
-  it('shows the receive upload mode setting', () => {
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft: createSettingsDraft(),
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: null,
-        clearingTransferHistory: false,
-        managedStatus: null,
-        managedAvailability: null,
-        saveMessage: '',
-      },
-    })
+  it('groups browser-managed download and upload engine settings under Transfer Engine', async () => {
+    const wrapper = mountSettingsView()
 
-    const select = wrapper.find('#receive-upload-mode')
+    await openSettingsSection(wrapper, 'Transfer Engine')
 
-    expect(wrapper.text()).toContain('Upload mode')
-    expect(select.exists()).toBe(true)
-    expect(select.findAll('option').map((option) => option.attributes('value'))).toEqual([
-      'Auto',
-      'MultipartChunks',
-      'BinaryChunks',
-      'WebSocket',
-    ])
+    expect(activePanelTitle(wrapper)).toBe('Transfer Engine')
+    expect(wrapper.find('#browser-managed-downloads-enabled').exists()).toBe(true)
+    expect(wrapper.find('#browser-managed-download-memory').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Default: 64 MB.')
+    expect(wrapper.find('#browser-managed-download-parallel-chunks').exists()).toBe(true)
+    expect(wrapper.find('#browser-managed-compression-mode').exists()).toBe(true)
+    expect(wrapper.find('#browser-download-encryption-policy').exists()).toBe(true)
+    expect(wrapper.find('#receive-upload-mode').exists()).toBe(true)
     expect(wrapper.find('#receive-upload-compression-enabled').exists()).toBe(true)
-    expect(wrapper.text()).toContain('Upload compression')
-  })
-
-  it('groups browser-managed download and upload settings together', () => {
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft: createSettingsDraft(),
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: null,
-        clearingTransferHistory: false,
-        managedStatus: null,
-        managedAvailability: null,
-        saveMessage: '',
-      },
-    })
-
-    const browserManagedTransfersCard = wrapper
-      .findAll('.setting-card')
-      .find((card) => card.find('.eyebrow').text() === 'Browser Managed Transfers')
-    const receivingCard = wrapper
-      .findAll('.setting-card')
-      .find((card) => card.find('.eyebrow').text() === 'Receiving')
-
-    expect(browserManagedTransfersCard?.find('#browser-managed-downloads-enabled').exists()).toBe(true)
-    expect(browserManagedTransfersCard?.find('#browser-managed-download-memory').exists()).toBe(true)
-    expect(browserManagedTransfersCard?.text()).toContain('Default: 64 MB.')
-    expect(browserManagedTransfersCard?.find('#browser-managed-download-parallel-chunks').exists()).toBe(true)
-    expect(browserManagedTransfersCard?.find('#browser-managed-compression-mode').exists()).toBe(true)
-    expect(browserManagedTransfersCard?.find('#browser-download-encryption-policy').exists()).toBe(true)
-    expect(browserManagedTransfersCard?.find('#receive-upload-mode').exists()).toBe(true)
-    expect(browserManagedTransfersCard?.find('#receive-upload-compression-enabled').exists()).toBe(true)
-    expect(browserManagedTransfersCard?.find('#receive-upload-encryption-policy').exists()).toBe(true)
-    expect(browserManagedTransfersCard?.find('#receive-upload-chunk-sizing-mode').exists()).toBe(true)
-    expect(browserManagedTransfersCard?.find('#receive-upload-max-body-size').exists()).toBe(true)
-
-    expect(receivingCard?.find('#receive-upload-mode').exists()).toBe(false)
-    expect(receivingCard?.find('#receive-upload-compression-enabled').exists()).toBe(false)
-    expect(receivingCard?.find('#receive-upload-encryption-policy').exists()).toBe(false)
-    expect(receivingCard?.find('#browser-managed-downloads-enabled').exists()).toBe(false)
-    expect(receivingCard?.find('#browser-download-encryption-policy').exists()).toBe(false)
-  })
-
-  it('keeps public transfer diagnostics toggles in Debug', () => {
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft: createSettingsDraft(),
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: null,
-        clearingTransferHistory: false,
-        managedStatus: null,
-        managedAvailability: null,
-        saveMessage: '',
-      },
-    })
-
-    const debugCard = wrapper
-      .findAll('.setting-card')
-      .find((card) => card.find('.eyebrow').text() === 'Debug')
-    const receivingCard = wrapper
-      .findAll('.setting-card')
-      .find((card) => card.find('.eyebrow').text() === 'Receiving')
-
-    expect(debugCard?.find('#browser-transfer-diagnostics-enabled').exists()).toBe(true)
-    expect(debugCard?.find('#receive-transfer-diagnostics-enabled').exists()).toBe(true)
-    expect(receivingCard?.find('#browser-transfer-diagnostics-enabled').exists()).toBe(false)
-    expect(receivingCard?.find('#receive-transfer-diagnostics-enabled').exists()).toBe(false)
+    expect(wrapper.find('#receive-upload-encryption-policy').exists()).toBe(true)
+    expect(wrapper.find('#receive-upload-chunk-sizing-mode').exists()).toBe(true)
+    expect(wrapper.find('#receive-upload-max-body-size').exists()).toBe(true)
+    expect(wrapper.find('#receive-page-title').exists()).toBe(false)
   })
 
   it('shows the auto probing threshold only for auto receive uploads', async () => {
     const settingsDraft = createSettingsDraft()
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft,
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: null,
-        clearingTransferHistory: false,
-        managedStatus: null,
-        managedAvailability: null,
-        saveMessage: '',
-      },
-    })
+    const wrapper = mountSettingsView(settingsDraft)
+
+    await openSettingsSection(wrapper, 'Transfer Engine')
 
     const input = wrapper.find('#receive-upload-auto-probe-chunks')
     expect(input.exists()).toBe(true)
@@ -254,20 +221,9 @@ describe('SettingsView', () => {
 
   it('shows fixed and automatic packet sizing settings', async () => {
     const settingsDraft = createSettingsDraft()
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft,
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: null,
-        clearingTransferHistory: false,
-        managedStatus: null,
-        managedAvailability: null,
-        saveMessage: '',
-      },
-    })
+    const wrapper = mountSettingsView(settingsDraft)
+
+    await openSettingsSection(wrapper, 'Transfer Engine')
 
     const sizingSelect = wrapper.find('#receive-upload-chunk-sizing-mode')
 
@@ -287,46 +243,24 @@ describe('SettingsView', () => {
     expect(wrapper.text()).toContain('Minimum: 1 second')
   })
 
-  it('warns when Cloudflare auto target request time is above 120 seconds', () => {
+  it('warns when Cloudflare auto target request time is above 120 seconds', async () => {
     const settingsDraft = createSettingsDraft()
     settingsDraft.defaultPublishMode = 'QuickTunnel'
     settingsDraft.receiveUploadChunkSizingMode = 'Auto'
     settingsDraft.receiveUploadChunkTargetSeconds = 180
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft,
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: null,
-        clearingTransferHistory: false,
-        managedStatus: null,
-        managedAvailability: null,
-        saveMessage: '',
-      },
-    })
+    const wrapper = mountSettingsView(settingsDraft)
+
+    await openSettingsSection(wrapper, 'Transfer Engine')
 
     expect(wrapper.text()).toContain('Cloudflare can time out proxied requests after 120 seconds')
   })
 
-  it('shows the receive upload chunk size setting in megabytes', () => {
+  it('shows the receive upload chunk size setting in megabytes', async () => {
     const settingsDraft = createSettingsDraft()
     settingsDraft.receiveUploadChunkSizeBytes = 8 * 1024 * 1024
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft,
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: null,
-        clearingTransferHistory: false,
-        managedStatus: null,
-        managedAvailability: null,
-        saveMessage: '',
-      },
-    })
+    const wrapper = mountSettingsView(settingsDraft)
+
+    await openSettingsSection(wrapper, 'Transfer Engine')
 
     const input = wrapper.find('#receive-upload-chunk-size')
 
@@ -337,23 +271,12 @@ describe('SettingsView', () => {
     expect(wrapper.text()).toContain('Default: 16 MB')
   })
 
-  it('shows the receive upload max body size setting in megabytes', () => {
+  it('shows the receive upload max body size setting in megabytes', async () => {
     const settingsDraft = createSettingsDraft()
     settingsDraft.receiveUploadMaxBodySizeBytes = 90 * 1024 * 1024
-    const wrapper = mount(SettingsView, {
-      props: {
-        settingsDraft,
-        bandwidthValue: null,
-        bandwidthUnit: 'MB/s',
-        selectedDomain: '',
-        managedSubdomain: 'share',
-        cloudflaredStatus: null,
-        clearingTransferHistory: false,
-        managedStatus: null,
-        managedAvailability: null,
-        saveMessage: '',
-      },
-    })
+    const wrapper = mountSettingsView(settingsDraft)
+
+    await openSettingsSection(wrapper, 'Transfer Engine')
 
     const input = wrapper.find('#receive-upload-max-body-size')
 
@@ -364,7 +287,7 @@ describe('SettingsView', () => {
     expect(wrapper.text()).toContain('Cloudflare Free/Pro limit: 100 MB')
   })
 
-  it('warns when Cloudflare Free plan max body size is above the plan limit', () => {
+  it('warns when Cloudflare Free plan max body size is above the plan limit', async () => {
     const settingsDraft = createSettingsDraft()
     settingsDraft.defaultPublishMode = 'ManagedCloudflare'
     settingsDraft.receiveUploadMaxBodySizeBytes = 150 * 1024 * 1024
@@ -387,6 +310,45 @@ describe('SettingsView', () => {
       },
     })
 
+    await openSettingsSection(wrapper, 'Transfer Engine')
+
     expect(wrapper.text()).toContain('Requests over 100 MB can fail with 413')
+  })
+
+  it('groups Explorer integration controls under Windows Integration', async () => {
+    const wrapper = mountSettingsView()
+
+    await openSettingsSection(wrapper, 'Windows Integration')
+
+    expect(activePanelTitle(wrapper)).toBe('Windows Integration')
+    expect(wrapper.find('#file-context-button').exists()).toBe(true)
+    expect(wrapper.find('#folder-zip-context-button').exists()).toBe(true)
+    expect(wrapper.find('#folder-browse-context-button').exists()).toBe(true)
+    expect(wrapper.find('#folder-receive-context-button').exists()).toBe(true)
+    expect(wrapper.find('#friendly-urls').exists()).toBe(false)
+  })
+
+  it('groups history retention, list pagination, and clear history action under History', async () => {
+    const wrapper = mountSettingsView()
+
+    await openSettingsSection(wrapper, 'History')
+
+    expect(activePanelTitle(wrapper)).toBe('History')
+    expect(wrapper.find('#history-retention-value').exists()).toBe(true)
+    expect(wrapper.find('#history-items-per-page').exists()).toBe(true)
+    expect(wrapper.find('#shares-items-per-page').exists()).toBe(true)
+    expect(wrapper.find('button.danger').text()).toBe('Clear history')
+  })
+
+  it('keeps public transfer diagnostics toggles under Diagnostics', async () => {
+    const wrapper = mountSettingsView()
+
+    await openSettingsSection(wrapper, 'Diagnostics')
+
+    expect(activePanelTitle(wrapper)).toBe('Diagnostics')
+    expect(wrapper.find('#browser-transfer-diagnostics-enabled').exists()).toBe(true)
+    expect(wrapper.find('#receive-transfer-diagnostics-enabled').exists()).toBe(true)
+    expect(wrapper.find('#show-logs').exists()).toBe(true)
+    expect(wrapper.find('#receive-upload-mode').exists()).toBe(false)
   })
 })

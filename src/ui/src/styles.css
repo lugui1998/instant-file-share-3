@@ -454,6 +454,84 @@ td {
   gap: 1.5rem;
 }
 
+.settings-layout--revamped {
+  grid-template-columns: minmax(180px, 220px) minmax(0, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.settings-nav {
+  position: sticky;
+  top: 1rem;
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  padding: 0.35rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  background: rgba(15, 18, 23, 0.82);
+}
+
+.settings-nav-button {
+  width: 100%;
+  min-height: 2.65rem;
+  padding: 0.75rem 0.85rem;
+  justify-content: flex-start;
+  border-radius: 12px;
+  border-color: transparent;
+  background: transparent;
+  color: #a7b0bb;
+  font-size: 0.92rem;
+  font-weight: 700;
+  text-align: left;
+}
+
+.settings-nav-button:hover,
+.settings-nav-button:focus-visible {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f3efe7;
+}
+
+.settings-nav-button.active {
+  border-color: rgba(255, 181, 125, 0.28);
+  background: rgba(255, 181, 125, 0.12);
+  color: #fff5ec;
+}
+
+.settings-panel {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.settings-panel-header {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.settings-panel-header h2 {
+  margin: 0;
+  font-size: clamp(1.35rem, 2vw, 1.75rem);
+}
+
+.settings-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+  gap: 1rem;
+  min-width: 0;
+  align-items: start;
+}
+
+.settings-panel-grid--compact {
+  grid-template-columns: minmax(0, min(100%, 720px));
+}
+
+.settings-panel-grid--connection,
+.settings-panel-grid--transfer-engine {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+}
+
 .settings-section {
   display: grid;
   gap: 1rem;
@@ -666,6 +744,23 @@ pre {
 
   .settings-section-grid--receiving {
     grid-template-columns: minmax(360px, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .settings-layout--revamped {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .settings-nav {
+    position: static;
+    grid-auto-flow: column;
+    grid-auto-columns: max-content;
+    overflow-x: auto;
+  }
+
+  .settings-nav-button {
+    white-space: nowrap;
   }
 }
 
