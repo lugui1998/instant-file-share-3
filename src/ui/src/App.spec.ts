@@ -50,6 +50,7 @@ describe('App settings normalization', () => {
     await vi.dynamicImportSettled()
 
     await wrapper.findAll('button').find((button) => button.text() === 'Settings')!.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text() === 'Transfer Engine')!.trigger('click')
     await wrapper.find('#receive-upload-auto-probe-chunks').setValue('0')
     await vi.advanceTimersByTimeAsync(450)
     await vi.dynamicImportSettled()
@@ -67,6 +68,7 @@ describe('App settings normalization', () => {
     await vi.dynamicImportSettled()
 
     await wrapper.findAll('button').find((button) => button.text() === 'Settings')!.trigger('click')
+    await wrapper.findAll('button').find((button) => button.text() === 'Transfer Engine')!.trigger('click')
     await wrapper.find('#receive-upload-chunk-sizing-mode').setValue('Auto')
     await wrapper.find('#receive-upload-chunk-target-seconds').setValue('1')
     await vi.advanceTimersByTimeAsync(450)

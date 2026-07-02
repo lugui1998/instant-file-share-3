@@ -11,6 +11,16 @@ import HelpTooltip from '../settings/HelpTooltip.vue'
 import SettingCard from '../settings/SettingCard.vue'
 import ToggleField from '../settings/ToggleField.vue'
 
+type SettingsSectionId =
+  | 'general'
+  | 'connection'
+  | 'sending'
+  | 'receiving'
+  | 'transferEngine'
+  | 'windowsIntegration'
+  | 'history'
+  | 'diagnostics'
+
 const props = defineProps<{
   cloudflaredStatus: CloudflaredDashboardStatus | null
   clearingTransferHistory: boolean
@@ -24,6 +34,22 @@ const bandwidthValue = defineModel<number | null>('bandwidthValue', { required: 
 const bandwidthUnit = defineModel<BandwidthUnit>('bandwidthUnit', { required: true })
 const selectedDomain = defineModel<string>('selectedDomain', { required: true })
 const managedSubdomain = defineModel<string>('managedSubdomain', { required: true })
+const activeSettingsSection = ref<SettingsSectionId>('general')
+
+const settingsSections: Array<{ id: SettingsSectionId; label: string }> = [
+  { id: 'general', label: 'General' },
+  { id: 'connection', label: 'Connection' },
+  { id: 'sending', label: 'Sending' },
+  { id: 'receiving', label: 'Receiving' },
+  { id: 'transferEngine', label: 'Transfer Engine' },
+  { id: 'windowsIntegration', label: 'Windows Integration' },
+  { id: 'history', label: 'History' },
+  { id: 'diagnostics', label: 'Diagnostics' },
+]
+
+const activeSettingsSectionLabel = computed(() =>
+  settingsSections.find((section) => section.id === activeSettingsSection.value)?.label ?? 'General',
+)
 
 const emit = defineEmits<{
   clearTransferHistory: []
@@ -144,10 +170,68 @@ function resolveReceiveMaxTotalUnit(value: number) {
 </script>
 
 <template>
-  <section class="settings-layout">
-    <section class="settings-section">
-      <div class="settings-section-grid settings-section-grid--sharing">
-        <SettingCard class="settings-card" eyebrow="Sharing">
+  <section class="settings-layout settings-layout--revamped">
+    <nav class="settings-nav" aria-label="Settings categories" role="tablist">
+      <button
+        v-for="section in settingsSections"
+        :id="`settings-tab-${section.id}`"
+        :key="section.id"
+        class="settings-nav-button"
+        :class="{ active: activeSettingsSection === section.id }"
+        type="button"
+        role="tab"
+        :aria-controls="`settings-panel-${section.id}`"
+        :aria-selected="activeSettingsSection === section.id"
+        @click="activeSettingsSection = section.id"
+      >
+        {{ section.label }}
+      </button>
+    </nav>
+
+    <section
+      class="settings-panel"
+      role="tabpanel"
+      :id="`settings-panel-${activeSettingsSection}`"
+      :aria-labelledby="`settings-tab-${activeSettingsSection}`"
+    >
+      <header class="settings-panel-header">
+        <p class="eyebrow">Settings</p>
+        <h2>{{ activeSettingsSectionLabel }}</h2>
+      </header>
+
+      <div v-if="activeSettingsSection === 'general'" class="settings-panel-grid settings-panel-grid--compact">
+        <SettingCard class="settings-card" eyebrow="Application">
+          <ToggleField
+            v-model="settingsDraft.keepAwakeWhileTransferring"
+            input-id="keep-awake"
+            label="Keep PC awake"
+            help-text="Prevents the machine from sleeping while transfers are active, so long uploads and downloads do not get interrupted."
+          />
+          <ToggleField
+            v-model="settingsDraft.startOnLogin"
+            input-id="start-on-login"
+            label="Start on login"
+            help-text="Launches the server automatically when you sign in."
+          />
+          <ToggleField
+            v-model="settingsDraft.openDashboardOnStart"
+            input-id="open-dashboard-on-start"
+            label="Open Dashboard on start"
+            help-text="Opens the desktop dashboard window whenever the server starts."
+          />
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="local-api-port">Local API port</label>
+              <HelpTooltip text="Port used by the dashboard and local integrations to talk to the server on this machine." />
+            </div>
+            <input id="local-api-port" v-model.number="settingsDraft.localApiPort" type="number" min="1" max="65535" />
+          </div>
+        </SettingCard>
+      </div>
+
+      <div v-else-if="activeSettingsSection === 'connection'" class="settings-panel-grid settings-panel-grid--connection">
+        <SettingCard class="settings-card" eyebrow="Publishing">
           <div class="field">
             <div class="field-label-row">
               <label for="default-publish-mode">Publish Mode</label>
@@ -178,81 +262,6 @@ function resolveReceiveMaxTotalUnit(value: number) {
             </span>
           </div>
 
-          <ToggleField
-            v-model="settingsDraft.keepAwakeWhileTransferring"
-            input-id="keep-awake"
-            label="Keep PC awake"
-            help-text="Prevents the machine from sleeping while transfers are active, so long uploads and downloads do not get interrupted."
-          />
-          <ToggleField
-            v-model="settingsDraft.startOnLogin"
-            input-id="start-on-login"
-            label="Start on login"
-            help-text="Launches the server automatically when you sign in."
-          />
-          <ToggleField
-            v-model="settingsDraft.openDashboardOnStart"
-            input-id="open-dashboard-on-start"
-            label="Open Dashboard on start"
-            help-text="Opens the desktop dashboard window whenever the server starts."
-          />
-        </SettingCard>
-
-        <SettingCard class="settings-card" eyebrow="History">
-          <div class="field">
-            <div class="field-label-row">
-              <label for="history-retention-value">Keep history for</label>
-              <HelpTooltip text="How long completed transfer history is kept before older entries are pruned. Use 0 for unlimited retention." />
-            </div>
-            <div class="input-group">
-              <input
-                id="history-retention-value"
-                v-model.number="settingsDraft.historyRetentionValue"
-                type="number"
-                min="0"
-                placeholder="Unlimited"
-              />
-              <select v-model="settingsDraft.historyRetentionUnit" class="unit-select">
-                <option value="Minutes">Minutes</option>
-                <option value="Hours">Hours</option>
-                <option value="Days">Days</option>
-                <option value="Months">Months</option>
-                <option value="Years">Years</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="history-items-per-page">Items per page</label>
-              <HelpTooltip text="Controls how many rows are shown per page on the History section. Use 0 to show all rows at once." />
-            </div>
-            <input
-              id="history-items-per-page"
-              v-model.number="settingsDraft.historyItemsPerPage"
-              type="number"
-              min="0"
-              placeholder="Unlimited"
-            />
-          </div>
-
-          <div class="field">
-            <span class="field-help">Clear completed, paused, and failed history entries. Active transfers stay visible.</span>
-          </div>
-
-          <div class="card-actions">
-            <button
-              class="danger compact-button"
-              type="button"
-              :disabled="props.clearingTransferHistory"
-              @click="emit('clearTransferHistory')"
-            >
-              {{ props.clearingTransferHistory ? 'Clearing...' : 'Clear history' }}
-            </button>
-          </div>
-        </SettingCard>
-
-        <SettingCard class="settings-card" eyebrow="Server">
           <div class="field">
             <div class="field-label-row">
               <label for="bandwidth-limit">Transfer Speed Limit</label>
@@ -260,14 +269,16 @@ function resolveReceiveMaxTotalUnit(value: number) {
             </div>
             <div class="input-group">
               <input id="bandwidth-limit" v-model.number="bandwidthValue" type="number" min="0" placeholder="Unlimited" />
-              <select v-model="bandwidthUnit" class="unit-select">
+              <select v-model="bandwidthUnit" class="unit-select" aria-label="Transfer speed unit">
                 <option value="B/s">B/s</option>
                 <option value="KB/s">KB/s</option>
                 <option value="MB/s">MB/s</option>
               </select>
             </div>
           </div>
+        </SettingCard>
 
+        <SettingCard class="settings-card" eyebrow="Manual">
           <div class="field">
             <div class="field-label-row">
               <label for="manual-bind-address">Manual mode bind address</label>
@@ -291,22 +302,84 @@ function resolveReceiveMaxTotalUnit(value: number) {
             </div>
             <input id="manual-base-url" v-model="settingsDraft.manualBaseUrl" placeholder="Optional https://files.example.com" />
           </div>
+        </SettingCard>
+
+        <SettingCard class="settings-card" eyebrow="Cloudflare">
+          <div class="managed-block">
+            <strong v-if="cloudflaredStatus?.installedVersion">Version: {{ cloudflaredStatus.installedVersion }}</strong>
+            <strong v-else>cloudflared not installed</strong>
+          </div>
 
           <div class="field">
             <div class="field-label-row">
-              <label for="local-api-port">Local API port</label>
-              <HelpTooltip text="Port used by the dashboard and local integrations to talk to the server on this machine." />
+              <label for="cloudflared-path">Cloudflared path override</label>
+              <HelpTooltip text="Lets you point the server at a specific cloudflared executable instead of relying on PATH detection." />
             </div>
-            <input id="local-api-port" v-model.number="settingsDraft.localApiPort" type="number" min="1" max="65535" />
+            <button
+              id="cloudflared-path"
+              class="file-picker-field"
+              type="button"
+              @click="emit('pickCloudflaredPath')"
+            >
+              <span class="file-picker-value" :class="{ empty: !settingsDraft.cloudflaredPathOverride }">
+                {{ settingsDraft.cloudflaredPathOverride || 'Using auto-detected cloudflared path' }}
+              </span>
+            </button>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="managed-domain">Domain</label>
+              <HelpTooltip text="Choose which Cloudflare-managed domain should host your public links." />
+            </div>
+            <select id="managed-domain" v-model="selectedDomain" :disabled="!availableDomains.length">
+              <option value="" disabled>Select a domain</option>
+              <option v-for="domain in availableDomains" :key="domain.zoneId" :value="domain.name">
+                {{ domain.name }}
+              </option>
+            </select>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="managed-subdomain">Subdomain</label>
+              <HelpTooltip text="Subdomain prefix to use under the selected domain for managed Cloudflare sharing." />
+            </div>
+            <input id="managed-subdomain" v-model="managedSubdomain" placeholder="share" />
+          </div>
+
+          <div v-if="managedAvailability" class="managed-block">
+            <strong>{{ managedAvailability.hostname }}</strong>
+            <span>{{ managedAvailability.message }}</span>
+          </div>
+
+          <div class="card-actions column">
+            <button
+              v-if="!cloudflaredStatus?.installed"
+              class="secondary"
+              type="button"
+              @click="emit('installCloudflared')"
+            >
+              Install with winget
+            </button>
+            <button
+              v-if="cloudflaredStatus?.updateAvailable"
+              class="secondary"
+              type="button"
+              @click="emit('updateCloudflared')"
+            >
+              Update cloudflared
+            </button>
+            <button class="primary" type="button" @click="emit('toggleCloudflareLogin')">
+              {{ cloudflareLoginLabel }}
+            </button>
+            <button class="primary" type="button" @click="emit('createManagedTunnel')">Save</button>
           </div>
         </SettingCard>
-
       </div>
-    </section>
 
-    <section class="settings-section">
-      <div class="settings-section-grid settings-section-grid--sending">
-        <SettingCard class="settings-card" eyebrow="Sending">
+      <div v-else-if="activeSettingsSection === 'sending'" class="settings-panel-grid settings-panel-grid--sending">
+        <SettingCard class="settings-card" eyebrow="Link defaults">
           <div class="field">
             <div class="field-label-row">
               <label for="default-expiry-value">Expiry</label>
@@ -314,7 +387,7 @@ function resolveReceiveMaxTotalUnit(value: number) {
             </div>
             <div class="input-group">
               <input id="default-expiry-value" v-model.number="settingsDraft.defaultExpiryValue" type="number" min="0" />
-              <select v-model="settingsDraft.defaultExpiryUnit" class="unit-select">
+              <select v-model="settingsDraft.defaultExpiryUnit" class="unit-select" aria-label="Default share expiry unit">
                 <option value="Minutes">Minutes</option>
                 <option value="Hours">Hours</option>
                 <option value="Days">Days</option>
@@ -347,45 +420,15 @@ function resolveReceiveMaxTotalUnit(value: number) {
             </select>
           </div>
 
-          <div class="field">
-            <div class="field-label-row">
-              <label for="shares-items-per-page">Items per page</label>
-              <HelpTooltip text="Controls how many rows are shown per page on the Shares section. Use 0 to disable pagination there." />
-            </div>
-            <input
-              id="shares-items-per-page"
-              v-model.number="settingsDraft.sharesItemsPerPage"
-              type="number"
-              min="0"
-              placeholder="Unlimited"
-            />
-          </div>
-
           <ToggleField
             v-model="settingsDraft.friendlyUrlsEnabled"
             input-id="friendly-urls"
             label="Friendly URLs"
             help-text="Adds a readable filename slug after the share token in generated links."
           />
-          <ToggleField
-            v-model="settingsDraft.addFileContextMenuButton"
-            input-id="file-context-button"
-            label="File context menu: Copy share link"
-            help-text="Adds a Share with Instant File Share action to the Windows file context menu."
-          />
-          <ToggleField
-            v-model="settingsDraft.addFolderZipContextMenuButton"
-            input-id="folder-zip-context-button"
-            label="Folder context menu: Share as ZIP"
-            help-text="Adds a folder context-menu action that creates a ZIP-style folder share."
-          />
-          <ToggleField
-            v-model="settingsDraft.addFolderBrowseContextMenuButton"
-            input-id="folder-browse-context-button"
-            label="Folder context menu: Share for browsing"
-            help-text="Adds a folder context-menu action that creates a browsable folder share."
-          />
+        </SettingCard>
 
+        <SettingCard class="settings-card" eyebrow="Folder shares">
           <div class="field">
             <div class="field-label-row">
               <label for="folder-browse-page-title">Browse page title</label>
@@ -423,7 +466,7 @@ function resolveReceiveMaxTotalUnit(value: number) {
           </div>
         </SettingCard>
 
-        <SettingCard class="settings-card" eyebrow="Metadata">
+        <SettingCard class="settings-card" eyebrow="Display">
           <ToggleField
             v-model="settingsDraft.sendMetadataToCrawlers"
             input-id="send-metadata-to-crawlers"
@@ -446,11 +489,92 @@ function resolveReceiveMaxTotalUnit(value: number) {
             v-model="settingsDraft.openPdfInBrowser"
             input-id="open-pdf-in-browser"
             label="Open PDF Files in Browser"
-            help-text="When enabled, PDF shares are opened inline in browsers that support PDF viewing. When disabled, they are forced to download."
+            help-text="When enabled, PDF shares are opened inline so browsers can display them. When disabled, they are forced to download."
           />
         </SettingCard>
+      </div>
 
-        <SettingCard class="settings-card" eyebrow="Browser Managed Transfers">
+      <div v-else-if="activeSettingsSection === 'receiving'" class="settings-panel-grid settings-panel-grid--compact">
+        <SettingCard class="settings-card" eyebrow="Receive links">
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-page-title">Upload page title</label>
+              <HelpTooltip text="Controls the main title shown on public receive pages. Leave it blank to use this Windows user's default title." />
+            </div>
+            <input
+              id="receive-page-title"
+              v-model="settingsDraft.receivePageTitle"
+              placeholder="Upload files"
+            />
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="default-receive-expiry-value">Receive link expiry</label>
+              <HelpTooltip text="Sets the default lifetime for new receive links created through the Explorer context menu. Use 0 to keep them from expiring automatically." />
+            </div>
+            <div class="input-group">
+              <input id="default-receive-expiry-value" v-model.number="settingsDraft.defaultReceiveExpiryValue" type="number" min="0" />
+              <select v-model="settingsDraft.defaultReceiveExpiryUnit" class="unit-select" aria-label="Default receive expiry unit">
+                <option value="Minutes">Minutes</option>
+                <option value="Hours">Hours</option>
+                <option value="Days">Days</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="default-receive-max-total-bytes">Max total upload per link</label>
+              <HelpTooltip text="Caps how much data a single receive link can accept before it becomes unavailable." />
+            </div>
+            <div class="input-group">
+              <input
+                id="default-receive-max-total-bytes"
+                v-model.number="receiveMaxTotalValue"
+                type="number"
+                min="1"
+                :disabled="receiveMaxTotalUnit === 'Unlimited'"
+                :placeholder="receiveMaxTotalUnit === 'Unlimited' ? 'Unlimited' : undefined"
+              />
+              <select v-model="receiveMaxTotalUnit" class="unit-select" aria-label="Max total upload unit">
+                <option value="Unlimited">Unlimited</option>
+                <option value="MB">MB</option>
+                <option value="GB">GB</option>
+                <option value="TB">TB</option>
+              </select>
+            </div>
+            <span v-if="showUnlimitedReceiveQuotaWarning" class="field-warning">
+              Unlimited receive links are not recommended for public use.
+            </span>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-parallel-upload-limit">Parallel uploads</label>
+              <HelpTooltip text="Controls how many files a public receive page can upload at the same time. Higher values can finish batches faster but use more bandwidth and disk activity." />
+            </div>
+            <input
+              id="receive-parallel-upload-limit"
+              v-model.number="settingsDraft.receiveParallelUploadLimit"
+              type="number"
+              min="0"
+              placeholder="Unlimited"
+            />
+            <span class="field-help">Default: 4 files at a time. Use 0 for no limit.</span>
+          </div>
+
+          <ToggleField
+            v-model="settingsDraft.receiveNotificationsEnabled"
+            input-id="receive-notifications-enabled"
+            label="Receive notifications"
+            help-text="Shows a local notification when uploads finish on this machine."
+          />
+        </SettingCard>
+      </div>
+
+      <div v-else-if="activeSettingsSection === 'transferEngine'" class="settings-panel-grid settings-panel-grid--transfer-engine">
+        <SettingCard class="settings-card" eyebrow="Downloads">
           <ToggleField
             v-model="settingsDraft.browserManagedDownloadsEnabled"
             input-id="browser-managed-downloads-enabled"
@@ -499,19 +623,9 @@ function resolveReceiveMaxTotalUnit(value: number) {
               <option value="Off">Off</option>
             </select>
           </div>
+        </SettingCard>
 
-          <div class="field">
-            <div class="field-label-row">
-              <label for="browser-download-encryption-policy">Download encryption</label>
-              <HelpTooltip text="Controls when browser-managed downloads should require application-level encryption. Raw direct downloads cannot satisfy Always until encrypted live-file downloads are available." />
-            </div>
-            <select id="browser-download-encryption-policy" v-model="settingsDraft.browserDownloadEncryptionPolicy">
-              <option value="HttpOnly">HTTP only</option>
-              <option value="Always">Always</option>
-              <option value="Off">Off</option>
-            </select>
-          </div>
-
+        <SettingCard class="settings-card" eyebrow="Uploads">
           <div class="field">
             <div class="field-label-row">
               <label for="receive-upload-mode">Upload mode</label>
@@ -531,18 +645,6 @@ function resolveReceiveMaxTotalUnit(value: number) {
             label="Upload compression"
             help-text="Compresses upload chunks when the browser and host measurements show gzip is faster than sending the raw chunk."
           />
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="receive-upload-encryption-policy">Upload encryption</label>
-              <HelpTooltip text="Controls when receive-page uploads should use application-level encryption before data is stored on this machine." />
-            </div>
-            <select id="receive-upload-encryption-policy" v-model="settingsDraft.receiveUploadEncryptionPolicy">
-              <option value="HttpOnly">HTTP only</option>
-              <option value="Always">Always</option>
-              <option value="Off">Off</option>
-            </select>
-          </div>
 
           <div v-if="settingsDraft.receiveUploadMode === 'Auto'" class="field">
             <div class="field-label-row">
@@ -626,87 +728,54 @@ function resolveReceiveMaxTotalUnit(value: number) {
             </span>
           </div>
         </SettingCard>
+
+        <SettingCard class="settings-card" eyebrow="Security">
+          <div class="field">
+            <div class="field-label-row">
+              <label for="browser-download-encryption-policy">Download encryption</label>
+              <HelpTooltip text="Controls when browser-managed downloads should require application-level encryption. Raw direct downloads cannot satisfy Always until encrypted live-file downloads are available." />
+            </div>
+            <select id="browser-download-encryption-policy" v-model="settingsDraft.browserDownloadEncryptionPolicy">
+              <option value="HttpOnly">HTTP only</option>
+              <option value="Always">Always</option>
+              <option value="Off">Off</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <div class="field-label-row">
+              <label for="receive-upload-encryption-policy">Upload encryption</label>
+              <HelpTooltip text="Controls when receive-page uploads should use application-level encryption before data is stored on this machine." />
+            </div>
+            <select id="receive-upload-encryption-policy" v-model="settingsDraft.receiveUploadEncryptionPolicy">
+              <option value="HttpOnly">HTTP only</option>
+              <option value="Always">Always</option>
+              <option value="Off">Off</option>
+            </select>
+          </div>
+        </SettingCard>
       </div>
-    </section>
 
-    <section class="settings-section">
-      <div class="settings-section-grid settings-section-grid--receiving">
-        <SettingCard class="settings-card" eyebrow="Receiving">
-          <div class="field">
-            <div class="field-label-row">
-              <label for="receive-page-title">Upload page title</label>
-              <HelpTooltip text="Controls the main title shown on public receive pages. Leave it blank to use this Windows user's default title." />
-            </div>
-            <input
-              id="receive-page-title"
-              v-model="settingsDraft.receivePageTitle"
-              placeholder="Upload files"
-            />
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="default-receive-expiry-value">Receive link expiry</label>
-              <HelpTooltip text="Sets the default lifetime for new receive links created through the Explorer context menu. Use 0 to keep them from expiring automatically." />
-            </div>
-            <div class="input-group">
-              <input id="default-receive-expiry-value" v-model.number="settingsDraft.defaultReceiveExpiryValue" type="number" min="0" />
-              <select v-model="settingsDraft.defaultReceiveExpiryUnit" class="unit-select">
-                <option value="Minutes">Minutes</option>
-                <option value="Hours">Hours</option>
-                <option value="Days">Days</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="default-receive-max-total-bytes">Max total upload per link</label>
-              <HelpTooltip text="Caps how much data a single receive link can accept before it becomes unavailable." />
-            </div>
-            <div class="input-group">
-              <input
-                id="default-receive-max-total-bytes"
-                v-model.number="receiveMaxTotalValue"
-                type="number"
-                min="1"
-                :disabled="receiveMaxTotalUnit === 'Unlimited'"
-                :placeholder="receiveMaxTotalUnit === 'Unlimited' ? 'Unlimited' : undefined"
-              />
-              <select v-model="receiveMaxTotalUnit" class="unit-select">
-                <option value="Unlimited">Unlimited</option>
-                <option value="MB">MB</option>
-                <option value="GB">GB</option>
-                <option value="TB">TB</option>
-              </select>
-            </div>
-            <span v-if="showUnlimitedReceiveQuotaWarning" class="field-warning">
-              Unlimited receive links are not recommended for public use.
-            </span>
-          </div>
-
-          <div class="field">
-            <div class="field-label-row">
-              <label for="receive-parallel-upload-limit">Parallel uploads</label>
-              <HelpTooltip text="Controls how many files a public receive page can upload at the same time. Higher values can finish batches faster but use more bandwidth and disk activity." />
-            </div>
-            <input
-              id="receive-parallel-upload-limit"
-              v-model.number="settingsDraft.receiveParallelUploadLimit"
-              type="number"
-              min="0"
-              placeholder="Unlimited"
-            />
-            <span class="field-help">Default: 4 files at a time. Use 0 for no limit.</span>
-          </div>
-
+      <div v-else-if="activeSettingsSection === 'windowsIntegration'" class="settings-panel-grid settings-panel-grid--compact">
+        <SettingCard class="settings-card" eyebrow="Explorer">
           <ToggleField
-            v-model="settingsDraft.receiveNotificationsEnabled"
-            input-id="receive-notifications-enabled"
-            label="Receive notifications"
-            help-text="Shows a local notification when uploads finish on this machine."
+            v-model="settingsDraft.addFileContextMenuButton"
+            input-id="file-context-button"
+            label="File context menu: Copy share link"
+            help-text="Adds a Share with Instant File Share action to the Windows file context menu."
           />
-
+          <ToggleField
+            v-model="settingsDraft.addFolderZipContextMenuButton"
+            input-id="folder-zip-context-button"
+            label="Folder context menu: Share as ZIP"
+            help-text="Adds a folder context-menu action that creates a ZIP-style folder share."
+          />
+          <ToggleField
+            v-model="settingsDraft.addFolderBrowseContextMenuButton"
+            input-id="folder-browse-context-button"
+            label="Folder context menu: Share for browsing"
+            help-text="Adds a folder context-menu action that creates a browsable folder share."
+          />
           <ToggleField
             v-model="settingsDraft.addFolderReceiveContextMenuButton"
             input-id="folder-receive-context-button"
@@ -714,81 +783,80 @@ function resolveReceiveMaxTotalUnit(value: number) {
             help-text="Adds a folder context-menu action that creates a public receive link bound to that folder."
           />
         </SettingCard>
+      </div>
 
-        <SettingCard class="settings-card" eyebrow="Cloudflare">
-          <div class="managed-block">
-            <strong v-if="cloudflaredStatus?.installedVersion">Version: {{ cloudflaredStatus.installedVersion }}</strong>
-            <strong v-else>cloudflared not installed</strong>
+      <div v-else-if="activeSettingsSection === 'history'" class="settings-panel-grid settings-panel-grid--compact">
+        <SettingCard class="settings-card" eyebrow="History">
+          <div class="field">
+            <div class="field-label-row">
+              <label for="history-retention-value">Keep history for</label>
+              <HelpTooltip text="How long completed transfer history is kept before older entries are pruned. Use 0 for unlimited retention." />
+            </div>
+            <div class="input-group">
+              <input
+                id="history-retention-value"
+                v-model.number="settingsDraft.historyRetentionValue"
+                type="number"
+                min="0"
+                placeholder="Unlimited"
+              />
+              <select v-model="settingsDraft.historyRetentionUnit" class="unit-select" aria-label="History retention unit">
+                <option value="Minutes">Minutes</option>
+                <option value="Hours">Hours</option>
+                <option value="Days">Days</option>
+                <option value="Months">Months</option>
+                <option value="Years">Years</option>
+              </select>
+            </div>
           </div>
 
           <div class="field">
             <div class="field-label-row">
-              <label for="cloudflared-path">Cloudflared path override</label>
-              <HelpTooltip text="Lets you point the server at a specific cloudflared executable instead of relying on PATH detection." />
+              <label for="history-items-per-page">History items per page</label>
+              <HelpTooltip text="Controls how many rows are shown per page on the History section. Use 0 to show all rows at once." />
             </div>
-            <button
-              id="cloudflared-path"
-              class="file-picker-field"
-              type="button"
-              @click="emit('pickCloudflaredPath')"
-            >
-              <span class="file-picker-value" :class="{ empty: !settingsDraft.cloudflaredPathOverride }">
-                {{ settingsDraft.cloudflaredPathOverride || 'Using auto-detected cloudflared path' }}
-              </span>
-            </button>
+            <input
+              id="history-items-per-page"
+              v-model.number="settingsDraft.historyItemsPerPage"
+              type="number"
+              min="0"
+              placeholder="Unlimited"
+            />
           </div>
 
           <div class="field">
             <div class="field-label-row">
-              <label for="managed-domain">Domain</label>
-              <HelpTooltip text="Choose which Cloudflare-managed domain should host your public links." />
+              <label for="shares-items-per-page">Shares items per page</label>
+              <HelpTooltip text="Controls how many rows are shown per page on the Shares section. Use 0 to disable pagination there." />
             </div>
-            <select id="managed-domain" v-model="selectedDomain" :disabled="!availableDomains.length">
-              <option value="" disabled>Select a domain</option>
-              <option v-for="domain in availableDomains" :key="domain.zoneId" :value="domain.name">
-                {{ domain.name }}
-              </option>
-            </select>
+            <input
+              id="shares-items-per-page"
+              v-model.number="settingsDraft.sharesItemsPerPage"
+              type="number"
+              min="0"
+              placeholder="Unlimited"
+            />
           </div>
 
           <div class="field">
-            <div class="field-label-row">
-              <label for="managed-subdomain">Subdomain</label>
-              <HelpTooltip text="Subdomain prefix to use under the selected domain for managed Cloudflare sharing." />
-            </div>
-            <input id="managed-subdomain" v-model="managedSubdomain" placeholder="share" />
+            <span class="field-help">Clear completed, paused, and failed history entries. Active transfers stay visible.</span>
           </div>
 
-          <div v-if="managedAvailability" class="managed-block">
-            <strong>{{ managedAvailability.hostname }}</strong>
-            <span>{{ managedAvailability.message }}</span>
-          </div>
-
-          <div class="card-actions column">
+          <div class="card-actions">
             <button
-              v-if="!cloudflaredStatus?.installed"
-              class="secondary"
+              class="danger compact-button"
               type="button"
-              @click="emit('installCloudflared')"
+              :disabled="props.clearingTransferHistory"
+              @click="emit('clearTransferHistory')"
             >
-              Install with winget
+              {{ props.clearingTransferHistory ? 'Clearing...' : 'Clear history' }}
             </button>
-            <button
-              v-if="cloudflaredStatus?.updateAvailable"
-              class="secondary"
-              type="button"
-              @click="emit('updateCloudflared')"
-            >
-              Update cloudflared
-            </button>
-            <button class="primary" type="button" @click="emit('toggleCloudflareLogin')">
-              {{ cloudflareLoginLabel }}
-            </button>
-            <button class="primary" type="button" @click="emit('createManagedTunnel')">Save</button>
           </div>
         </SettingCard>
+      </div>
 
-        <SettingCard class="settings-card" eyebrow="Debug">
+      <div v-else class="settings-panel-grid settings-panel-grid--compact">
+        <SettingCard class="settings-card" eyebrow="Diagnostics">
           <ToggleField
             v-model="settingsDraft.browserTransferDiagnosticsEnabled"
             input-id="browser-transfer-diagnostics-enabled"
