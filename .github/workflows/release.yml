@@ -22,12 +22,21 @@ jobs:
   release:
     name: Build and publish release
     runs-on: windows-latest
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
     steps:
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') {
+            throw "Invalid release tag '$env:RELEASE_TAG'. Expected format is vMAJOR.MINOR.PATCH."
+          }
+
       - name: Checkout tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -63,7 +72,7 @@ jobs:
         id: assets
         shell: pwsh
         run: |
-          $tagName = '${{ inputs.tag || github.ref_name }}'
+          $tagName = $env:RELEASE_TAG
           $packageRoot = Resolve-Path '.\artifacts\package'
           $installerRoot = Join-Path $packageRoot 'installer'
           $stageRoot = Join-Path $packageRoot 'stage'
@@ -86,7 +95,7 @@ jobs:
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: instant-file-share-${{ inputs.tag || github.ref_name }}
+          name: instant-file-share-${{ env.RELEASE_TAG }}
           path: |
             ${{ steps.assets.outputs.installer_path }}
             ${{ steps.assets.outputs.stage_zip }}
@@ -95,7 +104,6 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
           INSTALLER_PATH: ${{ steps.assets.outputs.installer_path }}
           STAGE_ZIP: ${{ steps.assets.outputs.stage_zip }}
         run: |
